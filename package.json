@@ -1,0 +1,26 @@
+{
+  "name": "dd-tournaments",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "dev": "npm run dev -w @dd-tournament/web",
+    "typecheck": "npm run build -w @dd-tournament/engine && npm run typecheck --workspaces",
+    "test": "npm run test --workspaces",
+    "build": "npm run build -w @dd-tournament/engine && npm run build -w @dd-tournament/web",
+    "pretest": "npm run build -w @dd-tournament/engine"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "4.1.12",
+    "@types/node": "^22.0.0"
+  },
+  "overrides": {
+    "vite": "7.3.8"
+  }
+}
