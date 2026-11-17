@@ -1,0 +1,27 @@
+# Legacy XML interop
+
+These pure functions consume and produce XML strings. They do no file, network, account, or database work. The implementation uses only the supplied persistence and rules teardown notes. All fixtures are hand-authored. Compatibility with the original application has **not** been tested against real files.
+
+`parseLegacyTournament(xml, ctx)` returns an event, the original normalized member IDs and name parts keyed by event player ID, and warnings. `serializeLegacyTournament(state, opts?)` accepts an optional `eventId` and `playerNames` record to preserve original first/last name boundaries. The player-list functions use `{ memberId, firstName, lastName }` rows.
+
+## Documented mappings
+
+- Tournament root and element order follow the notes: header, staff, penalty list, location, tournament players, matches. Player IDs are padded to ten digits in tournament files; player lists use plain normalized digits.
+- ID zero is a bye. Bye winner equal to the player means bye win; winner zero means bye loss. Two-player results map from `Incomplete`, `Winner`, `Draw`, and `DoubleLoss` (numeric forms also accepted). Round zero is discarded, including its seating/rematch history.
+- Swiss and playoff rounds use their stored round numbers. The first playoff round's players form `cut`. Matches keep file order, preserving bracket adjacency; exact original seed order is unavailable. The header's playoff boundary and per-match flag both identify playoff rounds. Single elimination treats every played round as playoff.
+- Stored rank, wins, points and playoff points are ignored on import. Standings derive from matches. Export writes recomputed legacy pooled standings caches: `Wins` is match points and `Points` encodes match points, OMW and OOMW. Other engine tiebreak modes cannot be expressed by the old format.
+- Missing-roster match participants become dropped `(n/a)` entries, with drop round equal to their last match. Unknown penalty participants also become placeholders. Imported player accounts are null. Name-only staff in both current and old wrappers generate warnings and are not imported into staff; judge names can still be retained in penalty records.
+- Drop reason and round are preserved for explicit drops; cut reasons map to `cut`. Temporary/team number ranges do not trigger checksum warnings. Unknown infraction names become event-local definitions and never alter results.
+
+## Inferences and details to check with real files
+
+- No real sample exists. The player-list element order, optional serializer namespaces, empty elements, and declaration were inferred in the notes. Output uses UTF-8 strings and no serializer namespace attributes; callers choose file encoding. Acceptance by the original application remains unverified.
+- `PlayerStructure` accepts `01` or `Individual`. Other structures, embedded team rosters and Open Dueling style/structure are refused. Other game styles and event types have no engine equivalent; export writes generic individual/Swiss-or-elimination codes.
+- Legacy dates have no timezone. Import uses reference-date field ordering (otherwise year/month/day) and interprets the date/time as UTC. Export writes UTC to minute precision. Locale-specific dates without a reference, timezone, seconds, and original event IDs are not retained automatically; `eventId` can be supplied on export.
+- `TableOffset` is interpreted as the starting table, with zero mapped to one. Confirm whether observed files use a zero-based offset. Byes are emitted with table zero because engine byes have no table. Confirm that the old application accepts zero instead of a numbered bye table.
+- Location keeps its name only. Address fields, printer splits, open-entry settings, timers, account links, check-in flags, entry round, and Swiss-cut undo history have no persisted equivalent. Missing member IDs, reserved zero, invalid IDs and duplicate member IDs receive unique temporary IDs from 9999000000 upward, skipping all occupied IDs. Reimport keeps these generated IDs; it cannot recover a previously null or duplicate member ID.
+- Display names split before the final word unless `playerNames` is supplied. Cut players with no explicit drop round use their Swiss-cut round, playoff elimination round, or the current round. A dropped registration entry must use round one because legacy round zero means active.
+- Known infraction enum names are retained; generic engine infractions map to their closest documented names. Custom names export as `None` with the original label in penalty notes, since the legacy enum cannot represent custom definitions. Caution exports as penalty code zero (the legacy current format has no caution code). Judge account linkage and disqualification-with-prize distinctions are not retained. Name-only judges without a corresponding exported staff entry use ID zero.
+- Software version is emitted as `3.0.0.0`; the importer does not apply a newer-version gate. Unknown fields are ignored. Malformed XML, alternate roots, document type/entity declarations, and a header requesting more than 10,000 rounds are refused.
+
+Round-trip tests cover representable players, round stages, participants, result variants, tables and drop information. They do not establish byte equivalence, real-file compatibility, or original-application execution.
