@@ -4,7 +4,7 @@ import { createRng, randomId, shuffle } from "./rng.js";
 import { assignTables, makeMatch, pairSwiss } from "./pairing.js";
 import { advanceBracket, initialBracket, refreshEliminations } from "./bracket.js";
 import { compareStandings, standings } from "./standings.js";
-import { normalizeMemberId } from "./member-id.js";
+import { isTemporaryMemberId, normalizeMemberId } from "./member-id.js";
 import { integrity } from "./integrity.js";
 
 function requireCondition(condition: unknown, code: string, message: string): asserts condition {
@@ -76,6 +76,23 @@ function drop(state: EventState, id: string): void {
 function allResults(state: EventState): void {
   requirePaired(state);
   requireCondition(state.rounds.every(r => r.matches.every(m => m.result !== null)), "MISSING_RESULTS", "Enter every outstanding result before continuing.");
+}
+
+function pairNextRound(state: EventState, ctx: CommandContext, random: () => number, ids: Set<string>): void {
+  allResults(state);
+  const active = state.players.filter(p => p.status === "active");
+  requireCondition(active.length, "NO_PLAYERS", "Add or reactivate players before pairing a round.");
+  requireCondition(active.length >= 2, "NOT_ENOUGH_PLAYERS", "At least two active players are required to pair a round.");
+  for (const cut of state.swissCuts) cut.roundPairedAfter = true;
+  if (state.phase === "playoff") state.rounds.push(advanceBracket(state, ctx.seed, random, ids));
+  else if (state.settings.format === "single_elim") {
+    state.cut = shuffle(active.map(p => p.id), random);
+    state.phase = "playoff";
+    state.rounds.push(initialBracket(state, state.cut, ctx.seed, random, ids));
+  } else {
+    state.rounds.push(pairSwiss(state, (state.rounds.at(-1)?.number ?? 0) + 1, ctx.seed, random, ids));
+    state.phase = "swiss";
+  }
 }
 
 function requirePaired(state: EventState): void {
@@ -236,30 +253,14 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       requireCondition(state.staff.some(s => s.id === command.staffId), "STAFF_NOT_FOUND", "That staff member does not exist.");
       state.staff = state.staff.filter(s => s.id !== command.staffId);
       break;
-    case "PairNextRound": {
-      allResults(state);
-      for (const cut of state.swissCuts) cut.roundPairedAfter = true;
-      if (state.phase === "playoff") state.rounds.push(advanceBracket(state, ctx.seed, random, ids));
-      else {
-        const active = state.players.filter(p => p.status === "active");
-        requireCondition(active.length, "NO_PLAYERS", "Add or reactivate players before pairing a round.");
-        if (state.settings.format === "single_elim") {
-          state.cut = shuffle(active.map(p => p.id), random);
-          state.phase = "playoff";
-          state.rounds.push(initialBracket(state, state.cut, ctx.seed, random, ids));
-        } else {
-          state.rounds.push(pairSwiss(state, (state.rounds.at(-1)?.number ?? 0) + 1, ctx.seed, random, ids));
-          state.phase = "swiss";
-        }
-      }
-      break;
-    }
+    case "PairNextRound": pairNextRound(state, ctx, random, ids); break;
     case "RepairRound": {
       const round = currentRound(state);
-      requireCondition(round.matches.every(m => m.p2 === null || m.result === null), "RESULT_ALREADY_ENTERED", "A round can only be repaired before any non-bye result is entered.");
+      requireCondition(command.round === undefined || command.round === round.number, "CURRENT_ROUND_ONLY", "Only the current round can be re-paired; cancel later rounds first.");
       requireCondition(round.seed !== ctx.seed, "NEW_SEED_REQUIRED", "Use a new seed to repair this round.");
       state.rounds.pop();
       if (round.stage === "playoff") {
+        refreshEliminations(state);
         if (!state.rounds.some(r => r.stage === "playoff")) {
           if (state.settings.format === "single_elim") state.cut = shuffle(state.cut, random);
           state.rounds.push(initialBracket(state, state.cut, ctx.seed, random, ids));
@@ -285,6 +286,11 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
         state.phase = state.settings.format === "single_elim" ? "registration" : "swiss";
       } else if (removed.stage === "playoff") refreshEliminations(state);
       else state.phase = state.rounds.length ? "swiss" : "registration";
+      const remainingRound = state.rounds.at(-1)?.number ?? 0;
+      for (const cut of state.swissCuts) if (cut.afterRound >= remainingRound) {
+        for (const id of cut.cutPlayers) if (player(state, id).status === "cut") player(state, id).status = "active";
+        cut.roundPairedAfter = false;
+      }
       break;
     }
     case "SwapPlayers": {
@@ -384,7 +390,10 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       if (round.stage === "playoff") refreshEliminations(state);
       break;
     }
-    case "DropPlayer": drop(state, command.playerId); break;
+    case "DropPlayer":
+      requireCondition(player(state, command.playerId).status !== "cut", "PLAYER_CUT", "A cut player cannot be dropped. Undo the cut to restore them.");
+      drop(state, command.playerId);
+      break;
     case "UndropPlayer": {
       const p = player(state, command.playerId);
       requireCondition(p.status === "dropped", "PLAYER_NOT_DROPPED", "This player has not been dropped.");
@@ -434,6 +443,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       const cutPlayers = (command.mode === "top" ? rows.slice(command.value) : rows.filter(s => s.matchPoints < command.value)).map(s => s.playerId);
       for (const id of cutPlayers) player(state, id).status = "cut";
       state.swissCuts.push({ afterRound: currentRound(state).number, mode: command.mode, value: command.value, cutPlayers });
+      if (command.pairNext) pairNextRound(state, ctx, random, ids);
       break;
     }
     case "UndoSwissCut": {
@@ -444,7 +454,12 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       state.swissCuts.pop();
       break;
     }
-    case "CompleteEvent": allResults(state); state.phase = "complete"; state.completedAt = ctx.now; break;
+    case "CompleteEvent":
+      allResults(state);
+      requireCondition(!state.settings.requireMemberId || !state.players.some(p => p.status === "active" && p.memberId !== null && isTemporaryMemberId(p.memberId)),
+        "TEMPORARY_MEMBER_IDS", "Temporary IDs must be replaced before finalizing");
+      state.phase = "complete"; state.completedAt = ctx.now;
+      break;
     case "ReopenEvent":
       requireCondition(state.phase === "complete", "EVENT_NOT_COMPLETE", "This event is already open.");
       state.phase = state.rounds.some(r => r.stage === "playoff") ? "playoff" : state.rounds.length ? "swiss" : "registration";

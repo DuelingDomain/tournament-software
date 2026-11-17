@@ -129,7 +129,7 @@ describe("re-entry and manual seats", () => {
 });
 
 describe("Swiss cuts and integrity", () => {
-  it("cuts below a points threshold, undoes only the last cut, and locks undo after pairing even if cancelled", () => {
+  it("cuts below a points threshold, undoes only the last cut, and unlocks undo when the next round is cancelled", () => {
     const original = fixture([[[0, 1, "p1"], [2, 3, "draw"]]]);
     let s = run(original, { type: "SwissCut", mode: "min_points", value: 1 });
     expect(s.players.map(p => p.status)).toEqual(["active", "cut", "active", "active"]);
@@ -143,8 +143,76 @@ describe("Swiss cuts and integrity", () => {
     expect(cancelledCutRound.swissCuts).toEqual([]);
     s = run(s, { type: "PairNextRound" });
     expect(s.rounds[1].matches.flatMap(m => [m.p1, m.p2])).not.toContain(s.players[1].id);
-    s = run(s, { type: "CancelRound" });
     expect(() => run(s, { type: "UndoSwissCut" })).toThrow(expect.objectContaining({ code: "SWISS_CUT_LOCKED" }));
+    s = run(s, { type: "CancelRound" });
+    expect(s.players.every(p => p.status === "active")).toBe(true);
+    expect(s.swissCuts[0].roundPairedAfter).toBe(false);
+    expect(run(s, { type: "UndoSwissCut" })).toEqual(original);
+  });
+
+  it("restores cuts at the rollback boundary while retaining earlier cuts, drops and results", () => {
+    let s = fixture([[[0, 1, "p1"], [2, 3, "p1"], [4, 5, "p1"], [6, 7, "p1"]]], 8);
+    s = run(s, { type: "DropPlayer", playerId: s.players[7].id });
+    s = run(s, { type: "SwissCut", mode: "min_points", value: 1 });
+    const first = structuredClone(s.rounds[0]);
+    const earlierCut = [...s.swissCuts[0].cutPlayers];
+    s = scoreAll(run(s, { type: "PairNextRound" }));
+    s = run(s, { type: "SwissCut", mode: "top", value: 2 });
+    const laterCut = [...s.swissCuts[1].cutPlayers];
+    s = run(s, { type: "PairNextRound" });
+    s = run(s, { type: "CancelRound" });
+    expect(s.players.filter(p => earlierCut.includes(p.id)).every(p => p.status === "cut")).toBe(true);
+    expect(s.players.filter(p => laterCut.includes(p.id)).every(p => p.status === "active")).toBe(true);
+    expect(s.players[7]).toMatchObject({ status: "dropped", droppedAfterRound: 1 });
+    expect(s.swissCuts.map(c => c.roundPairedAfter)).toEqual([true, false]);
+    expect(s.rounds[0]).toEqual(first);
+    s = run(s, { type: "UndoSwissCut" });
+    expect(() => run(s, { type: "UndoSwissCut" })).toThrow(expect.objectContaining({ code: "SWISS_CUT_LOCKED" }));
+    s = run(s, { type: "CancelRound" });
+    expect(s.players.slice(0, 7).every(p => p.status === "active")).toBe(true);
+    expect(run(s, { type: "UndoSwissCut" }).swissCuts).toEqual([]);
+  });
+
+  it("restores every cut made after the remaining round, including stacked cuts on the cancelled round", () => {
+    let s = fixture([[[0, 1, "p1"], [2, 3, "p1"], [4, 5, "p1"]]], 6);
+    s = run(s, { type: "SwissCut", mode: "min_points", value: 1 });
+    s = scoreAll(run(s, { type: "PairNextRound" }));
+    s = run(s, { type: "SwissCut", mode: "top", value: 2 });
+    s = run(s, { type: "SwissCut", mode: "min_points", value: 100 });
+    s = run(s, { type: "CancelRound" });
+    expect(s.players.every(p => p.status === "active")).toBe(true);
+    expect(s.swissCuts.map(c => c.roundPairedAfter)).toEqual([false, false, false]);
+    for (let i = 0; i < 3; i++) s = run(s, { type: "UndoSwissCut" });
+    expect(s.swissCuts).toEqual([]);
+  });
+
+  it("refuses DropPlayer for a cut entrant without opening a re-enrollment path", () => {
+    const s = run(fixture([[[0, 1, "p1"], [2, 3, "p1"]]]), { type: "SwissCut", mode: "min_points", value: 1 });
+    const before = structuredClone(s);
+    const playerId = s.swissCuts[0].cutPlayers[0];
+    expect(() => run(s, { type: "DropPlayer", playerId })).toThrow(expect.objectContaining({ code: "PLAYER_CUT" }));
+    expect(() => run(s, { type: "ReEnroll", playerId })).toThrow(expect.objectContaining({ code: "PLAYER_NOT_DROPPED" }));
+    expect(s).toEqual(before);
+  });
+
+  it.each(["top", "min_points"] as const)("can apply a %s cut and immediately pair only its survivors", mode => {
+    const s = fixture([[[0, 1, "p1"], [2, 3, "p1"]]]);
+    const before = structuredClone(s);
+    const paired = run(s, { type: "SwissCut", mode, value: mode === "top" ? 2 : 1, pairNext: true });
+    expect(paired.rounds).toHaveLength(2);
+    expect(paired.rounds[0]).toEqual(s.rounds[0]);
+    expect(paired.rounds[1].matches).toEqual([expect.objectContaining({ p1: expect.any(String), p2: expect.any(String), result: null })]);
+    expect(paired.rounds[1].matches.flatMap(m => [m.p1, m.p2]).sort()).toEqual([s.players[0].id, s.players[2].id].sort());
+    expect(paired.swissCuts[0].roundPairedAfter).toBe(true);
+    expect(() => run(paired, { type: "UndoSwissCut" })).toThrow(expect.objectContaining({ code: "SWISS_CUT_LOCKED" }));
+    expect(s).toEqual(before);
+  });
+
+  it.each([0, 1])("rolls back cut-and-pair atomically when only %i players survive", value => {
+    const s = fixture([[[0, 1, "p1"], [2, 3, "p1"]]]);
+    const before = structuredClone(s);
+    expect(() => run(s, { type: "SwissCut", mode: "top", value, pairNext: true })).toThrow(expect.objectContaining({ code: value ? "NOT_ENOUGH_PLAYERS" : "NO_PLAYERS" }));
+    expect(s).toEqual(before);
   });
 
   it("keeps exactly top X with seeded ties or an explicit full-tie order", () => {

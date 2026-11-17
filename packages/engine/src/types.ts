@@ -104,7 +104,7 @@ export interface EventState {
   cut: PlayerId[];
   /** Day-2 style cuts that continue Swiss (min points or top X). History kept for undo. */
   swissCuts: { afterRound: number; mode: "min_points" | "top"; value: number; cutPlayers: PlayerId[];
-    /** Remains locked even if the subsequently paired round is cancelled. */
+    /** Cleared when cancellation rolls back to this cut's boundary. */
     roundPairedAfter?: boolean }[];
   penalties: PenaltyEntry[];
   staff: StaffMember[];
@@ -141,7 +141,7 @@ export type Command =
   | { type: "RemoveStaff"; staffId: string }
   // Rounds
   | { type: "PairNextRound" } // Swiss round, first playoff round is via CutToPlayoff, later playoff rounds advance the bracket
-  | { type: "RepairRound" }   // re-pair current round; only while no result is entered
+  | { type: "RepairRound"; round?: number } // deletes current results and re-pairs; an explicit earlier round is refused
   | { type: "CancelRound" }   // delete the current round; cancelling the first playoff round undoes the cut
   | { type: "SwapPlayers"; a: PlayerId; b: PlayerId } // manual pairing edit in the current round
   | { type: "SetPairing"; matchId: MatchId; p1: PlayerId; p2: PlayerId | null } // manual edit; p2 null = bye
@@ -158,7 +158,7 @@ export type Command =
   | { type: "UndropPlayer"; playerId: PlayerId; option: "bye_loss" | "bye_win" | "next_round" | "swap_with_dropped" | "take_bye"; swapWith?: PlayerId } // legacy 5 options, current round only
   // Cut and finish
   | { type: "CutToPlayoff"; size?: number; tieOrder?: PlayerId[] } // tieOrder lets the organizer override the seeded tie-break at the cut line
-  | { type: "SwissCut"; mode: "min_points" | "top"; value: number; tieOrder?: PlayerId[] } // Day-2 cut, Swiss continues
+  | { type: "SwissCut"; mode: "min_points" | "top"; value: number; tieOrder?: PlayerId[]; pairNext?: true } // Day-2 cut; optionally pairs the next round atomically
   | { type: "UndoSwissCut" }
   | { type: "CompleteEvent" }
   | { type: "ReopenEvent" }

@@ -46,13 +46,46 @@ describe("commands and audience views", () => {
     if (option !== "next_round") expect(s.rounds[0].matches.at(-1)).toMatchObject({ p1: id, p2: null, result: option });
   });
 
-  it("repairs only an untouched round with a new seed, ignoring automatic byes", () => {
+  it("repairs with a new seed, deleting results and pending reports while regenerating automatic byes", () => {
     const s = run(event(5), { type: "PairNextRound" });
     expect(() => run(s, { type: "RepairRound" })).toThrow(/new seed/);
     const repaired = run(s, { type: "RepairRound" }, 88);
     expect(repaired.rounds[0].seed).toBe(88);
-    const entered = run(repaired, { type: "EnterResult", matchId: repaired.rounds[0].matches[0].id, result: "p1" });
-    expect(() => run(entered, { type: "RepairRound" }, 99)).toThrow(/non-bye result/);
+    let entered = run(repaired, { type: "EnterResult", matchId: repaired.rounds[0].matches[0].id, result: "p1" });
+    const pending = repaired.rounds[0].matches[1];
+    entered = run(entered, { type: "ReportResult", matchId: pending.id, playerId: pending.p1, result: "p2" });
+    const before = structuredClone(entered);
+    const again = run(entered, { type: "RepairRound", round: 1 }, 99);
+    expect(again.rounds).toHaveLength(1);
+    expect(again.rounds[0].matches.filter(m => m.p2 !== null).every(m => m.result === null && m.reports.length === 0)).toBe(true);
+    expect(again.rounds[0].matches.filter(m => m.p2 === null)).toEqual([expect.objectContaining({ result: "bye_win" })]);
+    expect(standings(again).map(r => r.matchPoints).sort()).toEqual([0, 0, 0, 0, 3]);
+    expect(again.rounds[0].matches.every(m => !entered.rounds[0].matches.some(old => old.id === m.id))).toBe(true);
+    expect(entered).toEqual(before);
+  });
+
+  it("refuses to re-pair an earlier round once a later round exists", () => {
+    const s = run(scoreAll(run(event(), { type: "PairNextRound" })), { type: "PairNextRound" });
+    const before = structuredClone(s);
+    expect(() => run(s, { type: "RepairRound", round: 1 }, 88)).toThrow(expect.objectContaining({ code: "CURRENT_ROUND_ONLY" }));
+    expect(s).toEqual(before);
+    expect(run(s, { type: "RepairRound", round: 2 }, 88).rounds[0]).toEqual(s.rounds[0]);
+  });
+
+  it.each(["swiss", "single_elim"] as const)("requires two active players to start %s", format => {
+    for (const count of [0, 1]) {
+      const s = event(count, { format });
+      expect(() => run(s, { type: "PairNextRound" })).toThrow(expect.objectContaining({ code: count ? "NOT_ENOUGH_PLAYERS" : "NO_PLAYERS" }));
+      expect(s.rounds).toEqual([]);
+    }
+    expect(run(event(2, { format }), { type: "PairNextRound" }).rounds[0].matches).toHaveLength(1);
+  });
+
+  it("counts active players rather than registered players before advancing Swiss", () => {
+    let s = fixture([[[0, 1, "p1"], [2, 3, "p1"]]]);
+    for (const p of s.players.slice(1)) s = run(s, { type: "DropPlayer", playerId: p.id });
+    expect(() => run(s, { type: "PairNextRound" })).toThrow(expect.objectContaining({ code: "NOT_ENOUGH_PLAYERS" }));
+    expect(s.rounds).toHaveLength(1);
   });
 
   it("keeps next-round undrops outside the current roster during manual edits", () => {
@@ -179,6 +212,35 @@ describe("commands and audience views", () => {
     expect(run(complete, { type: "ReopenEvent" }).phase).toBe("registration");
     try { run(event(), { type: "CancelRound" }); throw new Error("Expected rejection"); }
     catch (e) { expect(e).toMatchObject({ name: "CommandError", code: "NO_ROUND" }); }
+  });
+
+  it.each(["9999000000", "9988000000"])("blocks finalization with active temporary ID %s only when IDs are required", memberId => {
+    let s = fixture([[[0, 1, "p1"], [2, 3, "draw"]]]);
+    s = run(s, { type: "UpdatePlayer", playerId: s.players[0].id, memberId });
+    expect(run(s, { type: "CompleteEvent" }).phase).toBe("complete");
+    s = run(s, { type: "UpdateSettings", settings: { requireMemberId: true } });
+    const before = structuredClone(s);
+    expect(() => run(s, { type: "CompleteEvent" })).toThrow(expect.objectContaining({
+      code: "TEMPORARY_MEMBER_IDS", message: "Temporary IDs must be replaced before finalizing",
+    }));
+    expect(s).toEqual(before);
+    s = run(s, { type: "UpdatePlayer", playerId: s.players[0].id, memberId: "99991234" });
+    expect(run(s, { type: "CompleteEvent" }).completedAt).toBe(context.now);
+  });
+
+  it.each(["dropped", "cut"] as const)("allows finalization with a %s temporary entrant even when IDs are required", status => {
+    let s = fixture([[[0, 1, "p1"], [2, 3, "p1"]]]);
+    s = run(s, { type: "UpdatePlayer", playerId: s.players[1].id, memberId: "9999000000" });
+    s = status === "dropped" ? run(s, { type: "DropPlayer", playerId: s.players[1].id })
+      : run(s, { type: "SwissCut", mode: "min_points", value: 1 });
+    s = run(s, { type: "UpdateSettings", settings: { requireMemberId: true } });
+    expect(run(s, { type: "CompleteEvent" }).phase).toBe("complete");
+  });
+
+  it.each([false, true])("refuses finalization with unreported matches when requireMemberId is %s", requireMemberId => {
+    let s = run(event(), { type: "PairNextRound" });
+    s = run(s, { type: "UpdateSettings", settings: { requireMemberId } });
+    expect(() => run(s, { type: "CompleteEvent" })).toThrow(expect.objectContaining({ code: "MISSING_RESULTS" }));
   });
 
   it("isolates defaults and settings, and retains all seed bits in ids", () => {

@@ -178,6 +178,45 @@ describe("event HTTP contract", () => {
     expect(response.status).toBe(422); expect(await response.json()).toMatchObject({ error: "NO_PLAYERS", message: expect.any(String) });
     expect((await desk(code, cookie)).version).toBe(1);
   });
+  it("accepts cut-and-pair as one version and persists neither change when too few players survive", async () => {
+    const owner = await login(); const code = await create(owner);
+    await dummyPlayers(code, owner, 1, 4);
+    expect((await command(code, owner, 2, { type: "PairNextRound" })).status).toBe(200);
+    expect((await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 3 })).status).toBe(200);
+    const before: unknown = await (await api(`events/${code}/desk`, owner)).json();
+    const rejected = await command(code, owner, 4, { type: "SwissCut", mode: "top", value: 1, pairNext: true });
+    expect(rejected.status).toBe(422);
+    expect(await rejected.json()).toMatchObject({ error: "NOT_ENOUGH_PLAYERS" });
+    expect(await (await api(`events/${code}/desk`, owner)).json()).toEqual(before);
+    const paired = await command(code, owner, 4, { type: "SwissCut", mode: "top", value: 2, pairNext: true });
+    expect(paired.status).toBe(200);
+    expect(await paired.json()).toMatchObject({ version: 5, state: {
+      phase: "swiss", swissCuts: [{ afterRound: 1, roundPairedAfter: true }], rounds: [{ number: 1 }, { number: 2 }],
+    } });
+    const saved = await desk(code, owner);
+    expect(saved.version).toBe(5);
+    expect(saved.state.players.filter(p => p.status === "cut")).toHaveLength(2);
+    expect(saved.state.rounds[1]!.matches.flatMap(m => [m.p1, m.p2]).sort())
+      .toEqual(saved.state.players.filter(p => p.status === "active").map(p => p.id).sort());
+  });
+  it("accepts an explicit current round for scored re-pairing and rejects it after advancement without saving", async () => {
+    const owner = await login(); const code = await create(owner);
+    await dummyPlayers(code, owner, 1, 4);
+    expect((await command(code, owner, 2, { type: "PairNextRound" })).status).toBe(200);
+    expect((await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 3 })).status).toBe(200);
+    const repaired = await command(code, owner, 4, { type: "RepairRound", round: 1 });
+    expect(repaired.status).toBe(200);
+    const current = deskSchema.parse(await repaired.json());
+    expect(current.version).toBe(5);
+    expect(current.state.rounds[0]!.matches.map(m => m.result)).toEqual([null, null]);
+    expect((await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 5 })).status).toBe(200);
+    expect((await command(code, owner, 6, { type: "PairNextRound" })).status).toBe(200);
+    const before: unknown = await (await api(`events/${code}/desk`, owner)).json();
+    const rejected = await command(code, owner, 7, { type: "RepairRound", round: 1 });
+    expect(rejected.status).toBe(422);
+    expect(await rejected.json()).toMatchObject({ error: "CURRENT_ROUND_ONLY" });
+    expect(await (await api(`events/${code}/desk`, owner)).json()).toEqual(before);
+  });
   it("joins by account, confirms agreeing reports, restricts reports to the session's player, and drops", async () => {
     const owner = await login(); const other = await login(2); const outsider = await login(3); const code = await create(owner);
     expect(await (await api(`events/${code}/me`, other)).json()).toEqual({ joined: false, canJoin: true, memberId: "202" });

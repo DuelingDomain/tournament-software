@@ -46,7 +46,7 @@ describe("bracket golden fixtures", () => {
     s = scoreAll(s); s = run(s, { type: "PairNextRound" }); s = scoreAll(s);
     expect(standings(s).map(r => r.playoffFinish)).toEqual([1, 2, 3, 3, 5, 5, 5, 5]);
     expect(s.phase).toBe("playoff");
-    expect(() => run(s, { type: "PairNextRound" })).toThrow(/final is decided/);
+    expect(() => run(s, { type: "PairNextRound" })).toThrow(expect.objectContaining({ code: "NOT_ENOUGH_PLAYERS" }));
     const complete = run(s, { type: "CompleteEvent" });
     expect(complete.phase).toBe("complete");
     expect(run(complete, { type: "ReopenEvent" }).phase).toBe("playoff");
@@ -98,15 +98,25 @@ describe("bracket golden fixtures", () => {
     expect(run(s, { type: "CancelRound" }).phase).toBe("registration");
   });
 
-  it("repairs untouched playoff rounds using a new seed while preserving a Swiss cut's seeding", () => {
+  it("repairs scored playoff rounds, restoring current eliminations and preserving earlier rounds and seeding", () => {
     let s = run(event(6), { type: "CutToPlayoff", size: 6 });
     const first = s.rounds[0].matches.map(m => [m.p1, m.p2]);
+    s = scoreAll(s);
     s = run(s, { type: "RepairRound" }, 33);
     expect(s.rounds[0].seed).toBe(33);
     expect(s.rounds[0].matches.map(m => [m.p1, m.p2])).toEqual(first);
+    expect(s.players.every(p => p.status === "active")).toBe(true);
+    expect(s.rounds[0].matches.filter(m => m.p2 !== null).every(m => m.result === null)).toBe(true);
     s = run(scoreAll(s), { type: "PairNextRound" });
+    const earlier = structuredClone(s.rounds[0]);
+    const earlierLosers = earlier.matches.filter(m => m.p2 !== null).map(m => m.p2);
     const later = s.rounds[1].matches.map(m => [m.p1, m.p2]);
+    s = scoreAll(s);
     s = run(s, { type: "RepairRound" }, 44);
     expect(s.rounds[1].matches.map(m => [m.p1, m.p2])).toEqual(later);
+    expect(s.rounds[0]).toEqual(earlier);
+    expect(s.players.filter(p => earlierLosers.includes(p.id)).every(p => p.status === "cut")).toBe(true);
+    expect(s.players.filter(p => !earlierLosers.includes(p.id)).every(p => p.status === "active")).toBe(true);
+    expect(s.rounds[1].matches.every(m => m.result === null)).toBe(true);
   });
 });
