@@ -171,7 +171,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       requireCondition(state.rounds.length === 0 || state.settings.allowLateEntry, "LATE_ENTRY_CLOSED", "Late entry is disabled for this event.");
       for (const entry of command.players) {
         requireCondition(entry.name.trim(), "INVALID_NAME", "Every player needs a name.");
-        requireUnusedAccount(state, entry.userId);
+        if (entry.userId !== null) requireUnusedAccount(state, entry.userId);
         const memberId = entry.memberId == null ? null : normalizeMemberId(entry.memberId);
         requireCondition(!state.settings.requireMemberId || memberId !== null, "member_id_required", "A member ID is required to enter this event.");
         const p: Player = { id: randomId(random, ids), userId: entry.userId, name: entry.name.trim(), memberId, status: "active", droppedAfterRound: null,

@@ -37,6 +37,10 @@ export function requireCommand(event: EventRecord, userId: number, command: Comm
 export function requireImport(event: EventRecord, userId: number) {
   if (!["organizer", "head_judge", "scorekeeper"].includes(requireStaff(event, userId))) throw new HttpError(403, "forbidden_role");
 }
+export function requireDummyData(event: EventRecord, userId: number) {
+  const role = requireStaff(event, userId);
+  if (role !== "organizer" && role !== "head_judge") throw new HttpError(403, "forbidden_role");
+}
 export function joinReason(state: EventState, memberId: string | null): "closed" | "member_id_required" | "late_entry_closed" | undefined {
   if (!state.settings.registrationOpen || state.phase === "playoff" || state.phase === "complete") return "closed";
   if (state.phase !== "registration" && !state.settings.allowLateEntry) return "late_entry_closed";

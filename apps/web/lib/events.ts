@@ -5,8 +5,8 @@ import { isTemporaryMemberId, normalizeMemberId } from "@dd-tournament/engine";
 import { lookupAccounts, searchAccounts } from "./bridge";
 import { cacheUser, cachedUser, database, eventRecord, saveEvent, type EventRecord } from "./db";
 import { HttpError } from "./http";
-import { joinReason, requireCommand, requireImport, requireStaff } from "./permissions";
-import type { TournamentUser } from "./validation";
+import { joinReason, requireCommand, requireDummyData, requireImport, requireStaff } from "./permissions";
+import type { DummyData, TournamentUser } from "./validation";
 
 export function context(user: TournamentUser): CommandContext {
   return { now: new Date().toISOString(), seed: randomInt(0, 2 ** 48 - 1), actor: String(user.id) };
@@ -38,7 +38,7 @@ export function newEvent(user: TournamentUser, name: string, settings: Parameter
   }).immediate();
 }
 export async function resolveCommand(command: Command): Promise<Command> {
-  const ids = command.type === "AddPlayers" ? command.players.map(p => p.userId) : command.type === "AddStaff" || command.type === "LinkPlayerAccount" ? [command.userId] : [];
+  const ids = command.type === "AddPlayers" ? command.players.flatMap(p => p.userId === null ? [] : [p.userId]) : command.type === "AddStaff" || command.type === "LinkPlayerAccount" ? [command.userId] : [];
   if (!ids.length) return command;
   const { users, missing } = await lookupAccounts(ids);
   if (missing.length) throw new HttpError(422, "account_not_found");
@@ -48,18 +48,57 @@ export async function resolveCommand(command: Command): Promise<Command> {
     return user;
   }
   if (command.type === "AddPlayers") return { ...command, players: command.players.map(p => {
+    if (p.userId === null) return p;
     const user = account(p.userId); return { userId: user.id, name: user.displayName, memberId: user.memberId };
   }) };
   if (command.type === "AddStaff") return { ...command, name: account(command.userId).displayName };
   return command;
 }
-export function runCommand(code: string, user: TournamentUser, expectedVersion: number, command: Command) {
+function runCommands(code: string, user: TournamentUser, expectedVersion: number,
+  authorize: (event: EventRecord) => void, makeCommands: (event: EventRecord) => Command[]) {
   return database().transaction(() => {
     const event = eventRecord(code);
-    requireCommand(event, user.id, command);
-    if (event.version !== expectedVersion) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id)) });
-    return deskView(saveEvent(event, applyCommand(event.state, command, context(user))), requireStaff(event, user.id));
+    authorize(event);
+    const role = requireStaff(event, user.id);
+    if (event.version !== expectedVersion) throw new HttpError(409, "version_conflict", { desk: deskView(event, role) });
+    const commands = makeCommands(event);
+    let state = event.state;
+    for (const command of commands) state = applyCommand(state, command, context(user));
+    return { desk: deskView(saveEvent(event, state), role), count: commands.length };
   }).immediate();
+}
+export function runCommand(code: string, user: TournamentUser, expectedVersion: number, command: Command) {
+  return runCommands(code, user, expectedVersion, event => requireCommand(event, user.id, command), () => [command]).desk;
+}
+export function runDummyData(code: string, user: TournamentUser, data: DummyData) {
+  const result = runCommands(code, user, data.expectedVersion, event => requireDummyData(event, user.id), event => {
+    if (data.action === "players") {
+      if (event.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
+      let number = 0;
+      const used = new Set(event.state.players.map(p => p.memberId));
+      let memberId = 9999000000;
+      for (const player of event.state.players) {
+        const match = /^Test Player (\d+)$/.exec(player.name);
+        if (match) number = Math.max(number, Number(match[1]));
+      }
+      const players = Array.from({ length: data.count }, () => {
+        while (used.has(String(memberId))) memberId++;
+        if (memberId > 9999999999) throw new HttpError(422, "temporary_id_exhausted");
+        const id = String(memberId++); used.add(id);
+        return { userId: null, name: `Test Player ${String(++number).padStart(2, "0")}`, memberId: id };
+      });
+      return [{ type: "AddPlayers", players }];
+    }
+    if (event.state.phase === "complete") throw new HttpError(422, "EVENT_COMPLETE");
+    const round = event.state.rounds.at(-1);
+    if (!round) throw new HttpError(422, "NO_ROUND");
+    return round.matches.filter(match => match.result === null && match.p2 !== null).map(match => {
+      const roll = Math.random();
+      return { type: "EnterResult", matchId: match.id, result: round.stage === "playoff" ? (roll < 0.5 ? "p1" : "p2")
+        : roll < 0.425 ? "p1" : roll < 0.85 ? "p2" : roll < 0.95 ? "draw" : "double_loss" };
+    });
+  });
+  return data.action === "players" ? { desk: result.desk, added: data.count } : { desk: result.desk, entered: result.count };
 }
 export function joinEvent(code: string, user: TournamentUser) {
   return database().transaction(() => {
@@ -68,7 +107,7 @@ export function joinEvent(code: string, user: TournamentUser) {
     const reason = joinReason(event.state, user.memberId);
     if (reason) return playerResponse(event, user);
     const memberId = user.memberId === null ? null : normalizeMemberId(user.memberId);
-    const imported = memberId && event.state.players.find(player => player.userId === null && player.memberId === memberId);
+    const imported = memberId && !isTemporaryMemberId(memberId) && event.state.players.find(player => player.userId === null && player.memberId === memberId);
     const command: Command = imported ? { type: "LinkPlayerAccount", playerId: imported.id, userId: user.id }
       : { type: "AddPlayers", players: [{ userId: user.id, name: user.displayName, memberId }] };
     return playerResponse(saveEvent(event, applyCommand(event.state, command, context(user))), user);

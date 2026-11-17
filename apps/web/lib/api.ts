@@ -4,11 +4,11 @@ import { z } from "zod";
 import { currentUser, signedIn } from "./auth";
 import { lookupAccounts, searchAccounts, setMemberId } from "./bridge";
 import { cachedUser, database, eventRecord, eventRecords } from "./db";
-import { deskView, importEvent, joinEvent, newEvent, playerCommand, playerResponse, resolveCommand, runCommand } from "./events";
+import { deskView, importEvent, joinEvent, newEvent, playerCommand, playerResponse, resolveCommand, runCommand, runDummyData } from "./events";
 import { exportEvent } from "./exports";
 import { boundary, bodyJson, checkOrigin, HttpError, json, readBody } from "./http";
-import { requireCommand, requireImport, requireStaff, viewerRole } from "./permissions";
-import { commandSchema, partialSettings, result, userId } from "./validation";
+import { requireCommand, requireDummyData, requireImport, requireStaff, viewerRole } from "./permissions";
+import { commandSchema, dummyDataSchema, partialSettings, result, userId } from "./validation";
 
 async function body<T>(request: Request, schema: z.ZodType<T>) {
   return schema.parse(await bodyJson(request));
@@ -86,6 +86,11 @@ export function handleApi(request: Request, path: string[]) {
       requireCommand(event, user.id, data.command);
       if (data.expectedVersion !== event.version) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id)) });
       return json(runCommand(code, user, data.expectedVersion, await resolveCommand(data.command)));
+    }
+    if (path.length === 3 && action === "dummy-data" && method === "POST") {
+      const { user, event } = staff(request, code);
+      requireDummyData(event, user.id);
+      return json(runDummyData(code, user, await body(request, dummyDataSchema)));
     }
     if (path.length === 3 && ["me", "join", "report", "drop"].includes(action ?? "")) {
       let user = signedIn(request);

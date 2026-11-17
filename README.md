@@ -62,13 +62,48 @@ Account member-ID edits require player-edit permission. Imports require an
 organizer, head judge or scorekeeper; exports require any event staff role.
 Imported identities are matched only by exact member ID, never by name.
 Unmatched entries remain unlinked until staff link an account or its holder
-joins with that member ID. Historical imported staff never become account staff.
+joins with that member ID. Temporary member IDs never link accounts automatically,
+including during import and self-join. Historical imported staff never become account staff.
 
 The bridge verifies the exact assertion HMAC and 60-second lifetime before
 consuming a nonce once. Search, lookup and member-ID writes sign exact request
 bytes with the DD bridge v1 signing strings. A bridge outage returns an error;
 there is no production mock fallback. Discord endpoints store configuration;
 this initial server does not dispatch webhook messages.
+
+## Practice data
+
+Organizers and head judges can use `POST /api/events/:code/dummy-data` with a
+signed-in session and either JSON body:
+
+```json
+{ "action": "players", "count": 16, "expectedVersion": 1 }
+```
+
+```json
+{ "action": "results", "expectedVersion": 3 }
+```
+
+`players` accepts an integer count from 1 to 256 during the registration phase
+only (otherwise 422 `REGISTRATION_ONLY`). It returns `{ desk, added }` and adds
+unlinked entrants (`userId: null`) named `Test Player 01`, `Test Player 02`, etc.,
+continuing after the highest existing test-player number. Unique temporary
+member IDs start at `9999000000`, skipping occupied IDs. These entries never
+claim real accounts automatically; account linking requires an explicit staff command.
+
+`results` returns `{ desk, entered }` after filling every unreported two-player
+match in the current round. Swiss results average 85% wins (either player),
+10% draws and 5% double losses; playoff results always have a winner. Byes,
+existing results and earlier rounds remain untouched. No players are dropped;
+normal playoff elimination still applies. A round is required (422 `NO_ROUND`),
+and completed events must be reopened (422 `EVENT_COMPLETE`).
+
+Other signed-in roles receive 403 `forbidden_role`; signed-out requests receive
+401. Invalid bodies receive 400 `invalid_body`. Both actions use the normal
+engine command transaction and advance the event version exactly once, even
+when `entered` is zero. Stale `expectedVersion` values return 409
+`{ error: "version_conflict", desk }` without a write, so normal version polling
+sees successful changes.
 
 ## Verification
 

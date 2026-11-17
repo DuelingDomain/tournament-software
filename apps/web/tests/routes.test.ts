@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
@@ -47,7 +47,14 @@ async function create(cookie: string, settings = {}) {
   return z.object({ code: z.string() }).parse(await response.json()).code;
 }
 const deskSchema = z.object({ version: z.number(), state: z.object({ players: z.array(z.object({ id: z.string(), userId: z.number().nullable(), name: z.string(), memberId: z.string().nullable(), status: z.string() })),
-  staff: z.array(z.object({ id: z.string(), userId: z.number(), role: z.string() })), rounds: z.array(z.object({ matches: z.array(z.object({ id: z.string(), result: z.string().nullable() })) })) }) });
+  staff: z.array(z.object({ id: z.string(), userId: z.number(), role: z.string() })), rounds: z.array(z.object({ matches: z.array(z.object({ id: z.string(), p1: z.string(), p2: z.string().nullable(), result: z.string().nullable() })) })) }) });
+const dummyPlayersSchema = z.object({ desk: deskSchema, added: z.number() });
+const dummyResultsSchema = z.object({ desk: deskSchema, entered: z.number() });
+async function dummyPlayers(code: string, cookie: string, expectedVersion: number, count: number) {
+  const response = await api(`events/${code}/dummy-data`, cookie, "POST", { action: "players", count, expectedVersion });
+  expect(response.status).toBe(200);
+  return dummyPlayersSchema.parse(await response.json());
+}
 async function desk(code: string, cookie: string) { return deskSchema.parse(await (await api(`events/${code}/desk`, cookie)).json()); }
 async function command(code: string, cookie: string, expectedVersion: number, command: Command) {
   return api(`events/${code}/commands`, cookie, "POST", { expectedVersion, command });
@@ -69,6 +76,7 @@ beforeEach(() => {
   process.env.CREATE_CODE = "";
   database().exec("DELETE FROM events; DELETE FROM sessions; DELETE FROM users; DELETE FROM nonces;");
 });
+afterEach(() => vi.restoreAllMocks());
 afterAll(() => {
   database().close(); rmSync(directory, { recursive: true, force: true });
   for (const key of ["DATABASE_PATH", "PUBLIC_URL", "DD_APP_URL", "DD_BRIDGE_SECRET", "SESSION_SECRET", "CREATE_CODE"]) {
@@ -219,6 +227,216 @@ describe("event HTTP contract", () => {
 });
 
 const roles: StaffRole[] = ["organizer", "head_judge", "judge", "scorekeeper", "staff"];
+describe("dummy-data route", () => {
+  it.each([...roles, "outsider"].flatMap(role => ["players", "results"].map(action => ({ role, action }))))("$role: $action", async ({ role, action }) => {
+    const owner = await login(); const code = await create(owner);
+    let version = 1;
+    if (role !== "organizer" && role !== "outsider") {
+      const staffRole = z.enum(["head_judge", "judge", "scorekeeper", "staff"]).parse(role);
+      expect((await command(code, owner, version++, { type: "AddStaff", userId: 2, name: "Ignored", role: staffRole })).status).toBe(200);
+    }
+    await dummyPlayers(code, owner, version++, 2);
+    if (action === "results") expect((await command(code, owner, version++, { type: "PairNextRound" })).status).toBe(200);
+    const before = await desk(code, owner);
+    const response = await api(`events/${code}/dummy-data`, role === "organizer" ? owner : await login(2), "POST",
+      { action, expectedVersion: version, ...(action === "players" ? { count: 1 } : {}) });
+    const allowed = role === "organizer" || role === "head_judge";
+    expect(response.status).toBe(allowed ? 200 : 403);
+    if (allowed) expect(await response.json()).toMatchObject({ desk: { version: version + 1, viewerRole: role }, [action === "players" ? "added" : "entered"]: 1 });
+    else { expect(await response.json()).toEqual({ error: "forbidden_role" }); expect(await desk(code, owner)).toEqual(before); }
+  });
+
+  it.each(["players", "results"])("requires authentication for %s", async action => {
+    const owner = await login(); const code = await create(owner);
+    expect((await api(`events/${code}/dummy-data`, undefined, "POST", { action, count: 1, expectedVersion: 1 })).status).toBe(401);
+    expect((await desk(code, owner)).version).toBe(1);
+  });
+
+  it("keeps unlinked player creation out of the ordinary account-based AddPlayers route", async () => {
+    const owner = await login(); const staff = await login(2); const code = await create(owner);
+    await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Ignored", role: "staff" });
+    const response = await api(`events/${code}/commands`, staff, "POST", { expectedVersion: 2,
+      command: { type: "AddPlayers", players: [{ userId: null, name: "Test Player 01", memberId: "9999000000" }] } });
+    expect(response.status).toBe(400); expect(await response.json()).toEqual({ error: "invalid_body" });
+    expect(await desk(code, owner)).toMatchObject({ version: 2, state: { players: [] } });
+  });
+
+  it.each([
+    { action: "players", count: 0, expectedVersion: 1 },
+    { action: "players", count: -1, expectedVersion: 1 },
+    { action: "players", count: 257, expectedVersion: 1 },
+    { action: "players", count: 1.5, expectedVersion: 1 },
+    { action: "players", count: "2", expectedVersion: 1 },
+    { action: "players", expectedVersion: 1 },
+    { action: "players", count: 1 },
+    { action: "players", count: 1, expectedVersion: 0 },
+    { action: "results", expectedVersion: 1.5 },
+    { action: "results", expectedVersion: "1" },
+    { action: "results", expectedVersion: 1, count: 1 },
+    { action: "unknown", expectedVersion: 1 },
+  ])("rejects invalid body %j without a write", async data => {
+    const owner = await login(); const code = await create(owner);
+    const response = await api(`events/${code}/dummy-data`, owner, "POST", data);
+    expect(response.status).toBe(400); expect(await response.json()).toEqual({ error: "invalid_body" });
+    expect((await desk(code, owner)).version).toBe(1);
+  });
+
+  it("accepts the count limits and continues sparse names with unique temporary IDs", async () => {
+    const owner = await login(); const code = await create(owner, { registrationOpen: false, requireMemberId: true });
+    const first = await dummyPlayers(code, owner, 1, 1);
+    expect(first).toMatchObject({ added: 1, desk: { version: 2, state: { players: [{ name: "Test Player 01", userId: null, memberId: "9999000000" }] } } });
+    await command(code, owner, 2, { type: "UpdatePlayer", playerId: first.desk.state.players[0]!.id, name: "Test Player 07" });
+    const next = await dummyPlayers(code, owner, 3, 256);
+    expect(next.added).toBe(256); expect(next.desk.version).toBe(4);
+    const players = next.desk.state.players;
+    expect(players).toHaveLength(257);
+    expect(players.slice(1).map(p => p.name)).toEqual(Array.from({ length: 256 }, (_, i) => `Test Player ${String(i + 8).padStart(2, "0")}`));
+    expect(players.every(p => p.userId === null && p.status === "active")).toBe(true);
+    expect(players.map(p => p.memberId)).toEqual(Array.from({ length: 257 }, (_, i) => String(9999000000 + i)));
+    expect(new Set(players.map(p => p.id)).size).toBe(257);
+    expect(await desk(code, owner)).toEqual(next.desk);
+    expect(await (await api(`events/${code}?since=3`)).json()).toMatchObject({ version: 4, playerCount: 257 });
+  });
+
+  it.each(["swiss", "playoff", "complete"])("refuses dummy players during %s", async phase => {
+    const owner = await login(); const code = await create(owner, { format: phase === "playoff" ? "single_elim" : "swiss" });
+    await dummyPlayers(code, owner, 1, 4);
+    await command(code, owner, 2, { type: "PairNextRound" });
+    if (phase === "complete") {
+      await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 3 });
+      await command(code, owner, 4, { type: "CompleteEvent" });
+    }
+    const before = await desk(code, owner);
+    const stale = await api(`events/${code}/dummy-data`, owner, "POST", { action: "players", count: 1, expectedVersion: before.version - 1 });
+    expect(stale.status).toBe(409); expect(await stale.json()).toMatchObject({ error: "version_conflict", desk: before });
+    const response = await api(`events/${code}/dummy-data`, owner, "POST", { action: "players", count: 1, expectedVersion: before.version });
+    expect(response.status).toBe(422); expect(await response.json()).toMatchObject({ error: "REGISTRATION_ONLY" });
+    expect(await desk(code, owner)).toEqual(before);
+  });
+
+  it.each(["players", "results"])("commits one competing %s request and returns the latest desk on conflict", async action => {
+    const owner = await login(); const code = await create(owner);
+    await dummyPlayers(code, owner, 1, 4);
+    if (action === "results") await command(code, owner, 2, { type: "PairNextRound" });
+    const before = await desk(code, owner);
+    const data = { action, expectedVersion: before.version, ...(action === "players" ? { count: 3 } : {}) };
+    const responses = await Promise.all([api(`events/${code}/dummy-data`, owner, "POST", data), api(`events/${code}/dummy-data`, owner, "POST", data)]);
+    expect(responses.map(r => r.status).sort()).toEqual([200, 409]);
+    const after = await desk(code, owner);
+    expect(after.version).toBe(before.version + 1);
+    expect(after.state.players).toHaveLength(action === "players" ? 7 : 4);
+    expect(await responses.find(r => r.status === 409)!.json()).toMatchObject({ error: "version_conflict", desk: after });
+    expect(await (await api(`events/${code}?since=${before.version}`)).json()).toMatchObject({ version: after.version });
+  });
+
+  it("generates roughly 85% wins, 10% draws and 5% double losses with a fixed random seed", async () => {
+    const owner = await login(); const code = await create(owner);
+    await dummyPlayers(code, owner, 1, 256);
+    await command(code, owner, 2, { type: "PairNextRound" });
+    let seed = 20261116;
+    vi.spyOn(Math, "random").mockImplementation(() => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 2 ** 32; });
+    const response = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 3 });
+    expect(response.status).toBe(200);
+    const generated = dummyResultsSchema.parse(await response.json());
+    expect(generated.entered).toBe(128); expect(generated.desk.version).toBe(4);
+    const results = generated.desk.state.rounds[0]!.matches.map(m => m.result);
+    const wins = results.filter(r => r === "p1" || r === "p2").length;
+    const draws = results.filter(r => r === "draw").length;
+    const losses = results.filter(r => r === "double_loss").length;
+    expect(wins).toBeGreaterThanOrEqual(95); expect(wins).toBeLessThanOrEqual(120);
+    expect(draws).toBeGreaterThanOrEqual(5); expect(draws).toBeLessThanOrEqual(22);
+    expect(losses).toBeGreaterThanOrEqual(1); expect(losses).toBeLessThanOrEqual(15);
+    expect(wins + draws + losses).toBe(128);
+    expect(results).toContain("p1"); expect(results).toContain("p2");
+    expect(generated.desk.state.players.every(p => p.status === "active")).toBe(true);
+    expect(await desk(code, owner)).toEqual(generated.desk);
+  });
+
+  it("fills only unreported current-round matches, preserving byes, prior rounds and player statuses", async () => {
+    const owner = await login(); const code = await create(owner);
+    await dummyPlayers(code, owner, 1, 7);
+    await command(code, owner, 2, { type: "PairNextRound" });
+    await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 3 });
+    const paired = deskSchema.parse(await (await command(code, owner, 4, { type: "PairNextRound" })).json());
+    const current = paired.state.rounds[1]!.matches.filter(m => m.p2 !== null);
+    await command(code, owner, 5, { type: "EnterResult", matchId: paired.state.rounds[0]!.matches[0]!.id, result: null });
+    await command(code, owner, 6, { type: "EnterResult", matchId: current[0]!.id, result: "draw" });
+    await command(code, owner, 7, { type: "ReportResult", playerId: current[1]!.p1, matchId: current[1]!.id, result: "p1" });
+    await command(code, owner, 8, { type: "DropPlayer", playerId: current[2]!.p1 });
+    const bye = paired.state.rounds[1]!.matches.find(m => m.p2 === null)!;
+    await command(code, owner, 9, { type: "EnterResult", matchId: bye.id, result: null });
+    const before = await desk(code, owner);
+    const response = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 10 });
+    expect(response.status).toBe(200);
+    const generated = dummyResultsSchema.parse(await response.json());
+    expect(generated.entered).toBe(2); expect(generated.desk.version).toBe(11);
+    expect(generated.desk.state.rounds[0]).toEqual(before.state.rounds[0]);
+    expect(generated.desk.state.rounds[1]!.matches.find(m => m.id === current[0]!.id)?.result).toBe("draw");
+    expect(generated.desk.state.rounds[1]!.matches.find(m => m.p2 === null)).toEqual(before.state.rounds[1]!.matches.find(m => m.p2 === null));
+    expect(generated.desk.state.players).toEqual(before.state.players);
+    expect(generated.desk.state.rounds[1]!.matches.filter(m => m.p2 !== null).every(m => m.result !== null)).toBe(true);
+    const repeated = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 11 });
+    expect(await repeated.json()).toMatchObject({ entered: 0, desk: { version: 12, state: generated.desk.state } });
+  });
+
+  it("generates only wins in playoffs without dropping entrants or changing byes", async () => {
+    const owner = await login(); const code = await create(owner, { format: "single_elim" });
+    await dummyPlayers(code, owner, 1, 5);
+    await command(code, owner, 2, { type: "PairNextRound" });
+    const before = await desk(code, owner);
+    vi.spyOn(Math, "random").mockReturnValue(0.99);
+    const response = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 3 });
+    expect(response.status).toBe(200);
+    const generated = dummyResultsSchema.parse(await response.json());
+    const matches = generated.desk.state.rounds[0]!.matches;
+    expect(generated.entered).toBe(matches.filter(m => m.p2 !== null).length);
+    expect(matches.filter(m => m.p2 !== null).every(m => m.result === "p1" || m.result === "p2")).toBe(true);
+    expect(matches.filter(m => m.p2 === null)).toEqual(before.state.rounds[0]!.matches.filter(m => m.p2 === null));
+    expect(generated.desk.state.players.every(p => p.status !== "dropped")).toBe(true);
+  });
+
+  it("refuses results without a round or after completion, and rolls back engine failures", async () => {
+    const owner = await login(); const code = await create(owner);
+    const missing = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 1 });
+    expect(missing.status).toBe(422); expect(await missing.json()).toMatchObject({ error: "NO_ROUND" });
+    await dummyPlayers(code, owner, 1, 4);
+    const paired = deskSchema.parse(await (await command(code, owner, 2, { type: "PairNextRound" })).json());
+    await command(code, owner, 3, { type: "SplitMatch", matchId: paired.state.rounds[0]!.matches[0]!.id });
+    const before = await desk(code, owner);
+    const invalid = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 4 });
+    expect(invalid.status).toBe(422); expect(await invalid.json()).toMatchObject({ error: "unpaired_players" });
+    expect(await desk(code, owner)).toEqual(before);
+    await command(code, owner, 4, { type: "RepairRound" });
+    await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 5 });
+    await command(code, owner, 6, { type: "CompleteEvent" });
+    const complete = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 7 });
+    expect(complete.status).toBe(422); expect(await complete.json()).toMatchObject({ error: "EVENT_COMPLETE" });
+    expect((await desk(code, owner)).version).toBe(7);
+  });
+
+  it("never automatically links temporary entries during import or self-join, even on an exact member-ID match", async () => {
+    const owner = await login(); const entrant = await login(3); const code = await create(owner);
+    const generated = await dummyPlayers(code, owner, 1, 3);
+    const memberId = generated.desk.state.players[0]!.memberId;
+    try {
+      expect((await api(`accounts/3/member-id?event=${code}`, owner, "PUT", { memberId })).status).toBe(200);
+      const exported = await api(`events/${code}/export/tournament`, owner);
+      const imported = await upload(code, owner, "tournament", await exported.text());
+      expect(imported.status).toBe(200);
+      const restored = z.object({ desk: deskSchema, imported: z.number(), unmatched: z.number() }).parse(await imported.json());
+      expect(restored).toMatchObject({ imported: 3, unmatched: 3 });
+      expect((await api(`events/${code}/join`, entrant, "POST", {})).status).toBe(200);
+      const after = await desk(code, owner);
+      expect(after.state.players).toHaveLength(4);
+      expect(after.state.players.slice(0, 3)).toEqual(restored.desk.state.players);
+      expect(after.state.players.slice(0, 3).every(p => p.userId === null)).toBe(true);
+      expect(after.state.players[3]).toMatchObject({ userId: 3, name: "Lumi Lantern", memberId });
+    } finally {
+      await api(`accounts/3/member-id?event=${code}`, owner, "PUT", { memberId: null });
+    }
+  });
+});
+
 const permissionCases: { label: string; command: (playerId: string) => Command; allowed: StaffRole[] }[] = [
   { label: "rounds", command: () => ({ type: "PairNextRound" }), allowed: ["organizer", "head_judge", "scorekeeper"] },
   { label: "check-in", command: playerId => ({ type: "SetCheckedIn", playerId, checkedIn: true }), allowed: ["organizer", "head_judge", "scorekeeper", "staff"] },

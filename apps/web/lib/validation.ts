@@ -8,6 +8,12 @@ const memberId = z.string().max(64).nullable();
 const penalty = z.enum(["caution", "warning", "game_loss", "match_loss", "disqualification"]);
 export const role = z.enum(["organizer", "head_judge", "judge", "scorekeeper", "staff"]);
 export const result = z.enum(["p1", "p2", "draw", "double_loss", "bye_win", "bye_loss"]);
+const expectedVersion = z.number().int().positive().safe();
+export const dummyDataSchema = z.discriminatedUnion("action", [
+  z.strictObject({ action: z.literal("players"), count: z.number().int().min(1).max(256), expectedVersion }),
+  z.strictObject({ action: z.literal("results"), expectedVersion }),
+]);
+export type DummyData = z.infer<typeof dummyDataSchema>;
 export const settingsSchema = z.strictObject({
   name, format: z.enum(["swiss", "single_elim"]), plannedRounds: z.number().int().min(1).max(100).nullable(),
   topCut: z.union([z.literal(0), z.literal(2), z.literal(4), z.literal(8), z.literal(16), z.literal(32), z.literal(64)]),

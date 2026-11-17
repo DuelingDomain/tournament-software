@@ -42,8 +42,7 @@ export type Penalty = "caution" | "warning" | "game_loss" | "match_loss" | "disq
 
 export interface Player {
   id: PlayerId;
-  /** DuelingDomain users.id. Every new entrant has an account; null only for
-   *  entries brought in by a legacy-file import that no account has claimed yet. */
+  /** DuelingDomain users.id; null for unclaimed legacy imports and dummy entries. */
   userId: number | null;
   name: string; // display name snapshot at entry; staff may edit
   /** Legacy 10-digit player number stored as digits without leading zeros
@@ -131,7 +130,7 @@ export interface CommandContext { now: string; seed: number; actor: string }
 export type Command =
   // Setup
   | { type: "UpdateSettings"; settings: Partial<Omit<EventSettings, "format">> & { format?: EventFormat } }
-  | { type: "AddPlayers"; players: { userId: number; name: string; memberId?: string | null }[] } // service resolves accounts; late entry after R1 = bye losses for every round already paired, including the current one; duplicate userId refused
+  | { type: "AddPlayers"; players: { userId: number | null; name: string; memberId?: string | null }[] } // service resolves accounts; late entry after R1 = bye losses for every round already paired, including the current one; duplicate non-null userId refused
   | { type: "UpdatePlayer"; playerId: PlayerId; name?: string; memberId?: string | null; fixedTable?: number | null; notes?: string | null }
   | { type: "LinkPlayerAccount"; playerId: PlayerId; userId: number } // claim an imported entry
   | { type: "ReEnroll"; playerId: PlayerId } // dropped player re-enters: bye losses for every missed round incl. current (legacy re-enroll)

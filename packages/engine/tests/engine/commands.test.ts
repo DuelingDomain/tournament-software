@@ -3,6 +3,26 @@ import { integrity, standings } from "../../src/index.js";
 import { event, fixture, run, scoreAll } from "./fixtures.js";
 
 describe("account entries and staff", () => {
+  it("adds multiple unlinked entries without relaxing uniqueness for real accounts", () => {
+    const original = event(1);
+    original.settings.requireMemberId = true;
+    const added = run(original, { type: "AddPlayers", players: [
+      { userId: null, name: " Test Player 01 ", memberId: "9999000000" },
+      { userId: null, name: "Test Player 02", memberId: "9999000001" },
+    ] });
+    expect(added.players.slice(1)).toMatchObject([
+      { userId: null, name: "Test Player 01", memberId: "9999000000", status: "active" },
+      { userId: null, name: "Test Player 02", memberId: "9999000001", status: "active" },
+    ]);
+    expect(new Set(added.players.map(p => p.id)).size).toBe(3);
+    expect(original.players).toHaveLength(1);
+    expect(() => run(added, { type: "AddPlayers", players: [
+      { userId: null, name: "Unclaimed", memberId: "9999000002" },
+      { userId: 1, name: "Duplicate", memberId: "101" },
+    ] })).toThrow(expect.objectContaining({ code: "duplicate_account" }));
+    expect(added.players).toHaveLength(3);
+  });
+
   it("requires unique accounts atomically, normalizes member IDs and only warns about checksums", () => {
     const s = event(1);
     s.settings.requireMemberId = true;
