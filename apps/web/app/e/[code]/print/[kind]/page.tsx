@@ -1,7 +1,10 @@
 import { notFound } from "next/navigation";
-import { EventPanel } from "../../../../../components/event-panel";
-export default async function Page({ params }: { params: Promise<{ code: string; kind: string }> }) {
+import { PrintView, type PrintKind } from "@/components/print/PrintView";
+
+const KINDS: PrintKind[] = ["pairings", "slips", "standings", "players", "brackets"];
+export default async function Page({ params, searchParams }: { params: Promise<{ code: string; kind: string }>; searchParams: Promise<{ by?: string }> }) {
   const { code, kind } = await params;
-  if (!["pairings", "slips", "standings"].includes(kind)) notFound();
-  return <EventPanel code={code} mode="print" printKind={kind} />;
+  const { by } = await searchParams;
+  if (!KINDS.includes(kind as PrintKind)) notFound();
+  return <PrintView code={code} kind={kind as PrintKind} sortByPlayer={by === "player"} />;
 }

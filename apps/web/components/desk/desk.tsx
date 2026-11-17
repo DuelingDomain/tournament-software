@@ -1,0 +1,167 @@
+"use client";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button, ButtonLink, ConfirmDialog, Tabs, type TabItem } from "../ui";
+import "./desk.css";
+import { actionForKey, buildActions, pairInfo, type ConfirmKind, type DialogKind, type ExportKind, type Panel, type PrintKind } from "./actions";
+import { AllPlayersPanel } from "./all-players-panel";
+import { Binder, MenuBar, StatusBar, Tray } from "./chrome";
+import {
+  AddTestPlayersDialog, BatchPrintDialog, ChangeResultDialog, CutDialog, HistoryDialog, ImportDialog, IntegrityDialog, KeyboardDialog, ManualPairingsDialog, PlayerNotesDialog, TimerDialog, UndropDialog,
+} from "./dialogs";
+import { postDummy } from "./dummy";
+import { JudgingPanel } from "./judging-panel";
+import { Palette } from "./palette";
+import { PairingsPanel } from "./pairings-panel";
+import { PlayersPanel } from "./players-panel";
+import { SettingsPanel } from "./settings-panel";
+import { StandingsPanel } from "./standings-panel";
+import { roundStats } from "./helpers";
+import { can } from "./roles";
+import { useDesk } from "./use-desk";
+
+const modalOpen = () => !!document.querySelector("dialog[open]");
+
+function Centered({ title, children }: { title: string; children?: React.ReactNode }) {
+  return <main className="dk dk-center"><h1 className="dk-h2">{title}</h1>{children}</main>;
+}
+
+export function Desk({ code }: { code: string }) {
+  const { desk, state, saving, note, send, replaceDesk, dismissNote } = useDesk(code);
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const [view, setView] = useState<"all" | "event">("event");
+  const [dialog, setDialog] = useState<DialogKind | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
+  const [importKind, setImportKind] = useState<"tournament" | "players" | null>(null);
+  const [palette, setPalette] = useState(false);
+  const [includeDropped, setIncludeDropped] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ text: string; bad: boolean } | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+
+  const notify = useCallback((text: string, bad = false) => {
+    setFlash({ text, bad });
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 6000);
+  }, []);
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
+
+  const role = desk?.viewerRole ?? "staff";
+  const active: Panel = panel ?? (desk && (role === "staff" || desk.state.rounds.length === 0) ? "players" : "pairings");
+  const go = useCallback((p: Panel) => { setPanel(p); setView("event"); }, []);
+
+  const doPair = useCallback(async () => {
+    const r = await send({ type: "PairNextRound" });
+    if (!r.ok) { notify(r.message, true); return; }
+    const n = r.desk.state.rounds.at(-1);
+    notify(n ? `Round ${n.number} paired. ${n.matches.length} matches.` : "Paired.");
+    go("pairings");
+    window.setTimeout(() => window.dispatchEvent(new Event("dk:focus-slot")), 30);
+  }, [send, notify, go]);
+
+  const actions = useMemo(() => desk ? buildActions(desk, role, {
+    go, open: setDialog, confirm: setConfirm,
+    print: (k: PrintKind) => { window.open(`/e/${encodeURIComponent(code)}/print/${k === "pairings-by-player" ? "pairings?by=player" : k}`, "_blank", "noopener"); },
+    download: (k: ExportKind) => { const a = document.createElement("a"); a.href = `/api/events/${encodeURIComponent(code)}/export/${k}`; a.download = ""; document.body.append(a); a.click(); a.remove(); },
+    importFile: setImportKind, pair: () => void doPair(), palette: () => setPalette(true), home: () => { window.location.assign("/"); },
+    dummyResults: () => { void (async () => {
+      const r = await postDummy(code, desk, { action: "results" });
+      if (!r.ok) { if (r.desk) replaceDesk(r.desk); notify(r.message, true); return; }
+      replaceDesk(r.desk); notify(`Random results entered for ${r.count} ${r.count === 1 ? "match" : "matches"}.`);
+    })(); },
+  }) : [], [desk, role, code, go, doPair, replaceDesk, notify]);
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+
+  // Desk-wide keys. Capture phase so the browser's own F-key and Ctrl+F handling never wins.
+  useEffect(() => {
+    if (state !== "ready") return;
+    const onKey = (e: KeyboardEvent) => {
+      const id = actionForKey(e);
+      if (!id) return;
+      if (modalOpen()) { if (!(e.key.startsWith("F") && e.key.length > 1)) return; e.preventDefault(); return; }
+      e.preventDefault(); e.stopPropagation();
+      const a = actionsRef.current.find(x => x.id === id);
+      if (!a) return;
+      if (a.enabled) a.run(); else if (a.reason) notify(`${a.label}: ${a.reason}`, true);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [state, notify]);
+
+  useEffect(() => { if (desk) document.title = `${desk.state.settings.name} · Desk`; }, [desk?.state.settings.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (state === "loading") return <Centered title="Loading the desk"><div className="dk-spin" role="status" aria-label="Loading" /></Centered>;
+  if (state === "signed_out") return <Centered title="Sign in to open the desk"><p className="dd-meta">The desk is for the people running this event.</p>
+    <ButtonLink variant="rose" size="lg" href={`/auth/start?return=${encodeURIComponent(`/e/${code}/desk`)}`}>Sign in with Dueling Domain</ButtonLink></Centered>;
+  if (state === "forbidden") return <Centered title="You are not staff for this event"><p className="dd-meta">Ask the organizer to add you under Settings, Staff and roles.</p>
+    <ButtonLink href={`/e/${encodeURIComponent(code)}/me`}>Open my player page</ButtonLink></Centered>;
+  if (state === "missing") return <Centered title="No event with that code"><ButtonLink href="/">My events</ButtonLink></Centered>;
+  if (state === "error" || !desk) return <Centered title="The desk could not load"><p className="dd-meta">Check your connection, then try again.</p><Button variant="violet" onClick={() => window.location.reload()}>Reload</Button></Centered>;
+
+  const pair = pairInfo(desk, role, () => void doPair());
+  const sendCmd = async (cmd: Parameters<typeof send>[0], ok: string) => {
+    setBusy(true); const r = await send(cmd); setBusy(false); setConfirm(null);
+    notify(r.ok ? ok : r.message, !r.ok);
+  };
+  const close = () => setDialog(null);
+  const done = (t: string) => notify(t);
+  const unreported = desk.state.rounds.flatMap(r => r.matches).filter(m => m.result === null).length;
+  const firstPlayoff = desk.state.rounds.at(-1)?.stage === "playoff" && desk.state.rounds.filter(r => r.stage === "playoff").length === 1;
+
+  const tabs: TabItem[] = [
+    { id: "players", label: "Players", keyHint: "F1", panelId: "dk-panel" },
+    { id: "pairings", label: "Pairings", keyHint: "F2", panelId: "dk-panel" },
+    { id: "standings", label: "Standings", keyHint: "F3", panelId: "dk-panel" },
+    ...(can(role, "AddPenalty") || can(role, "RemovePenalty") ? [{ id: "judging", label: "Judging", panelId: "dk-panel" }] : []),
+    { id: "settings", label: "Settings", panelId: "dk-panel" },
+  ];
+  const stats = roundStats(desk.state, desk.state.rounds.at(-1));
+
+  return <div className="dk">
+    <MenuBar actions={actions} onPalette={() => setPalette(true)} brandHref="/" />
+    <Tray actions={actions} panel={active} pairLabel={pair.label} />
+    <Binder code={code} desk={desk} view={view} setView={setView} />
+    <main className="dk-main" id="main">
+      <div className="dk-sheet">
+        {view === "event" && <Tabs className="dk-panel-tabs" variant="index" label="Desk sections" items={tabs} value={active} onChange={id => go(id as Panel)} />}
+        {flash && <p role={flash.bad ? "alert" : "status"} className={`dk-note ${flash.bad ? "dk-note--bad" : ""}`}>{flash.text}</p>}
+        <div id="dk-panel" role="tabpanel" aria-label={view === "all" ? "All Players" : tabs.find(t => t.id === active)?.label as string} className="dk-sec">
+          {view === "all" ? <AllPlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />
+            : active === "players" ? <PlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />
+            : active === "pairings" ? <PairingsPanel desk={desk} role={role} send={send} pair={pair} onRepair={() => setConfirm("repair")} onTimer={() => setDialog("timer")} onManual={() => setDialog("manual")} notify={notify} />
+            : active === "standings" ? <StandingsPanel desk={desk} includeDropped={includeDropped} setIncludeDropped={setIncludeDropped} />
+            : active === "judging" ? <JudgingPanel desk={desk} role={role} send={send} />
+            : <SettingsPanel code={code} desk={desk} role={role} send={send} onImport={setImportKind} />}
+        </div>
+      </div>
+    </main>
+    <StatusBar desk={desk} saving={saving} note={note} onDismiss={dismissNote} />
+
+    {palette && <Palette actions={actions} onClose={() => setPalette(false)} />}
+    {dialog === "timer" && <TimerDialog desk={desk} role={role} send={send} onClose={close} />}
+    {dialog === "cut" && <CutDialog desk={desk} send={send} onClose={close} onDone={t => { done(t); go("pairings"); }} />}
+    {dialog === "undrop" && <UndropDialog desk={desk} send={send} onClose={close} onDone={done} />}
+    {dialog === "change" && <ChangeResultDialog desk={desk} send={send} onClose={close} onDone={done} />}
+    {dialog === "manual" && <ManualPairingsDialog desk={desk} send={send} onClose={close} />}
+    {dialog === "print" && <BatchPrintDialog code={code} onClose={close} />}
+    {dialog === "keys" && <KeyboardDialog onClose={close} />}
+    {dialog === "integrity" && <IntegrityDialog desk={desk} onClose={close} />}
+    {dialog === "notes" && <PlayerNotesDialog desk={desk} role={role} send={send} onClose={close} />}
+    {dialog === "dummy-players" && <AddTestPlayersDialog code={code} desk={desk} replaceDesk={replaceDesk} onClose={close} onDone={t => notify(t)} />}
+    {dialog === "history" && <HistoryDialog state={desk.state} onClose={close} />}
+    {importKind && <ImportDialog code={code} kind={importKind} onClose={() => setImportKind(null)} onDone={done} replaceDesk={replaceDesk} />}
+
+    <ConfirmDialog open={confirm === "repair"} title="Re-pair this round?" confirmLabel="Re-pair round" busy={busy} onCancel={() => setConfirm(null)}
+      message="Round pairings and tables are thrown away and drawn again. Results can only be re-paired while none are entered."
+      onConfirm={() => void sendCmd({ type: "RepairRound" }, "Round re-paired.")} />
+    <ConfirmDialog open={confirm === "cancel"} title="Cancel the current round?" confirmLabel="Cancel round" busy={busy} onCancel={() => setConfirm(null)}
+      message={<>Round {desk.state.rounds.at(-1)?.number} and its {stats.reported} reported {stats.reported === 1 ? "result" : "results"} are deleted.{firstPlayoff ? " Cancelling the first playoff round also undoes the cut." : ""} This cannot be undone.</>}
+      onConfirm={() => void sendCmd({ type: "CancelRound" }, "Round cancelled.")} />
+    <ConfirmDialog open={confirm === "finish"} title="Finalize the event?" confirmLabel="Finalize event" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
+      message={<>{unreported > 0 ? <b style={{ color: "var(--rose-2)", fontWeight: 600 }}>{unreported} {unreported === 1 ? "match is" : "matches are"} still unreported. </b> : null}Standings lock and players see the final results. You can reopen the event afterwards.</>}
+      onConfirm={() => void sendCmd({ type: "CompleteEvent" }, "Event finalized.")} />
+    <ConfirmDialog open={confirm === "reopen"} title="Reopen the event?" confirmLabel="Reopen event" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
+      message="Staff can enter results and pair rounds again."
+      onConfirm={() => void sendCmd({ type: "ReopenEvent" }, "Event reopened.")} />
+  </div>;
+}

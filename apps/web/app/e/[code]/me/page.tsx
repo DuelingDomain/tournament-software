@@ -1,4 +1,4 @@
-import { EventPanel } from "../../../../components/event-panel";
+import { PlayerEvent } from "@/components/player/PlayerEvent";
 export default async function Page({ params }: { params: Promise<{ code: string }> }) {
-  return <EventPanel code={(await params).code} mode="me" />;
+  return <PlayerEvent code={(await params).code} />;
 }

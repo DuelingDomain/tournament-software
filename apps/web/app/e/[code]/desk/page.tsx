@@ -1,4 +1,8 @@
-import { EventPanel } from "../../../../components/event-panel";
+import type { Metadata } from "next";
+import { Desk } from "@/components/desk/desk";
+
+export const metadata: Metadata = { title: "Desk" };
+
 export default async function Page({ params }: { params: Promise<{ code: string }> }) {
-  return <EventPanel code={(await params).code} mode="desk" />;
+  return <Desk code={(await params).code} />;
 }

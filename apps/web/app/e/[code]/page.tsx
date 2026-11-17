@@ -1,4 +1,4 @@
-import { EventPanel } from "../../../components/event-panel";
+import { PublicEvent } from "@/components/event/PublicEvent";
 export default async function Page({ params }: { params: Promise<{ code: string }> }) {
-  return <EventPanel code={(await params).code} mode="public" />;
+  return <PublicEvent code={(await params).code} />;
 }

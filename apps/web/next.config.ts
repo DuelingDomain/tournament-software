@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import { resolve } from "node:path";
 const config: NextConfig = {
+  agentRules: false,
   output: "standalone",
   outputFileTracingRoot: resolve(process.cwd(), "../.."),
   serverExternalPackages: ["better-sqlite3"],
