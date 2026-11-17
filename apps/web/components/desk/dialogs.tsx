@@ -58,15 +58,15 @@ export function CutDialog({ desk, send, onClose, onDone }: Base & { onDone: (tex
   async function apply() {
     setBusy(true); setErr(null);
     const res = await send(mode === "playoff" ? { type: "CutToPlayoff", size, ...(tieOrder ? { tieOrder } : {}) }
-      : mode === "top" ? { type: "SwissCut", mode: "top", value: top, ...(tieOrder ? { tieOrder } : {}) } : { type: "SwissCut", mode: "min_points", value: points });
+      : mode === "top" ? { type: "SwissCut", mode: "top", value: top, pairNext: true, ...(tieOrder ? { tieOrder } : {}) } : { type: "SwissCut", mode: "min_points", value: points, pairNext: true });
     setBusy(false);
     if (!res.ok) { setErr(res.message); return; }
-    onDone(mode === "playoff" ? `Cut to the top ${size}. Playoff round paired.` : "Day-2 cut applied. Swiss continues with the remaining players.");
+    onDone(mode === "playoff" ? `Cut to the top ${size}. Playoff round paired.` : `Day-2 cut applied. Round ${state.rounds.length + 1} paired with the remaining players.`);
     onClose();
   }
   return <Dialog open onClose={onClose} title="Cut to Playoffs" actions={<>
     <Button onClick={onClose}>Cancel</Button>
-    <Button variant="rose" disabled={busy || rows.length < 2 || (mode === "playoff" && sizes.length === 0)} onClick={() => void apply()}>{mode === "playoff" ? "Cut and pair playoffs" : "Apply Day-2 cut"}</Button>
+    <Button variant="rose" disabled={busy || rows.length < 2 || (mode === "playoff" && sizes.length === 0)} onClick={() => void apply()}>{mode === "playoff" ? "Cut and pair playoffs" : "Apply Day-2 cut and pair"}</Button>
   </>}>
     <Wide />
     <div role="radiogroup" aria-label="Cut type">
@@ -97,38 +97,138 @@ export function CutDialog({ desk, send, onClose, onDone }: Base & { onDone: (tex
 }
 
 /* ---------- Undrop wizard ---------- */
-const UNDROP = [
-  ["bye_loss", "Join this round with a loss bye"], ["bye_win", "Join this round with a win bye"], ["next_round", "Re-enter from the next round (no match this round)"],
-  ["swap_with_dropped", "Take another dropped player's seat in this round"], ["take_bye", "Take an active player's bye in this round"],
-] as const;
+type UndropOption = "swap_drops" | "take_bye" | "bye_win" | "bye_loss" | "repair" | "next_round";
 export function UndropDialog({ desk, send, onClose, onDone }: Base & { onDone: (t: string) => void }) {
   const { state } = desk;
   const round = state.rounds.at(-1);
   const dropped = useMemo(() => state.players.filter(p => p.status === "dropped").sort(byName), [state.players]);
   const [playerId, setPlayerId] = useState(dropped[0]?.id ?? "");
-  const [option, setOption] = useState<(typeof UNDROP)[number][0]>("next_round");
-  const [swapWith, setSwapWith] = useState("");
+  const [option, setOption] = useState<UndropOption>("bye_loss");
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const names = playerById(state);
+  const player = names.get(playerId);
   const paired = !!round && round.matches.some(m => m.p1 === playerId || m.p2 === playerId);
-  const swaps = dropped.filter(p => p.id !== playerId && round?.matches.some(m => (m.p1 === p.id || m.p2 === p.id) && m.result === null));
-  const hasBye = !!round?.matches.some(m => m.p2 === null && m.result === "bye_win" && state.players.find(p => p.id === m.p1)?.status === "active");
-  const allowed = (o: string) => !round ? o === "next_round" : paired ? o === "next_round" : o === "swap_with_dropped" ? swaps.length > 0 : o === "take_bye" ? hasBye : true;
-  const effective = allowed(option) ? option : "next_round";
+  // The returning player's match in the previous round, and the opponent who is still active.
+  const prev = round ? state.rounds.find(r => r.number === round.number - 1)?.matches.find(m => m.p1 === playerId || m.p2 === playerId) : undefined;
+  const prevOpp = prev ? names.get(prev.p1 === playerId ? prev.p2 ?? "" : prev.p1) : undefined;
+  const oppSeat = prevOpp && prevOpp.status === "active" ? round?.matches.find(m => (m.p1 === prevOpp.id || m.p2 === prevOpp.id) && m.result === null && m.p2 !== null) : undefined;
+  const byeMatch = round?.matches.find(m => m.p2 === null && m.result === "bye_win" && names.get(m.p1)?.status === "active");
+  const noResults = !!round && !round.matches.some(m => m.p2 !== null && m.result !== null);
+  const live = !!round && state.phase === "swiss";
+  const why: Record<UndropOption, string | null> = {
+    swap_drops: !live ? "Needs a paired round." : paired ? "Already paired this round." : !oppSeat ? "Last round's opponent has no open seat in this round." : null,
+    take_bye: !live ? "Needs a paired round." : paired ? "Already paired this round." : !byeMatch ? "Nobody has a bye this round." : null,
+    bye_win: !live ? "Needs a paired round." : paired ? "Already paired this round." : null,
+    bye_loss: !live ? "Needs a paired round." : paired ? "Already paired this round." : null,
+    repair: !live ? "Needs a paired round." : paired ? "Already paired this round." : !noResults ? "Results are already entered. Pick another option." : null,
+    next_round: null,
+  };
+  const effective: UndropOption = why[option] === null ? option : "next_round";
+  const labels: Record<UndropOption, string> = {
+    swap_drops: "Drop other player and pair with that person's opponent",
+    take_bye: byeMatch ? `Pair vs. Bye Player: ${names.get(byeMatch.p1)?.name ?? ""}` : "Pair vs. Bye Player",
+    bye_win: "Bye Opponent - Win", bye_loss: "Bye Opponent - Loss", repair: "Re-Pair as necessary",
+    next_round: "Re-enter next round (no match this round)",
+  };
   async function run() {
-    const res = await send({ type: "UndropPlayer", playerId, option: effective, ...(effective === "swap_with_dropped" ? { swapWith: swapWith || swaps[0]?.id } : {}) });
-    if (!res.ok) { setErr(res.message); return; }
-    onDone(`${state.players.find(p => p.id === playerId)?.name} is back in the event.`); onClose();
+    setBusy(true); setErr(null);
+    // Each option is one or two engine commands; stop at the first refusal.
+    const steps: Parameters<SendFn>[0][] = effective === "swap_drops" && prevOpp ? [{ type: "DropPlayer", playerId: prevOpp.id }, { type: "UndropPlayer", playerId, option: "swap_with_dropped", swapWith: prevOpp.id }]
+      : effective === "repair" ? [{ type: "UndropPlayer", playerId, option: "next_round" }, { type: "RepairRound", round: round?.number }]
+      : [{ type: "UndropPlayer", playerId, option: effective as "bye_loss" | "bye_win" | "take_bye" | "next_round" }];
+    for (const step of steps) {
+      const res = await send(step);
+      if (!res.ok) { setBusy(false); setErr(res.message); return; }
+    }
+    setBusy(false);
+    onDone(`${player?.name ?? "Player"} is back in the tournament.`); onClose();
   }
-  return <Dialog open onClose={onClose} title="Undrop Player" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!playerId || state.phase === "playoff"} onClick={() => void run()}>Undrop player</Button></>}>
+  const done = (m: Match) => `${names.get(m.p1)?.name ?? "?"} vs ${m.p2 ? names.get(m.p2)?.name ?? "?" : "Bye"}`;
+  return <Dialog open onClose={onClose} title="Undrop Player Wizard" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!playerId || busy || state.phase === "playoff"} onClick={() => void run()}>Apply changes</Button></>}>
+    <Wide />
     {dropped.length === 0 ? <p className="dd-meta">Nobody has dropped.</p> : <>
       {state.phase === "playoff" && <p className="dd-error"><WarnIcon size={14} />Dropped players cannot re-enter the playoff bracket.</p>}
-      <Field label="Dropped player"><Select value={playerId} onChange={e => setPlayerId(e.target.value)}>{dropped.map(p => <option key={p.id} value={p.id}>{p.name} (R{p.droppedAfterRound ?? 0})</option>)}</Select></Field>
-      <div role="radiogroup" aria-label="Where they re-enter">
-        {UNDROP.map(([o, label]) => <Radio key={o} name="undrop" label={label} checked={effective === o} disabled={!allowed(o)} onChange={() => setOption(o)} hint={!allowed(o) && round ? (paired ? "(already has a match this round)" : o === "swap_with_dropped" ? "(no open dropped seat)" : "(no bye to take)") : undefined} />)}
+      <Field label="Dropped Players"><Select value={playerId} onChange={e => setPlayerId(e.target.value)}>{dropped.map(p => <option key={p.id} value={p.id}>{p.name} (R{p.droppedAfterRound ?? 0})</option>)}</Select></Field>
+      <section className="dk-slip dk-sec" style={{ gap: 4 }} aria-label="Last round">
+        <span className="dd-caps">Last Round</span>
+        {prev ? <span>{done(prev)}{prev.result ? <span className="dd-meta"> · {STAMP_TEXT[prev.result]}</span> : null}</span> : <span className="dd-meta">{player?.name ?? "This player"} was not paired in the previous round.</span>}
+        {prevOpp && <span className="dd-meta">{prevOpp.name} is {prevOpp.status === "active" ? "still in the tournament" : "also out"}.</span>}
+      </section>
+      <div role="radiogroup" aria-label="How the player re-enters" className="dk-sec" style={{ gap: 2 }}>
+        {(["swap_drops", "take_bye", "bye_win", "bye_loss", "repair", "next_round"] as UndropOption[]).map(o =>
+          <Radio key={o} name="undrop" label={labels[o]} checked={effective === o} disabled={why[o] !== null} onChange={() => setOption(o)} hint={why[o] ? `(${why[o]})` : undefined} />)}
       </div>
-      {effective === "swap_with_dropped" && <Field label="Take the seat of"><Select value={swapWith || swaps[0]?.id || ""} onChange={e => setSwapWith(e.target.value)}>{swaps.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>}
+      {effective === "swap_drops" && prevOpp && oppSeat && <p className="dd-meta" style={{ margin: 0 }}>{prevOpp.name} drops. {player?.name} takes their seat at table {oppSeat.table ?? "?"}.</p>}
       <Err text={err} />
     </>}
+  </Dialog>;
+}
+
+/* ---------- Drop / Re-enroll pick lists ---------- */
+export function DropPlayerDialog({ desk, send, onClose, onDone }: Base & { onDone: (t: string) => void }) {
+  const { state } = desk;
+  const active = useMemo(() => state.players.filter(p => p.status === "active").sort(byName), [state.players]);
+  const [playerId, setPlayerId] = useState(active[0]?.id ?? "");
+  const [err, setErr] = useState<string | null>(null);
+  const registration = state.phase === "registration";
+  async function run() {
+    const res = await send(registration ? { type: "RemovePlayer", playerId } : { type: "DropPlayer", playerId });
+    if (!res.ok) { setErr(res.message); return; }
+    onDone(`${state.players.find(p => p.id === playerId)?.name} ${registration ? "was removed" : "dropped"}.`); onClose();
+  }
+  return <Dialog open onClose={onClose} title="Drop Player" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="rose" disabled={!playerId} onClick={() => void run()}>{registration ? "Remove player" : "Drop player"}</Button></>}>
+    <p className="dd-meta" style={{ margin: 0 }}>{registration ? "The tournament has not started, so the player is removed from the list." : "The player stays in standings and is no longer paired. Their current match is not changed; enter its result as usual."}</p>
+    <Field label="Player"><Select value={playerId} onChange={e => setPlayerId(e.target.value)} autoFocus>{active.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
+    <Err text={err} />
+  </Dialog>;
+}
+
+export function ReEnrollDialog({ desk, send, onClose, onDone }: Base & { onDone: (t: string) => void }) {
+  const { state } = desk;
+  const dropped = useMemo(() => state.players.filter(p => p.status === "dropped").sort(byName), [state.players]);
+  const [playerId, setPlayerId] = useState(dropped[0]?.id ?? "");
+  const [err, setErr] = useState<string | null>(null);
+  async function run() {
+    const res = await send({ type: "ReEnroll", playerId });
+    if (!res.ok) { setErr(res.message); return; }
+    onDone(`${state.players.find(p => p.id === playerId)?.name} is enrolled again.`); onClose();
+  }
+  return <Dialog open onClose={onClose} title="Re-Enroll Player" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!playerId} onClick={() => void run()}>Re-enroll player</Button></>}>
+    <p className="dd-meta" style={{ margin: 0 }}>The player returns with a loss for every round they missed, including this one. Use the Undrop wizard to choose a different way back.</p>
+    <Field label="Dropped player"><Select value={playerId} onChange={e => setPlayerId(e.target.value)} autoFocus>{dropped.map(p => <option key={p.id} value={p.id}>{p.name} (R{p.droppedAfterRound ?? 0})</option>)}</Select></Field>
+    <Err text={err} />
+  </Dialog>;
+}
+
+/* ---------- Assigned seats ---------- */
+export function SeatsDialog({ desk, send, onClose }: Base) {
+  const { state } = desk;
+  const players = useMemo(() => [...state.players].sort(byName), [state.players]);
+  const seated = players.filter(p => p.fixedTable !== null).sort((a, b) => (a.fixedTable ?? 0) - (b.fixedTable ?? 0));
+  const [playerId, setPlayerId] = useState("");
+  const [table, setTable] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const n = Number(table);
+  const valid = playerId !== "" && Number.isInteger(n) && n >= 1 && n <= 100000;
+  const set = async (id: string, value: number | null) => {
+    const res = await send({ type: "UpdatePlayer", playerId: id, fixedTable: value });
+    if (!res.ok) { setErr(res.message); return false; }
+    setErr(null); return true;
+  };
+  return <Dialog open onClose={onClose} title="Assigned Seats" actions={<Button onClick={onClose}>Close</Button>}>
+    <Wide />
+    <p className="dd-meta" style={{ margin: 0 }}>A player with an assigned seat is paired at that table every round, for accessibility. Pair or re-pair a round for it to take effect.</p>
+    <div className="dk-dlg-row">
+      <Field label="Player"><Select value={playerId} onChange={e => setPlayerId(e.target.value)} autoFocus><option value="">Choose a player</option>{players.map(p => <option key={p.id} value={p.id}>{p.name}{p.fixedTable !== null ? ` (table ${p.fixedTable})` : ""}</option>)}</Select></Field>
+      <Field label="Table"><Input inputMode="numeric" value={table} onChange={e => setTable(e.target.value.replace(/\D/g, "").slice(0, 6))} /></Field>
+      <Button variant="violet" disabled={!valid} onClick={async () => { if (await set(playerId, n)) { setTable(""); setPlayerId(""); } }}>Assign seat</Button>
+    </div>
+    <b style={{ fontWeight: 600 }}>Current assignments ({seated.length})</b>
+    {seated.length === 0 ? <span className="dd-meta">No assigned seats.</span> : <ul className="dk-dlg-list">{seated.map(p => <li key={p.id}>
+      <span className="dk-num" style={{ width: 70 }}>Table {p.fixedTable}</span><span style={{ flex: 1 }}>{p.name}</span>
+      <Button size="sm" aria-label={`Clear ${p.name}'s seat`} onClick={() => void set(p.id, null)}>Clear</Button></li>)}</ul>}
+    <Err text={err} />
   </Dialog>;
 }
 
@@ -238,7 +338,7 @@ export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk
       <Radio name="imp" label="Player list (AllPlayers XML), adds players during registration" checked={kind === "players"} onChange={() => setKind("players")} />
       <Radio name="imp" label="Tournament file (.Tournament), replaces players and rounds" checked={kind === "tournament"} onChange={() => setKind("tournament")} />
     </div>
-    {kind === "tournament" && <p className="dd-meta" style={{ margin: 0 }}>This replaces the players and rounds in this event. Staff stay as they are.</p>}
+    {kind === "tournament" && <p className="dd-meta" style={{ margin: 0 }}>This replaces the players and rounds in this tournament. Staff stay as they are.</p>}
     <Field label="File"><input className="dd-input" type="file" accept=".xml,.Tournament,.tournament,text/xml,application/xml" onChange={e => setFile(e.target.files?.[0] ?? null)} /></Field>
     <Err text={err} />
   </Dialog>;

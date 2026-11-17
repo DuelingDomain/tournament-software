@@ -76,10 +76,10 @@ export function pendingReport(m: Match, names: (id: string) => string): { text: 
   return { text: `${names(r.by)} reported ${winnerText({ ...m, result: r.result }, p1, p2)}`, disagree: false };
 }
 
-/** Temporary member IDs live at 9988000000 and up; pick one nobody holds yet. */
+/** Temporary member IDs for individuals live at 9999000000 and up; pick one nobody holds yet. */
 export function nextTempId(players: readonly Player[]) {
   const used = new Set(players.map(p => p.memberId).filter((v): v is string => v !== null));
-  let n = 9988000001;
+  let n = 9999000000;
   while (used.has(String(n))) n++;
   return String(n);
 }

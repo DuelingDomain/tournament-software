@@ -32,7 +32,7 @@ export function AllPlayersPanel({ code, desk, role, send, notify }: { code: stri
   }
   async function enroll(a: Account) {
     const r = await send({ type: "AddPlayers", players: [{ userId: a.userId, name: a.displayName }] });
-    setMsg(r.ok ? { bad: false, text: `${a.displayName} enrolled.` } : { bad: true, text: r.code === "member_id_required" ? "This event requires a COSSY ID. Save one for the account first." : r.message });
+    setMsg(r.ok ? { bad: false, text: `${a.displayName} enrolled.` } : { bad: true, text: r.code === "member_id_required" ? "This tournament requires a COSSY ID. Save one for the account first." : r.message });
     if (r.ok) notify(`${a.displayName} enrolled`);
   }
 

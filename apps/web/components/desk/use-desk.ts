@@ -10,7 +10,7 @@ export type SendFn = (input: SendInput, opts?: { retry?: boolean }) => Promise<D
 const POLL_MS = 3000;
 export const MESSAGES: Record<string, string> = {
   forbidden_role: "Your role cannot do that.",
-  version_conflict: "Another staff member changed the event. The desk was refreshed, try again.",
+  version_conflict: "Another staff member changed the tournament. The desk was refreshed, try again.",
   account_not_found: "That Dueling Domain account was not found.",
   member_id_taken: "Another account already has that COSSY ID.",
   invalid_member_id: "A COSSY ID is one to ten digits.",

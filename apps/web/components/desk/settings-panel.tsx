@@ -33,7 +33,7 @@ export function SettingsPanel({ code, desk, role, send, onImport }: { code: stri
 
   return <div className="dk-sec">
     <section className="dk-sec" aria-labelledby="set-event">
-      <h2 id="set-event" className="dk-h2">Event settings</h2>
+      <h2 id="set-event" className="dk-h2">Basics</h2>
       <form className="dk-sec" onSubmit={e => { e.preventDefault(); if (editable && dirty) void save(); }}>
         <fieldset disabled={!editable} style={{ border: 0, margin: 0, padding: 0 }} className="dk-sec">
           <div className="dk-form-grid">
@@ -78,7 +78,7 @@ export function SettingsPanel({ code, desk, role, send, onImport }: { code: stri
           {dirty && <Button onClick={() => setDraft(state.settings)}>Discard changes</Button>}
           <span role="status" className={msg?.bad ? "dd-error" : "dd-meta"}>{msg?.text}</span>
         </div>
-        {!editable && <p className="dd-meta" style={{ margin: 0 }}>{state.phase === "complete" ? "This event is finished. Reopen it from the Tournament menu to change settings." : "Your role can read settings but not change them."}</p>}
+        {!editable && <p className="dd-meta" style={{ margin: 0 }}>{state.phase === "complete" ? "This tournament is finished. Reopen it from the Tournament menu to change settings." : "Your role can read settings but not change them."}</p>}
       </form>
     </section>
 

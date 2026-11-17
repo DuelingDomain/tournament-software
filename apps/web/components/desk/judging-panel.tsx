@@ -39,7 +39,7 @@ export function JudgingPanel({ desk, role, send }: { desk: DeskView; role: Staff
   }
 
   return <div className="dk-sec">
-    <h2 className="dk-h2">Judging: Penalties</h2>
+    <h2 className="dk-h2">All penalties</h2>
     {writable ? <form className="dk-slip dk-sec" style={{ gap: 12 }} aria-label="Record a penalty" onSubmit={e => { e.preventDefault(); void add(); }}>
       <div className="dk-form-grid">
         <Field label="Player"><Select id="pen-player" value={playerId} onChange={e => setPlayerId(e.target.value)}>

@@ -1,14 +1,15 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, ButtonLink, ConfirmDialog, Tabs, type TabItem } from "../ui";
+import { Button, ButtonLink, ConfirmDialog, Dialog, Tabs, type TabItem } from "../ui";
 import "./desk.css";
 import { actionForKey, buildActions, pairInfo, type ConfirmKind, type DialogKind, type ExportKind, type Panel, type PrintKind } from "./actions";
 import { AllPlayersPanel } from "./all-players-panel";
 import { Binder, MenuBar, StatusBar, Tray } from "./chrome";
 import {
-  AddTestPlayersDialog, BatchPrintDialog, ChangeResultDialog, CutDialog, HistoryDialog, ImportDialog, IntegrityDialog, KeyboardDialog, ManualPairingsDialog, PlayerNotesDialog, TimerDialog, UndropDialog,
+  AddTestPlayersDialog, BatchPrintDialog, ChangeResultDialog, CutDialog, DropPlayerDialog, ReEnrollDialog, SeatsDialog, HistoryDialog, ImportDialog, IntegrityDialog, KeyboardDialog, ManualPairingsDialog, PlayerNotesDialog, TimerDialog, UndropDialog,
 } from "./dialogs";
 import { postDummy } from "./dummy";
+import { isTemporaryMemberId } from "@dd-tournament/engine";
 import { JudgingPanel } from "./judging-panel";
 import { Palette } from "./palette";
 import { PairingsPanel } from "./pairings-panel";
@@ -33,7 +34,7 @@ export function Desk({ code }: { code: string }) {
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
   const [importKind, setImportKind] = useState<"tournament" | "players" | null>(null);
   const [palette, setPalette] = useState(false);
-  const [includeDropped, setIncludeDropped] = useState(true);
+  const [includeDropped, setIncludeDropped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<{ text: string; bad: boolean } | null>(null);
   const flashTimer = useRef<number | undefined>(undefined);
@@ -47,7 +48,9 @@ export function Desk({ code }: { code: string }) {
 
   const role = desk?.viewerRole ?? "staff";
   const active: Panel = panel ?? (desk && (role === "staff" || desk.state.rounds.length === 0) ? "players" : "pairings");
-  const go = useCallback((p: Panel) => { setPanel(p); setView("event"); }, []);
+  const panelKey = `dk:panel:${code}`;
+  useEffect(() => { try { const v = localStorage.getItem(panelKey); if (v === "players" || v === "pairings" || v === "standings") setPanel(v); } catch { /* storage unavailable */ } }, [panelKey]);
+  const go = useCallback((p: Panel) => { setPanel(p); setView("event"); try { localStorage.setItem(panelKey, p); } catch { /* storage unavailable */ } }, [panelKey]);
 
   const doPair = useCallback(async () => {
     const r = await send({ type: "PairNextRound" });
@@ -91,11 +94,11 @@ export function Desk({ code }: { code: string }) {
   useEffect(() => { if (desk) document.title = `${desk.state.settings.name} · Desk`; }, [desk?.state.settings.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (state === "loading") return <Centered title="Loading the desk"><div className="dk-spin" role="status" aria-label="Loading" /></Centered>;
-  if (state === "signed_out") return <Centered title="Sign in to open the desk"><p className="dd-meta">The desk is for the people running this event.</p>
+  if (state === "signed_out") return <Centered title="Sign in to open the desk"><p className="dd-meta">The desk is for the people running this tournament.</p>
     <ButtonLink variant="rose" size="lg" href={`/auth/start?return=${encodeURIComponent(`/e/${code}/desk`)}`}>Sign in with Dueling Domain</ButtonLink></Centered>;
-  if (state === "forbidden") return <Centered title="You are not staff for this event"><p className="dd-meta">Ask the organizer to add you under Settings, Staff and roles.</p>
+  if (state === "forbidden") return <Centered title="You are not staff for this tournament"><p className="dd-meta">Ask the organizer to add you under Settings, Staff and roles.</p>
     <ButtonLink href={`/e/${encodeURIComponent(code)}/me`}>Open my player page</ButtonLink></Centered>;
-  if (state === "missing") return <Centered title="No event with that code"><ButtonLink href="/">My events</ButtonLink></Centered>;
+  if (state === "missing") return <Centered title="No tournament with that code"><ButtonLink href="/">My tournaments</ButtonLink></Centered>;
   if (state === "error" || !desk) return <Centered title="The desk could not load"><p className="dd-meta">Check your connection, then try again.</p><Button variant="violet" onClick={() => window.location.reload()}>Reload</Button></Centered>;
 
   const pair = pairInfo(desk, role, () => void doPair());
@@ -105,21 +108,21 @@ export function Desk({ code }: { code: string }) {
   };
   const close = () => setDialog(null);
   const done = (t: string) => notify(t);
-  const unreported = desk.state.rounds.flatMap(r => r.matches).filter(m => m.result === null).length;
+  const tempIds = desk.state.players.filter(p => p.memberId !== null && isTemporaryMemberId(p.memberId)).length;
+  const lastRound = desk.state.rounds.at(-1);
+  const afterSwissCut = !!lastRound && desk.state.swissCuts.some(c => c.afterRound === lastRound.number - 1 && c.roundPairedAfter);
   const firstPlayoff = desk.state.rounds.at(-1)?.stage === "playoff" && desk.state.rounds.filter(r => r.stage === "playoff").length === 1;
 
   const tabs: TabItem[] = [
     { id: "players", label: "Players", keyHint: "F1", panelId: "dk-panel" },
     { id: "pairings", label: "Pairings", keyHint: "F2", panelId: "dk-panel" },
     { id: "standings", label: "Standings", keyHint: "F3", panelId: "dk-panel" },
-    ...(can(role, "AddPenalty") || can(role, "RemovePenalty") ? [{ id: "judging", label: "Judging", panelId: "dk-panel" }] : []),
-    { id: "settings", label: "Settings", panelId: "dk-panel" },
   ];
   const stats = roundStats(desk.state, desk.state.rounds.at(-1));
 
   return <div className="dk">
     <MenuBar actions={actions} onPalette={() => setPalette(true)} brandHref="/" />
-    <Tray actions={actions} panel={active} pairLabel={pair.label} />
+    <Tray actions={actions} panel={active} />
     <Binder code={code} desk={desk} view={view} setView={setView} />
     <main className="dk-main" id="main">
       <div className="dk-sheet">
@@ -130,8 +133,7 @@ export function Desk({ code }: { code: string }) {
             : active === "players" ? <PlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />
             : active === "pairings" ? <PairingsPanel desk={desk} role={role} send={send} pair={pair} onRepair={() => setConfirm("repair")} onTimer={() => setDialog("timer")} onManual={() => setDialog("manual")} notify={notify} />
             : active === "standings" ? <StandingsPanel desk={desk} includeDropped={includeDropped} setIncludeDropped={setIncludeDropped} />
-            : active === "judging" ? <JudgingPanel desk={desk} role={role} send={send} />
-            : <SettingsPanel code={code} desk={desk} role={role} send={send} onImport={setImportKind} />}
+            : null}
         </div>
       </div>
     </main>
@@ -148,20 +150,27 @@ export function Desk({ code }: { code: string }) {
     {dialog === "integrity" && <IntegrityDialog desk={desk} onClose={close} />}
     {dialog === "notes" && <PlayerNotesDialog desk={desk} role={role} send={send} onClose={close} />}
     {dialog === "dummy-players" && <AddTestPlayersDialog code={code} desk={desk} replaceDesk={replaceDesk} onClose={close} onDone={t => notify(t)} />}
+    {dialog === "settings" && <Dialog open onClose={close} title="Tournament Settings" actions={<Button onClick={close}>Close</Button>}><span className="dk-dlg-wide" hidden />
+      <SettingsPanel code={code} desk={desk} role={role} send={send} onImport={k => { close(); setImportKind(k); }} /></Dialog>}
+    {dialog === "judging" && <Dialog open onClose={close} title="Judging: Penalties" actions={<Button onClick={close}>Close</Button>}><span className="dk-dlg-wide" hidden />
+      <JudgingPanel desk={desk} role={role} send={send} /></Dialog>}
+    {dialog === "drop" && <DropPlayerDialog desk={desk} send={send} onClose={close} onDone={done} />}
+    {dialog === "reenroll" && <ReEnrollDialog desk={desk} send={send} onClose={close} onDone={done} />}
+    {dialog === "seats" && <SeatsDialog desk={desk} send={send} onClose={close} />}
     {dialog === "history" && <HistoryDialog state={desk.state} onClose={close} />}
     {importKind && <ImportDialog code={code} kind={importKind} onClose={() => setImportKind(null)} onDone={done} replaceDesk={replaceDesk} />}
 
     <ConfirmDialog open={confirm === "repair"} title="Re-pair this round?" confirmLabel="Re-pair round" busy={busy} onCancel={() => setConfirm(null)}
-      message="Round pairings and tables are thrown away and drawn again. Results can only be re-paired while none are entered."
-      onConfirm={() => void sendCmd({ type: "RepairRound" }, "Round re-paired.")} />
+      message={<>Round pairings and tables are thrown away and drawn again.{stats.reported > 0 ? <b style={{ color: "var(--rose-2)", fontWeight: 600 }}> {stats.reported} entered {stats.reported === 1 ? "result" : "results"} in this round will be deleted.</b> : null}</>}
+      onConfirm={() => void sendCmd({ type: "RepairRound", round: desk.state.rounds.at(-1)?.number }, "Round re-paired.")} />
     <ConfirmDialog open={confirm === "cancel"} title="Cancel the current round?" confirmLabel="Cancel round" busy={busy} onCancel={() => setConfirm(null)}
-      message={<>Round {desk.state.rounds.at(-1)?.number} and its {stats.reported} reported {stats.reported === 1 ? "result" : "results"} are deleted.{firstPlayoff ? " Cancelling the first playoff round also undoes the cut." : ""} This cannot be undone.</>}
+      message={<>Round {desk.state.rounds.at(-1)?.number} and its {stats.reported} reported {stats.reported === 1 ? "result" : "results"} are deleted.{firstPlayoff ? " Cancelling the first playoff round also undoes the cut." : ""}{afterSwissCut ? " Players cut before this round return." : ""} This cannot be undone.</>}
       onConfirm={() => void sendCmd({ type: "CancelRound" }, "Round cancelled.")} />
-    <ConfirmDialog open={confirm === "finish"} title="Finalize the event?" confirmLabel="Finalize event" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
-      message={<>{unreported > 0 ? <b style={{ color: "var(--rose-2)", fontWeight: 600 }}>{unreported} {unreported === 1 ? "match is" : "matches are"} still unreported. </b> : null}Standings lock and players see the final results. You can reopen the event afterwards.</>}
-      onConfirm={() => void sendCmd({ type: "CompleteEvent" }, "Event finalized.")} />
-    <ConfirmDialog open={confirm === "reopen"} title="Reopen the event?" confirmLabel="Reopen event" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
+    <ConfirmDialog open={confirm === "finish"} title="Finalize the tournament?" confirmLabel="Finalize tournament" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
+      message={<>{tempIds > 0 ? <b style={{ color: "var(--rose-2)", fontWeight: 600 }}>{tempIds} {tempIds === 1 ? "player has" : "players have"} a temporary ID. </b> : null}Standings lock and players see the final results. You can reopen the tournament afterwards.</>}
+      onConfirm={() => void sendCmd({ type: "CompleteEvent" }, "Tournament finalized.")} />
+    <ConfirmDialog open={confirm === "reopen"} title="Reopen the tournament?" confirmLabel="Reopen tournament" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
       message="Staff can enter results and pair rounds again."
-      onConfirm={() => void sendCmd({ type: "ReopenEvent" }, "Event reopened.")} />
+      onConfirm={() => void sendCmd({ type: "ReopenEvent" }, "Tournament reopened.")} />
   </div>;
 }

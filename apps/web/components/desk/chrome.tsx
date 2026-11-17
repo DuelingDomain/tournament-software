@@ -67,11 +67,11 @@ export function MenuBar({ actions, onPalette, brandHref }: { actions: Action[]; 
 type Tile = { action: string; label: string; key?: string; tone?: "rose" | "rose-outline" };
 const GROUPS: { name: string; tiles: Tile[] }[] = [
   { name: "View", tiles: [{ action: "go-players", label: "Players", key: "F1" }, { action: "go-pairings", label: "Pairings", key: "F2" }, { action: "go-standings", label: "Standings", key: "F3" }] },
-  { name: "Print", tiles: [{ action: "print-players", label: "Players", key: "F4" }, { action: "print-pairings", label: "Pairings", key: "F5" }, { action: "print-brackets", label: "Brackets", key: "F6" }, { action: "print-slips", label: "Slips", key: "F7" }, { action: "print-standings", label: "Standings", key: "F8" }] },
-  { name: "Pair", tiles: [{ action: "pair", label: "Pair Round", key: "F9", tone: "rose" }, { action: "repair", label: "Re-pair", key: "F10" }, { action: "cut", label: "Cut", key: "F11" }, { action: "cancel", label: "Cancel Round", key: "F12", tone: "rose-outline" }] },
-  { name: "Wizards", tiles: [{ action: "undrop", label: "Undrop" }, { action: "change", label: "Change Result" }, { action: "manual", label: "Manual Pairs" }, { action: "timer", label: "Timer" }] },
+  { name: "Print", tiles: [{ action: "print-players", label: "Players", key: "F4" }, { action: "print-pairings", label: "Pairings", key: "F5" }, { action: "print-brackets", label: "Brackets", key: "F6" }, { action: "print-slips", label: "Result Slips", key: "F7" }, { action: "print-standings", label: "Standings", key: "F8" }] },
+  { name: "Pair", tiles: [{ action: "pair", label: "Pair Round", key: "F9", tone: "rose" }, { action: "repair", label: "Re-pair Round", key: "F10" }, { action: "cut", label: "Pair Playoffs", key: "F11" }, { action: "cancel", label: "Cancel Round", key: "F12", tone: "rose-outline" }] },
+  { name: "Wizards", tiles: [{ action: "print-batch", label: "Batch Print", key: "Ctrl+P" }, { action: "undrop", label: "Undrop Player" }, { action: "change", label: "Change Result" }] },
 ];
-export function Tray({ actions, panel, pairLabel }: { actions: Action[]; panel: Panel; pairLabel: string }) {
+export function Tray({ actions, panel }: { actions: Action[]; panel: Panel }) {
   const byId = new Map(actions.map(a => [a.id, a] as const));
   const viewOf: Record<string, Panel> = { "go-players": "players", "go-pairings": "pairings", "go-standings": "standings" };
   return <div className="dk-tray" role="toolbar" aria-label="Shortcuts">
@@ -81,9 +81,9 @@ export function Tray({ actions, panel, pairLabel }: { actions: Action[]; panel: 
         {g.tiles.map(t => {
           const a = byId.get(t.action);
           if (!a) return null;
-          const label = t.action === "pair" ? pairLabel : t.label;
+          const label = t.label;
           return <button key={t.action} type="button" className={`dk-tile${t.tone ? ` dk-tile--${t.tone}` : ""}`} aria-disabled={!a.enabled || undefined}
-            aria-pressed={viewOf[t.action] ? viewOf[t.action] === panel : undefined} title={!a.enabled ? a.reason : undefined}
+            aria-pressed={viewOf[t.action] ? viewOf[t.action] === panel : undefined} title={!a.enabled ? a.reason : t.action === "pair" ? a.label : undefined}
             aria-keyshortcuts={t.key} onClick={() => { if (a.enabled) a.run(); }}>
             <span>{label}</span>{t.key ? <Keycap>{t.key}</Keycap> : <Keycap className="dk-nokey">·</Keycap>}
           </button>;
@@ -106,7 +106,7 @@ export function Binder({ code, desk, view, setView }: { code: string; desk: Desk
   }, [code]);
   const round = desk.state.rounds.at(-1);
   const live = desk.state.phase === "swiss" || desk.state.phase === "playoff";
-  return <nav className="dk-binder dd-tabs" aria-label="Events">
+  return <nav className="dk-binder dd-tabs" aria-label="Tournaments">
     <button type="button" className="dd-tab dd-tab--narrow" aria-current={view === "all" ? "page" : undefined} onClick={() => setView("all")}>All Players</button>
     <button type="button" className="dd-tab" aria-current={view === "event" ? "page" : undefined} onClick={() => setView("event")}>
       {live && <span className="dd-pip" aria-hidden="true" />}
@@ -125,9 +125,11 @@ export function StatusBar({ desk, saving, note, onDismiss }: { desk: DeskView; s
   const active = state.players.filter(p => p.status === "active").length;
   return <footer className="dk-status-bar" role="status" aria-live="polite">
     <span><b>{active}</b> Active of <b>{state.players.length}</b> Total Players</span><i className="dk-sq" aria-hidden="true" />
-    <span>{round ? <>Round <b>{round.number}</b>{round.stage === "playoff" ? " Playoffs" : ""}</> : "Registration"}</span><i className="dk-sq" aria-hidden="true" />
-    {round ? <span><b>{stats.unreported}</b> Unreported Matches (<b>{stats.reported}</b> Reported)</span> : <span>No round paired</span>}<i className="dk-sq" aria-hidden="true" />
-    <span>{formatLabel(state)}{state.phase === "complete" ? ", finished" : ""}</span>
+    {round ? <><span>Round <b>{round.number}</b>{round.stage === "playoff" ? " Playoffs" : ""}</span><i className="dk-sq" aria-hidden="true" />
+      <span><b>{stats.unreported}</b> Unreported Matches (<b>{stats.reported}</b> Reported)</span><i className="dk-sq" aria-hidden="true" /></>
+      : <><span>Tournament Not Started</span><i className="dk-sq" aria-hidden="true" /></>}
+    <span>{formatLabel(state)}</span>
+    {state.phase === "complete" && <><i className="dk-sq" aria-hidden="true" /><span>Finalized</span></>}
     <span className="dk-saved">
       {note && <span className="dk-note-quiet">{note} <button type="button" className="dd-btn dd-btn--link dd-btn--sm" onClick={onDismiss}>Dismiss</button></span>}
       <span>{saving > 0 ? "Saving…" : <><CheckIcon size={13} color="var(--success)" /> Saved</>}</span>

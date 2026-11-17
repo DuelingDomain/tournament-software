@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import type { DeskView, Match, MatchResult, PublicView, Standing } from "@dd-tournament/engine";
+import { isTemporaryMemberId, type DeskView, type Match, type MatchResult, type PublicView, type Standing } from "@dd-tournament/engine";
 import { Button, Checkbox, Select } from "../ui";
 
 export type PrintKind = "pairings" | "slips" | "standings" | "players" | "brackets";
@@ -101,7 +101,7 @@ function PairingsTable({ matches, byPlayer }: { matches: PrintMatch[]; byPlayer:
 function StandingsTable({ rows }: { rows: Standing[] }) {
   return <table className="print-table"><thead><tr><th className="n">Rank</th><th>Player</th><th className="n">Points</th><th className="n">W-L-D</th><th className="n">OMW%</th><th className="n">OOMW%</th></tr></thead>
     <tbody>{rows.map(s => <tr key={s.playerId}><td className="n">{s.rank}</td><td>{s.name}{s.status === "dropped" ? " (dropped)" : ""}</td><td className="n">{s.matchPoints}</td>
-      <td className="n">{s.record.wins}-{s.record.losses}-{s.record.draws}</td><td className="n">{s.omw.toFixed(2)}</td><td className="n">{s.oomw.toFixed(2)}</td></tr>)}</tbody></table>;
+      <td className="n">{s.record.wins}-{s.record.losses}-{s.record.draws}</td><td className="n">{s.omw.toFixed(1)}%</td><td className="n">{s.oomw.toFixed(1)}%</td></tr>)}</tbody></table>;
 }
 
 function Slip({ m, round, event }: { m: PrintMatch; round: number; event: string }) {
@@ -122,6 +122,6 @@ function PlayerList({ players }: { players: PrintPlayer[] }) {
   const sorted = [...players].sort((a, b) => a.name.localeCompare(b.name));
   return <table className="print-table"><thead><tr><th>Name</th><th>COSSY ID</th><th>Table / status</th></tr></thead>
     <tbody>{sorted.map((p, i) => <tr key={i}><td>{p.name}</td>
-      <td className="mono">{p.memberId ? <>{pad(p.memberId)}{p.memberId.startsWith("9999") ? " (temporary)" : ""}</> : "-"}</td>
+      <td className="mono">{p.memberId ? <>{pad(p.memberId)}{isTemporaryMemberId(p.memberId) ? " (temporary)" : ""}</> : "-"}</td>
       <td>{p.status === "dropped" ? "Dropped" : p.status === "cut" ? "Cut" : p.table !== null ? `Table ${p.table}` : "Active"}</td></tr>)}</tbody></table>;
 }

@@ -1,10 +1,10 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DeskView, Match, MatchResult, Player, StaffRole } from "@dd-tournament/engine";
-import { BigKeycap, Button, Checkbox, EmptyStamp, Field, Keycap, Select, Stamp, type StampKind } from "../ui";
+import { BigKeycap, Button, Checkbox, ConfirmDialog, EmptyStamp, Field, Keycap, Select, Stamp, type StampKind } from "../ui";
 import { CheckIcon, WarnIcon } from "./icons";
 import {
-  KEY_OF, RESULT_KEY, STAMP_TEXT, byName, clockLabel, describeResult, firstWord, formatClock, hasEnteredResult,
+  KEY_OF, RESULT_KEY, STAMP_TEXT, byName, clockLabel, describeResult, formatClock, hasEnteredResult,
   pendingReport, playerById, recordsBefore, roundTitle, winnerText, type Entry,
 } from "./helpers";
 import { can } from "./roles";
@@ -36,6 +36,7 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
   const [echo, setEcho] = useState<Echo | null>(null);
   const [stack, setStack] = useState<UndoEntry[]>([]);
   const [pressed, setPressed] = useState<string | null>(null);
+  const [overwrite, setOverwrite] = useState<{ kind: Entry; withDrop: boolean; match: Match; was: MatchResult; table: number | null; round: number } | null>(null);
   const [history, setHistory] = useState<Record<string, string>>({});
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [now, setNow] = useState(() => Date.now());
@@ -91,12 +92,17 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
     return out.filter(a => !dismissed.includes(a.key));
   }, [desk.integrity, current, viewRound, dismissed, name]);
 
-  const commit = useCallback(async (kind: Entry, withDrop: boolean, target?: Match) => {
+  const commit = useCallback(async (kind: Entry, withDrop: boolean, target?: Match, confirmed = false) => {
     reselect();
     if (!canEnter) { setEcho({ kind: "error", text: "Your role cannot enter results." }); return; }
     const match = target ?? (slotNumber === null ? undefined : matchByTable.get(slotNumber));
     if (!match) { setEcho({ kind: "error", text: `No table ${slot || "?"} in round ${viewRound}` }); return; }
     if (match.p2 === null) { setEcho({ kind: "error", text: "A bye is scored automatically." }); return; }
+    if (round?.stage === "playoff" && (kind === "draw" || kind === "double_loss")) { setEcho({ kind: "error", text: "Playoff matches cannot be a draw or a double loss." }); return; }
+    // Changing a result in an earlier round is rare and easy to do by accident: ask once.
+    if (!confirmed && round && round.number !== current?.number && match.result !== null && match.result !== kind) {
+      setOverwrite({ kind, withDrop, match, was: match.result, table: match.table, round: round.number }); return;
+    }
     const drop = withDrop ? (kind === "p1" || kind === "p2" ? "loser" : kind === "double_loss" ? "both" : "none") : "none";
     setEcho({ kind: "info", text: `Saving Table ${match.table}…` });
     setPressed(kind ?? "clear"); window.clearTimeout(pressTimer.current); pressTimer.current = window.setTimeout(() => setPressed(null), 120);
@@ -110,12 +116,12 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
     const p1 = names.get(match.p1)?.name ?? "Player 1", p2 = names.get(match.p2)?.name ?? "Player 2";
     const dropped = res.desk.state.players.filter(p => p.status === "dropped" && res.before.state.players.find(b => b.id === p.id)?.status === "active").map(p => p.id);
     let text = describeResult(match.table, kind, p1, p2);
-    if (dropped.length) text += ` ${dropped.map(id => firstWord(names.get(id)?.name ?? "")).join(" and ")} drop${dropped.length === 1 ? "s" : ""}.`;
+    if (dropped.length) text += ` ${dropped.map(id => names.get(id)?.name ?? "").join(" and ")} drop${dropped.length === 1 ? "s" : ""}.`;
     if (was?.result && was.result !== kind) text += ` Replaces: ${winnerText(was, p1, p2)}.`;
     setEcho({ kind: "ok", text });
     setStack(s => [...s.slice(-19), { matchId: match.id, table: match.table, prev: was?.result ?? null, dropped }]);
     setHistory(h => ({ ...h, [match.id]: `${new Date().toTimeString().slice(0, 5)} entered at desk ( ${withDrop && kind ? "Ctrl + " : ""}${kind ? KEY_OF[kind] : "$"} )` }));
-  }, [canEnter, matchByTable, reselect, send, slot, slotNumber, viewRound]);
+  }, [canEnter, matchByTable, reselect, send, slot, slotNumber, viewRound, round, current?.number]);
 
   const undo = useCallback(async () => {
     const entry = stack.at(-1);
@@ -174,13 +180,13 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
         </label>
         <div role="group" aria-label="Result keys" className="dk-keys">
           {KEYS.map(k => <BigKeycap key={k.kind} keyLabel={k.key} down={pressed === k.kind}
-            caption={k.kind === "p1" ? `${firstWord(s1?.name ?? "P1")} wins` : k.kind === "p2" ? `${firstWord(s2?.name ?? "P2")} wins` : k.kind === "draw" ? "Draw" : k.kind === "double_loss" ? "Dbl loss" : "Unreported"}
+            caption={k.kind === "p1" ? `${s1?.name ?? "P1"} wins` : k.kind === "p2" ? `${s2?.name ?? "P2"} wins` : k.kind === "draw" ? "Draw" : k.kind === "double_loss" ? "Dbl loss" : "Unreported"}
             aria-label={`${k.kind === "p1" ? "Player 1 wins" : k.kind === "p2" ? "Player 2 wins" : k.kind === "draw" ? "Draw" : k.kind === "double_loss" ? "Double loss" : "Unreported"} (${k.key})`}
-            disabled={!canEnter || finished} onClick={() => void commit(k.kind === "clear" ? null : k.kind, false)} />)}
+            disabled={!canEnter || finished || (round?.stage === "playoff" && (k.kind === "draw" || k.kind === "double_loss"))} onClick={() => void commit(k.kind === "clear" ? null : k.kind, false)} />)}
         </div>
         <div className="dk-vr" aria-hidden="true" />
         <Field label="Round">
-          <Select compact value={viewRound} onChange={e => { setViewRound(Number(e.target.value)); setSlot(""); }} aria-label="Round">
+          <Select compact value={viewRound} onChange={e => { const n = Number(e.target.value); setViewRound(n); setSlot(""); if (n !== current?.number) setHideDone(false); }} aria-label="Round">
             {rounds.map(r => <option key={r.number} value={r.number}>{roundTitle(r)}</option>)}
             {rounds.length === 0 && <option value={0}>No rounds yet</option>}
           </Select>
@@ -273,7 +279,7 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
             <fieldset className="dk-results" disabled={!canEnter || finished || !s2}>
               <legend className="dd-caps">Match Results</legend>
               {([["p1", `${s1.name} Wins ( - )`, "-"], ["p2", `${s2?.name ?? "Player 2"} Wins ( + )`, "+"], ["draw", "Draw ( * )", "*"], ["double_loss", "Double Loss ( / )", "/"], [null, "Unreported ( $ )", "$"]] as const).map(([kind, label, key]) =>
-                <label key={key} className="dk-opt"><input type="radio" className="dd-rad" name="match-result" checked={selected.result === kind} onChange={() => void commit(kind, false, selected)} /><span className="dk-grow">{label}</span><Keycap>{key}</Keycap></label>)}
+                <label key={key} className="dk-opt"><input type="radio" className="dd-rad" name="match-result" checked={selected.result === kind} disabled={round?.stage === "playoff" && (kind === "draw" || kind === "double_loss")} onChange={() => void commit(kind, false, selected)} /><span className="dk-grow">{label}</span><Keycap>{key}</Keycap></label>)}
               <div className="dk-drops">
                 <Checkbox label={`${s1.name} Drops`} checked={s1.status === "dropped"} disabled={!can(role, s1.status === "dropped" ? "UndropPlayer" : "DropPlayer") || finished} onChange={() => toggleDrop(s1)} />
                 {s2 && <Checkbox label={`${s2.name} Drops`} checked={s2.status === "dropped"} disabled={!can(role, s2.status === "dropped" ? "UndropPlayer" : "DropPlayer") || finished} onChange={() => toggleDrop(s2)} />}
@@ -293,5 +299,8 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
         </div>
       </aside>
     </div>
+    <ConfirmDialog open={overwrite !== null} title="Change a result from an earlier round?" confirmLabel="Change result" confirmVariant="violet" onCancel={() => { setOverwrite(null); reselect(); }}
+      message={overwrite ? <>Round {overwrite.round}, table {overwrite.table ?? "?"} is already reported ({STAMP_TEXT[overwrite.was]}). Replace it with {overwrite.kind ? STAMP_TEXT[overwrite.kind] : "Unreported"}? Standings and later pairings are not redone.</> : null}
+      onConfirm={() => { const o = overwrite; setOverwrite(null); if (o) void commit(o.kind, o.withDrop, o.match, true); }} />
   </div>;
 }

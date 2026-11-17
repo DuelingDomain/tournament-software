@@ -104,7 +104,7 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
       if (!saved.ok) { setBusy(false); setMessage({ bad: true, text: saved.message }); return; }
     } else if (!normalized && !target.memberId && !state.settings.requireMemberId) tempAfter = nextTempId(state.players);
     const result = await send({ type: "AddPlayers", players: [{ userId: target.userId, name: target.displayName }] });
-    if (!result.ok) { setBusy(false); setMessage({ bad: true, text: result.code === "member_id_required" ? "This event requires a COSSY ID. Type one in the ID box, then Enroll." : result.message }); return; }
+    if (!result.ok) { setBusy(false); setMessage({ bad: true, text: result.code === "member_id_required" ? "This tournament requires a COSSY ID. Type one in the ID box, then Enroll." : result.message }); return; }
     const entry = result.desk.state.players.find(p => p.userId === target.userId);
     if (entry && tempAfter && can(role, "UpdatePlayer")) await send({ type: "UpdatePlayer", playerId: entry.id, memberId: tempAfter });
     setBusy(false);
@@ -169,11 +169,11 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
       </div>
       <p id="enroll-note" className={`dk-note${message?.bad ? " dk-note--bad" : ""}`} role="status">
         {message && <span>{message.text}</span>}
-        {!message && account && !selected && <span>Filled from Name lookup: {account.displayName}, account <span className="dk-mono" style={{ color: "var(--text)" }}>{account.username}</span>. Enroll adds them{state.rounds.length ? ` to round ${round?.number} pairings` : " to the event"}.</span>}
+        {!message && account && !selected && <span>Filled from Name lookup: {account.displayName}, account <span className="dk-mono" style={{ color: "var(--text)" }}>{account.username}</span>. Enroll adds them{state.rounds.length ? ` to round ${round?.number} pairings` : " to the tournament"}.</span>}
         {!message && !account && !selected && <span>Type a COSSY ID or a name to find an account, or search on the right.</span>}
         {!message && selected && <span>{selected.name} selected. Edit the name or ID and press Update.</span>}
         {problem && <span className="dk-idwarn"><WarnIcon size={13} />{problem}</span>}
-        {lateBlocked && <span>Late entry is off for this event. Turn it on in Settings.</span>}
+        {lateBlocked && <span>Late entry is off for this tournament. Turn it on in Settings.</span>}
         {lateNote && <span>{lateNote}</span>}
         {selected && registration && <span>Dropping before round 1 removes the player.</span>}
       </p>
