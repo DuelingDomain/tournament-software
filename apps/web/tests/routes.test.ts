@@ -291,13 +291,13 @@ describe("dummy-data route", () => {
     expect((await desk(code, owner)).version).toBe(1);
   });
 
-  it("keeps unlinked player creation out of the ordinary account-based AddPlayers route", async () => {
+  it("lets staff enroll a player without an account through AddPlayers", async () => {
     const owner = await login(); const staff = await login(2); const code = await create(owner);
     await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Ignored", role: "staff" });
     const response = await api(`events/${code}/commands`, staff, "POST", { expectedVersion: 2,
       command: { type: "AddPlayers", players: [{ userId: null, name: "Test Player 01", memberId: "9999000000" }] } });
-    expect(response.status).toBe(400); expect(await response.json()).toEqual({ error: "invalid_body" });
-    expect(await desk(code, owner)).toMatchObject({ version: 2, state: { players: [] } });
+    expect(response.status).toBe(200);
+    expect(await desk(code, owner)).toMatchObject({ version: 3, state: { players: [{ userId: null, name: "Test Player 01", memberId: "9999000000" }] } });
   });
 
   it.each([
