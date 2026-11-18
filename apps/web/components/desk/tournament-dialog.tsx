@@ -27,7 +27,8 @@ const joinIso = (date: string, time: string): string | null => {
   const d = new Date(`${date}T${time || "00:00"}`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
-const toAssignments = (rows: StaffRow[]): StaffAssignment[] => rows.filter(r => !r.locked).map(r => ({ userId: r.userId, name: r.name, position: r.position }));
+/** Create mode: the server adds the creator as organizer. Update mode: the owner row must be sent back with the rest. */
+const toAssignments = (rows: StaffRow[], withOwner = false): StaffAssignment[] => rows.filter(r => withOwner || !r.locked).map(r => ({ userId: r.userId, name: r.name, position: r.position }));
 
 interface CreateProps { mode: "create"; creator: { userId: number; name: string }; createCodeRequired: boolean; onCreated: (code: string, teamEvent: boolean) => void; onClose: () => void }
 interface UpdateProps { mode: "update"; desk: DeskView; role: StaffRole; send: SendFn; onDone: (text: string) => void; onClose: () => void; extra?: React.ReactNode }
@@ -68,7 +69,7 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ bad: boolean; text: string } | null>(null);
 
-  const staffChanged = JSON.stringify(toAssignments(staff)) !== JSON.stringify(toAssignments(startStaff));
+  const staffChanged = JSON.stringify(toAssignments(staff, true)) !== JSON.stringify(toAssignments(startStaff, true));
   const set = <K extends keyof EventSettings>(out: Partial<EventSettings>, k: K, v: EventSettings[K], was: EventSettings[K] | undefined) => { if (!update || v !== was) out[k] = v; };
 
   function collect(): Partial<EventSettings> {
@@ -98,7 +99,7 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
     if (!name.trim()) { setMessage({ bad: true, text: "Enter a tournament name." }); return; }
     setBusy(true); setMessage(null);
     if (props.mode === "update") {
-      const res = await props.send({ type: "UpdateSettings", settings: collect(), ...(canStaff && staffChanged ? { staff: toAssignments(staff) } : {}) });
+      const res = await props.send({ type: "UpdateSettings", settings: collect(), ...(canStaff && staffChanged ? { staff: toAssignments(staff, true) } : {}) });
       setBusy(false);
       if (!res.ok) { setMessage({ bad: true, text: res.message }); return; }
       props.onDone("Tournament settings updated.");
@@ -343,3 +344,4 @@ function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, cre
     </SubDialog>}
   </section>;
 }
+
