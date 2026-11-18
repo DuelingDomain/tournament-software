@@ -1,24 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
 import { z } from "zod";
-import { Button, ButtonLink, LogoMark, Perforation, Sheet, Slip, Wordmark } from "./ui";
+import { Button, ButtonLink, LogoMark, Perforation, Wordmark } from "./ui";
+import { EventList, eventsSchema, type EventRow } from "./event-list";
 import { TournamentDialog } from "./desk/tournament-dialog";
 
 const meSchema = z.object({ user: z.object({ id: z.number(), displayName: z.string(), username: z.string().optional() }).nullable(), canCreate: z.boolean(), createCodeRequired: z.boolean().default(false) });
-const eventsSchema = z.object({ events: z.array(z.object({
-  code: z.string(), name: z.string(), phase: z.string(), role: z.string().nullable().optional(), joined: z.boolean().optional(), startsAt: z.string().nullable().optional(),
-})) });
-type EventRow = z.infer<typeof eventsSchema>["events"][number];
-
-const PHASE: Record<string, string> = { registration: "Registration", swiss: "Swiss rounds", playoff: "Playoffs", complete: "Complete" };
-const ROLE: Record<string, string> = { organizer: "Organizer", head_judge: "Head judge", judge: "Judge", scorekeeper: "Scorekeeper", staff: "Staff" };
-
-function when(iso: string | null | undefined) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
 export function Landing() {
   const [me, setMe] = useState<z.infer<typeof meSchema> | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -67,7 +54,7 @@ export function Landing() {
   if (!loaded) return <div className="land-center"><p role="status" className="dd-meta">Loading...</p></div>;
   if (!me?.user) return <SignIn message={message || signinError} />;
 
-  return <div className="pub-page"><div className="pub-wrap" style={{ maxWidth: 960 }}>
+  return <div className="ev-page">
     <header className="land-bar">
       <Wordmark full fill="var(--bg-deep)" />
       <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
@@ -75,33 +62,10 @@ export function Landing() {
         <Button size="sm" variant="ghost" onClick={signOut}>Sign out</Button>
       </span>
     </header>
-    <div className="land-grid">
-      <Sheet aria-labelledby="my-events-h" style={{ display: "grid", gap: 12, alignContent: "start" }}>
-        <h1 id="my-events-h" className="dd-display" style={{ margin: 0, fontSize: 20 }}>My events</h1>
-        {events.length === 0 && <p className="dd-meta" style={{ margin: 0 }}>You are not part of any event yet. Open an event link from your organizer to join, or create your own.</p>}
-        <ul className="pub-list">
-          {events.map(e => <li key={e.code}><Slip className="land-event">
-            <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
-              <span style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{e.name}</span>
-              <span className="dd-meta">{PHASE[e.phase] ?? e.phase}{e.role ? ` · ${ROLE[e.role] ?? e.role}` : ""}{e.joined ? " · Playing" : ""}{when(e.startsAt) ? ` · ${when(e.startsAt)}` : ""}</span>
-            </div>
-            <div className="land-actions">
-              {e.role && <ButtonLink size="sm" variant="violet" href={`/e/${e.code}/desk`}>Desk</ButtonLink>}
-              {e.joined && <ButtonLink size="sm" href={`/e/${e.code}/me`}>My table</ButtonLink>}
-              <ButtonLink size="sm" variant="ghost" href={`/e/${e.code}`}>Public page</ButtonLink>
-            </div>
-          </Slip></li>)}
-        </ul>
-      </Sheet>
-      {me.canCreate && <Sheet aria-labelledby="create-h" style={{ display: "grid", gap: 16, alignContent: "start" }}>
-        <h2 id="create-h" className="dd-display" style={{ margin: 0, fontSize: 20 }}>Create event</h2>
-        <p className="dd-meta" style={{ margin: 0 }}>Set the name, date, location, staff and format, then run the tournament from the desk.</p>
-        <Button variant="rose" block onClick={() => setCreating(true)}>Create event</Button>
-      </Sheet>}
-    </div>
+    <EventList events={events} canCreate={me.canCreate} onCreate={() => setCreating(true)} />
     {message && <p role="alert" className="dd-error">{message}</p>}
     {creating && <TournamentDialog mode="create" creator={{ userId: me.user.id, name: me.user.displayName }} createCodeRequired={me.createCodeRequired} onClose={() => setCreating(false)} onCreated={created} />}
-  </div></div>;
+  </div>;
 }
 
 function SignIn({ message }: { message: string }) {
