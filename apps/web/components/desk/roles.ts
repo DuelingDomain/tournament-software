@@ -8,10 +8,11 @@ const staffAdmin: StaffRole[] = ["organizer", "head_judge"];
 const PERMISSIONS: Record<Command["type"], readonly StaffRole[]> = {
   UpdateSettings: manage, AddPlayers: [...manage, "staff"], UpdatePlayer: manage, LinkPlayerAccount: manage,
   ReEnroll: manage, RemovePlayer: manage, SetCheckedIn: [...manage, "staff"],
-  AddStaff: staffAdmin, SetStaffRole: staffAdmin, RemoveStaff: staffAdmin,
+  AddStaff: staffAdmin, SetStaffRole: staffAdmin, SetStaffPosition: staffAdmin, RemoveStaff: staffAdmin,
+  AddTeams: manage, UpdateTeam: manage, RemoveTeam: manage, ReEnrollTeam: manage, UndropTeam: manage, DropTeam: [...manage, "judge"],
   PairNextRound: manage, RepairRound: manage, CancelRound: manage, SwapPlayers: manage, SetPairing: manage,
   SplitMatch: manage, CreateMatch: manage, AddByeMatch: manage, StartTimer: manage, AdjustTimer: manage,
-  ExtendMatch: [...manage, "judge"], EnterResult: [...manage, "judge"], ReportResult: manage,
+  ExtendMatch: [...manage, "judge"], AdjustPoints: manage, EnterResult: [...manage, "judge"], ReportResult: manage,
   DropPlayer: [...manage, "judge"], UndropPlayer: manage, CutToPlayoff: manage, SwissCut: manage, UndoSwissCut: manage,
   CompleteEvent: manage, ReopenEvent: manage, AddPenalty: judging, RemovePenalty: judging,
 };

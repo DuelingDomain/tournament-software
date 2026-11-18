@@ -1,3 +1,4 @@
+import { competitors, teamSize } from "./competitors.js";
 import type { EventState, Match, Standing } from "./types.js";
 
 export function matchPoints(result: Match["result"]): [number, number] {
@@ -19,7 +20,7 @@ interface RecordStats {
 }
 
 function swissStats(state: EventState, through: number): Map<string, RecordStats> {
-  const stats = new Map<string, RecordStats>(state.players.map(p => [p.id, { points: 0, played: 0, wins: 0, losses: 0, draws: 0, opponents: [] }]));
+  const stats = new Map<string, RecordStats>(competitors(state).map(p => [p.id, { points: 0, played: 0, wins: 0, losses: 0, draws: 0, opponents: [] }]));
   for (const round of state.rounds) {
     if (round.stage !== "swiss" || round.number > through) continue;
     for (const m of round.matches) {
@@ -72,6 +73,8 @@ function playoffFinishes(state: EventState): Map<string, number> {
 /** Compare only published ranking keys; equal keys share a rank. Unfinished cut
  * players precede eliminated players, and all cut participants precede non-cut players. */
 export function compareStandings(a: Standing, b: Standing, cut: ReadonlySet<string>): number {
+  const manual = (b.openDuelingPoints ?? 0) - (a.openDuelingPoints ?? 0);
+  if (manual) return manual;
   if (cut.has(a.playerId) !== cut.has(b.playerId)) return cut.has(a.playerId) ? -1 : 1;
   if (cut.has(a.playerId)) {
     const finish = (a.playoffFinish ?? 0) - (b.playoffFinish ?? 0);
@@ -101,7 +104,7 @@ export function standings(state: EventState): Standing[] {
       : (s.opponents.length ? floored / s.opponents.length : 0));
   }
   const finishes = playoffFinishes(state);
-  const rows: Standing[] = state.players.map(p => {
+  const rows: Standing[] = competitors(state).map(p => {
     const s = stats.get(p.id);
     const record = full.get(p.id);
     let numerator = 0, denominator = 0, floored = 0;
@@ -120,6 +123,7 @@ export function standings(state: EventState): Standing[] {
       : (s?.opponents.length ? floored / s.opponents.length : 0);
     return {
       rank: 0, playerId: p.id, name: p.name, status: p.status,
+      openDuelingPoints: state.settings.format === "open_dueling" || state.settings.style === "open_dueling" ? p.openDuelingPoints ?? 0 : 0,
       matchPoints: record?.points ?? 0,
       record: { wins: record?.wins ?? 0, losses: record?.losses ?? 0, draws: record?.draws ?? 0 },
       omw: percent(omw.get(p.id) ?? 0), oomw: percent(oomw),

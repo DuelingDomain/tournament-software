@@ -1,5 +1,5 @@
 import { timingSafeEqual, createHash } from "node:crypto";
-import { publicView } from "@dd-tournament/engine";
+import { publicView, printData } from "@dd-tournament/engine";
 import { z } from "zod";
 import { currentUser, signedIn } from "./auth";
 import { lookupAccounts, searchAccounts, setMemberId } from "./bridge";
@@ -8,7 +8,9 @@ import { deskView, importEvent, joinEvent, newEvent, playerCommand, playerRespon
 import { exportEvent } from "./exports";
 import { boundary, bodyJson, checkOrigin, HttpError, json, readBody } from "./http";
 import { requireCommand, requireDummyData, requireImport, requireStaff, viewerRole } from "./permissions";
-import { commandSchema, dummyDataSchema, partialSettings, result, userId } from "./validation";
+import { commandSchema, dummyDataSchema, partialSettings, result, userId, staffSchema, locationFields } from "./validation";
+
+import { locations, createLocation, changeLocation } from "./locations";
 
 async function body<T>(request: Request, schema: z.ZodType<T>) {
   return schema.parse(await bodyJson(request));
@@ -38,6 +40,18 @@ export function handleApi(request: Request, path: string[]) {
       const user = currentUser(request);
       return json({ user, canCreate: user !== null });
     }
+    if (path[0] === "locations") {
+      const user = signedIn(request);
+      if (path.length === 1 && method === "GET") {
+        const eventCode = url.searchParams.get("event");
+        const ownerId = eventCode ? staff(request, eventCode).event.ownerUserId : user.id;
+        return json({ locations: locations(ownerId) });
+      }
+      if (path.length === 1 && method === "POST") return json(createLocation(user, await body(request, locationFields)), 201);
+      if (path.length === 2 && path[1] && method === "PUT") return json(changeLocation(user.id, path[1], await body(request, locationFields)));
+      if (path.length === 2 && path[1] && method === "DELETE") return json(changeLocation(user.id, path[1]));
+      throw new HttpError(404, "not_found");
+    }
     if (path.length === 1 && path[0] === "events") {
       const user = signedIn(request);
       if (method === "GET") return json({ events: eventRecords().flatMap(event => {
@@ -46,11 +60,12 @@ export function handleApi(request: Request, path: string[]) {
         return role || joined ? [{ code: event.code, name: event.state.settings.name, phase: event.state.phase, role, joined, startsAt: event.state.settings.startsAt }] : [];
       }) });
       if (method === "POST") {
-        const data = await body(request, z.strictObject({ name: z.string().trim().min(1).max(200), createCode: z.string(), settings: partialSettings.optional() }));
+        const data = await body(request, z.strictObject({ name: z.string().trim().min(1).max(200), createCode: z.string(), settings: partialSettings.optional(), staff: z.array(staffSchema).max(100).optional() }));
         const configured = process.env.CREATE_CODE ?? "";
         const digest = (value: string) => createHash("sha256").update(value).digest();
         if (configured && !timingSafeEqual(digest(configured), digest(data.createCode))) throw new HttpError(403, "invalid_create_code");
-        return json({ code: newEvent(user, data.name, { ...data.settings, name: data.name }) }, 201);
+        const staffCommand = await resolveCommand({ type: "UpdateSettings", settings: {}, staff: data.staff ?? [] });
+        return json({ code: newEvent(user, data.name, { ...data.settings, name: data.name }, staffCommand.type === "UpdateSettings" ? staffCommand.staff : []) }, 201);
       }
     }
     if (path[0] === "accounts") {
@@ -80,6 +95,11 @@ export function handleApi(request: Request, path: string[]) {
       await lookupAccounts([...event.state.players.flatMap(p => p.userId === null ? [] : [p.userId]), ...event.state.staff.map(s => s.userId)]);
       return json(deskView(event, role));
     }
+    if (path.length === 3 && action === "activity" && method === "GET") {
+      const { event } = staff(request, code);
+      return json({ activity: [...(event.state.activityLog ?? [])].reverse(), version: event.version });
+    }
+    if (path.length === 3 && action === "print-data" && method === "GET") return json(printData(staff(request, code).event.state));
     if (path.length === 3 && action === "commands" && method === "POST") {
       const { user, event } = staff(request, code);
       const data = await body(request, z.strictObject({ expectedVersion: z.number().int().positive().safe(), command: commandSchema }));
@@ -118,7 +138,7 @@ export function handleApi(request: Request, path: string[]) {
       try { form = await new Response(Buffer.from(bytes), { headers: { "Content-Type": request.headers.get("content-type") ?? "" } }).formData(); }
       catch { throw new HttpError(400, "invalid_body"); }
       const file = form.get("file");
-      const kind = z.enum(["tournament", "players"]).parse(form.get("kind"));
+      const kind = z.enum(["tournament", "players", "team-players"]).parse(form.get("kind"));
       if (!(file instanceof File)) throw new HttpError(400, "invalid_file");
       const fileBytes = new Uint8Array(await file.arrayBuffer());
       const encoding = fileBytes[0] === 255 && fileBytes[1] === 254 ? "utf-16le" : fileBytes[0] === 254 && fileBytes[1] === 255 ? "utf-16be" : "utf-8";

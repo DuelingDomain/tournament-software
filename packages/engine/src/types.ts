@@ -7,16 +7,27 @@ export type PlayerId = string; // short random id, stable for the event
 export type MatchId = string;
 
 export type TiebreakMode = "floor33" | "legacy"; // floor33: each opponent's win% counts at least 33.3%
-export type EventFormat = "swiss" | "single_elim";
+export type EventFormat = "swiss" | "single_elim" | "open_dueling";
 export type EventPhase = "registration" | "swiss" | "playoff" | "complete";
 
 export type MatchResult =
   | "p1" | "p2" | "draw" | "double_loss" // two-player results
   | "bye_win" | "bye_loss";             // one-player results (p2 null)
 
+export type EventStyle = "advanced" | "traditional" | "sealed" | "open_dueling";
+export type PlayerStructure = 1 | 2 | 3 | 4 | 5;
+export interface Location {
+  id: string; name: string; address1: string; address2: string; city: string;
+  state: string; postal: string; country: string; phone: string; website: string;
+}
+
 export interface EventSettings {
   name: string;
   format: EventFormat;
+  style: EventStyle;
+  playerStructure: PlayerStructure;
+  locationId: string | null;
+  locationDetails: Location | null;
   /** Planned Swiss rounds; null = organizer decides as they go. */
   plannedRounds: number | null;
   /** 0 = no cut. Otherwise 2, 4, 8, 16, 32 or 64. */
@@ -52,9 +63,15 @@ export interface Player {
   droppedAfterRound: number | null;
   enteredRound: number; // 1 for normal entry; >1 for late entry
   fixedTable: number | null; // accessibility seat; honoured in Swiss
+  openDuelingPoints?: number;
   checkedIn: boolean;
   notes: string | null;
 }
+
+/** Team IDs occupy the reserved numeric team range; member IDs remain person IDs. */
+export interface Team extends Player { memberIds: PlayerId[] }
+export interface TeamEntry { teamId?: string; name: string; memberIds: PlayerId[] }
+export type UndropOption = "bye_loss" | "bye_win" | "next_round" | "swap_with_dropped" | "take_bye" | "repair" | "swap_previous_opponent";
 
 export interface Match {
   id: MatchId;
@@ -91,14 +108,19 @@ export interface PenaltyEntry {
 }
 
 export type StaffRole = "organizer" | "head_judge" | "judge" | "scorekeeper" | "staff";
+export type StaffPosition = "organizer" | "head_judge" | "assistant_head_judge" | "floor_judge_team_lead" | "floor_judge" | "scorekeeper" | "event_manager" | "event_staff";
+export interface StaffAssignment { userId: number; name: string; role?: StaffRole; position?: StaffPosition }
 /** Staff are DuelingDomain accounts. The event owner is always an organizer. */
-export interface StaffMember { id: string; userId: number; name: string; role: StaffRole }
+export interface StaffMember { id: string; userId: number; name: string; role: StaffRole; position?: StaffPosition }
 
 export interface EventState {
   schemaVersion: 1;
   settings: EventSettings;
   phase: EventPhase;
   players: Player[];
+  teams: Team[];
+  playerStructureLocked?: boolean;
+  activityLog?: ActivityEntry[];
   rounds: Round[];
   /** Players who made the cut, in seed order. Empty until CutToPlayoff. */
   cut: PlayerId[];
@@ -108,6 +130,7 @@ export interface EventState {
     roundPairedAfter?: boolean }[];
   penalties: PenaltyEntry[];
   staff: StaffMember[];
+  legacyStaff?: { memberId: string | null; name: string; position: StaffPosition }[];
   createdAt: string;
   completedAt: string | null;
 }
@@ -117,6 +140,7 @@ export interface Standing {
   playerId: PlayerId;
   name: string;
   status: Player["status"];
+  openDuelingPoints?: number;
   matchPoints: number;
   record: { wins: number; losses: number; draws: number };
   /** Percentages 0..100 with one decimal, already truncated the documented way. */
@@ -129,16 +153,23 @@ export interface CommandContext { now: string; seed: number; actor: string }
 
 export type Command =
   // Setup
-  | { type: "UpdateSettings"; settings: Partial<Omit<EventSettings, "format">> & { format?: EventFormat } }
+  | { type: "UpdateSettings"; settings: Partial<Omit<EventSettings, "format">> & { format?: EventFormat }; staff?: StaffAssignment[] }
   | { type: "AddPlayers"; players: { userId: number | null; name: string; memberId?: string | null }[] } // service resolves accounts; late entry after R1 = bye losses for every round already paired, including the current one; duplicate non-null userId refused
   | { type: "UpdatePlayer"; playerId: PlayerId; name?: string; memberId?: string | null; fixedTable?: number | null; notes?: string | null }
   | { type: "LinkPlayerAccount"; playerId: PlayerId; userId: number } // claim an imported entry
   | { type: "ReEnroll"; playerId: PlayerId } // dropped player re-enters: bye losses for every missed round incl. current (legacy re-enroll)
   | { type: "RemovePlayer"; playerId: PlayerId } // registration only
   | { type: "SetCheckedIn"; playerId: PlayerId; checkedIn: boolean }
-  | { type: "AddStaff"; userId: number; name: string; role: StaffRole }
+  | ({ type: "AddStaff" } & StaffAssignment)
+  | { type: "SetStaffPosition"; staffId: string; position: StaffPosition }
   | { type: "SetStaffRole"; staffId: string; role: StaffRole }
   | { type: "RemoveStaff"; staffId: string }
+  | { type: "AddTeams"; teams: TeamEntry[] }
+  | { type: "UpdateTeam"; teamId: string; name?: string; memberIds?: PlayerId[]; fixedTable?: number | null }
+  | { type: "RemoveTeam"; teamId: string }
+  | { type: "DropTeam"; teamId: string }
+  | { type: "ReEnrollTeam"; teamId: string }
+  | { type: "UndropTeam"; teamId: string; option: UndropOption; swapWith?: PlayerId }
   // Rounds
   | { type: "PairNextRound" } // Swiss round, first playoff round is via CutToPlayoff, later playoff rounds advance the bracket
   | { type: "RepairRound"; round?: number } // deletes current results and re-pairs; an explicit earlier round is refused
@@ -151,11 +182,12 @@ export type Command =
   | { type: "StartTimer"; minutes?: number }
   | { type: "AdjustTimer"; deltaMinutes: number }
   | { type: "ExtendMatch"; matchId: MatchId; minutes: number }
+  | { type: "AdjustPoints"; playerId: PlayerId; delta: number }
   // Results
   | { type: "EnterResult"; matchId: MatchId; result: MatchResult | null; drop?: "loser" | "both" | "none" } // null clears; works on any round (correction); playoff refuses draw/double_loss
   | { type: "ReportResult"; playerId: PlayerId; matchId: MatchId; result: MatchResult } // player self-report: applied when both agree; a disagreement stays pending for staff
   | { type: "DropPlayer"; playerId: PlayerId }
-  | { type: "UndropPlayer"; playerId: PlayerId; option: "bye_loss" | "bye_win" | "next_round" | "swap_with_dropped" | "take_bye"; swapWith?: PlayerId } // legacy 5 options, current round only
+  | { type: "UndropPlayer"; playerId: PlayerId; option: UndropOption; swapWith?: PlayerId } // current-round re-entry and pairing options
   // Cut and finish
   | { type: "CutToPlayoff"; size?: number; tieOrder?: PlayerId[] } // tieOrder lets the organizer override the seeded tie-break at the cut line
   | { type: "SwissCut"; mode: "min_points" | "top"; value: number; tieOrder?: PlayerId[]; pairNext?: true } // Day-2 cut; optionally pairs the next round atomically
@@ -167,6 +199,23 @@ export type Command =
   | { type: "RemovePenalty"; penaltyId: string };
 
 export type CommandType = Command["type"];
+export interface ActivityEntry { actor: string; at: string; action: CommandType | "CreateEvent" | "ImportTournament" | "ImportPlayers"; command?: Command }
+export interface PrintableCompetitor {
+  id: string; name: string; memberId: string | null;
+  members: { id: string; name: string; memberId: string | null; position: number }[];
+}
+export interface PrintMatch {
+  id: string; round: number; stage: Round["stage"]; table: number | null; tables: number[];
+  p1: PrintableCompetitor; p2: PrintableCompetitor | null; result: MatchResult | null; extensionMinutes: number;
+}
+export interface PrintData {
+  matches: PrintMatch[];
+  pairingsByTeam: { round: number; matchId: string; table: number | null; tables: number[]; team: PrintableCompetitor; opponent: PrintableCompetitor | null; result: MatchResult | null }[];
+  unreportedMatches: PrintMatch[];
+  pairedDownPlayers: { round: number; matchId: string; table: number | null; playerId: string; name: string; points: number;
+    opponentId: string | null; opponentName: string | null; opponentPoints: number | null; isBye: boolean }[];
+  penalties: (Omit<PenaltyEntry, "judge"> & { player: PrintableCompetitor; infraction: string; judge: string | null })[];
+}
 
 export class CommandError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = "CommandError"; }
@@ -177,12 +226,16 @@ export class CommandError extends Error {
 export interface PublicMatchView {
   id: MatchId; table: number | null; p1: string; p2: string | null; // display names (initials if publicNames = initials)
   p1Id: PlayerId; p2Id: PlayerId | null;
+  tables: number[];
+  p1Members: { id: PlayerId; name: string }[]; p2Members: { id: PlayerId; name: string }[];
   result: MatchResult | null; p1Points: number; p2Points: number | null;
 }
 
 export interface PublicView {
   name: string; format: EventFormat; phase: EventPhase; location: string | null; startsAt: string | null;
   plannedRounds: number | null; topCut: number; tiebreak: TiebreakMode;
+  playerStructure: PlayerStructure; style: EventStyle; teamCount: number;
+  teams: { id: string; name: string; status: Player["status"]; members: { id: string; name: string }[] }[];
   playerCount: number;
   currentRound: { number: number; stage: "swiss" | "playoff"; startedAt: string | null; endsAt: string | null; matches: PublicMatchView[] } | null;
   standings: Standing[]; // names already public-formatted
@@ -200,6 +253,7 @@ export interface IntegrityReport {
 export interface DeskView {
   state: EventState; standings: Standing[]; suggestedRounds: number; version: number;
   integrity: IntegrityReport;
+  printData: PrintData;
   links: { public: string; desk: string; join: string };
   /** The signed-in viewer's role on this event. */
   viewerRole: StaffRole;
@@ -209,8 +263,8 @@ export interface DeskView {
 
 export interface PlayerView {
   event: PublicView;
-  me: { id: PlayerId; name: string; status: Player["status"]; standing: Standing | null };
-  currentMatch: (PublicMatchView & { myReport: MatchResult | null; opponentReport: MatchResult | null }) | null;
+  me: { id: PlayerId; name: string; status: Player["status"]; standing: Standing | null; teamId: string | null };
+  currentMatch: (PublicMatchView & { myTable: number | null; myReport: MatchResult | null; opponentReport: MatchResult | null }) | null;
   history: { round: number; opponent: string | null; result: "win" | "loss" | "draw" | "double_loss" | "bye_win" | "bye_loss" | null }[];
 }
 

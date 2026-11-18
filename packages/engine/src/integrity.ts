@@ -1,3 +1,4 @@
+import { competitors } from "./competitors.js";
 import type { EventState, IntegrityReport } from "./types.js";
 import { isTemporaryMemberId, memberIdCheckDigitOk, normalizeMemberId } from "./member-id.js";
 
@@ -21,7 +22,7 @@ export function integrity(state: EventState): IntegrityReport {
   const current = state.rounds.at(-1);
   if (current) {
     const paired = new Set(current.matches.flatMap(m => m.p2 === null ? [m.p1] : [m.p1, m.p2]));
-    report.unpairedActive = state.players.filter(p => p.status === "active" && !paired.has(p.id)).map(p => p.id);
+    report.unpairedActive = competitors(state).filter(p => p.status === "active" && !paired.has(p.id)).map(p => p.id);
   }
   const members = new Map<string, string[]>();
   for (const p of state.players) {

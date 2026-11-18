@@ -1,3 +1,4 @@
+import { competitors, teamSize } from "./competitors.js";
 import { CommandError, type EventState, type Match, type Player, type Round } from "./types.js";
 import { randomId, shuffle } from "./rng.js";
 import { standings } from "./standings.js";
@@ -110,7 +111,7 @@ function minimizeGaps(graph: number[][], points: number[], initial: Pair[]): Pai
   return best.sort((a, b) => a[0] - b[0]);
 }
 
-export function assignTables(matches: Match[], players: Player[], startingTable: number, fixed = true): void {
+export function assignTables(matches: Match[], players: Player[], startingTable: number, fixed = true, width = 1): void {
   const byId = new Map(players.map(p => [p.id, p]));
   const reserved = new Set<number>();
   for (const m of matches) {
@@ -121,15 +122,17 @@ export function assignTables(matches: Match[], players: Player[], startingTable:
     if (a != null && b != null && a !== b) throw new CommandError("FIXED_TABLE_CONFLICT", "These players require different fixed tables and cannot play each other.");
     const table = a ?? b;
     if (table != null) {
-      if (reserved.has(table)) throw new CommandError("FIXED_TABLE_CONFLICT", `More than one match requires table ${table}.`);
-      reserved.add(table); m.table = table;
+      if (Array.from({ length: width }, (_, i) => table + i).some(t => reserved.has(t))) throw new CommandError("FIXED_TABLE_CONFLICT", `More than one match requires table ${table}.`);
+      for (let i = 0; i < width; i++) reserved.add(table + i); m.table = table;
     }
   }
   let table = startingTable;
   for (const m of matches) {
     if (m.p2 === null || m.table !== null) continue;
-    while (reserved.has(table)) table++;
-    m.table = table; reserved.add(table++);
+    while (Array.from({ length: width }, (_, i) => table + i).some(t => reserved.has(t))) table++;
+    m.table = table;
+    for (let i = 0; i < width; i++) reserved.add(table + i);
+    table += width;
   }
 }
 
@@ -141,14 +144,14 @@ export function makeMatch(p1: string, p2: string | null, number: number, random:
 export function pairSwiss(state: EventState, number: number, seed: number, random: () => number, ids: Set<string>): Round {
   const rows = standings(state);
   const scores = new Map(rows.map(s => [s.playerId, s.matchPoints]));
-  const active = state.players.filter(p => p.status === "active");
+  const active = competitors(state).filter(p => p.status === "active");
   const groups = new Map<number, Player[]>();
   for (const p of active) {
     const points = scores.get(p.id) ?? 0;
     groups.set(points, [...(groups.get(points) ?? []), p]);
   }
   const ordered = [...groups.entries()].sort(([a], [b]) => b - a).flatMap(([, ps]) => shuffle(ps, random));
-  const met = new Map(state.players.map(p => [p.id, new Set<string>()]));
+  const met = new Map(competitors(state).map(p => [p.id, new Set<string>()]));
   const byes = new Set<string>();
   for (const r of state.rounds.filter(r => r.stage === "swiss")) for (const m of r.matches) {
     if (m.p2 !== null) { met.get(m.p1)?.add(m.p2); met.get(m.p2)?.add(m.p1); }
@@ -200,6 +203,6 @@ export function pairSwiss(state: EventState, number: number, seed: number, rando
   if (selected.bye && byes.has(selected.bye.id)) warnings.push("Every active player has already received a bye; a repeat bye was necessary.");
   const matches = selected.pairs.sort((a, b) => a[0] - b[0]).map(([a, b]) => makeMatch(selected.players[a].id, selected.players[b].id, number, random, ids));
   if (selected.bye) matches.push(makeMatch(selected.bye.id, null, number, random, ids));
-  assignTables(matches, state.players, state.settings.startingTable);
+  assignTables(matches, competitors(state), state.settings.startingTable, true, teamSize(state));
   return { number, stage: "swiss", seed, startedAt: null, endsAt: null, matches, warnings };
 }

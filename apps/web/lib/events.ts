@@ -1,19 +1,20 @@
 import { randomBytes, randomInt } from "node:crypto";
-import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole } from "@dd-tournament/engine";
+import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole, type StaffAssignment, competitors, printData, recordActivity } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { isTemporaryMemberId, normalizeMemberId } from "@dd-tournament/engine";
 import { lookupAccounts, searchAccounts } from "./bridge";
 import { cacheUser, cachedUser, database, eventRecord, saveEvent, type EventRecord } from "./db";
 import { HttpError } from "./http";
 import { joinReason, requireCommand, requireDummyData, requireImport, requireStaff } from "./permissions";
+import { locationSettings } from "./locations";
 import type { DummyData, TournamentUser } from "./validation";
 
 export function context(user: TournamentUser): CommandContext {
   return { now: new Date().toISOString(), seed: randomInt(0, 2 ** 48 - 1), actor: String(user.id) };
 }
 export function deskView(event: EventRecord, role: StaffRole): DeskView {
-  return { state: event.state, standings: standings(event.state), suggestedRounds: suggestRounds(event.state.players.length),
-    version: event.version, integrity: integrity(event.state), viewerRole: role,
+  return { state: event.state, standings: standings(event.state), suggestedRounds: suggestRounds(competitors(event.state).length),
+    version: event.version, integrity: integrity(event.state), printData: printData(event.state), viewerRole: role,
     links: { public: `/e/${event.code}`, desk: `/e/${event.code}/desk`, join: `/e/${event.code}/me` },
     accounts: Object.fromEntries(event.state.players.map(player => {
       const user = player.userId === null ? null : cachedUser(player.userId);
@@ -26,11 +27,18 @@ export function playerResponse(event: EventRecord, user: TournamentUser) {
   const reason = joinReason(event.state, user.memberId);
   return { joined: false, canJoin: !reason, ...(reason ? { reason } : {}), memberId: user.memberId };
 }
-export function newEvent(user: TournamentUser, name: string, settings: Parameters<typeof createEvent>[0]) {
+export function newEvent(user: TournamentUser, name: string, settings: Parameters<typeof createEvent>[0], staff: StaffAssignment[] = []) {
   return database().transaction(() => {
     cacheUser(user);
-    let state = createEvent({ ...settings, name }, context(user));
+    let state = createEvent({ ...locationSettings(user.id, settings), name }, context(user));
     state = applyCommand(state, { type: "AddStaff", userId: user.id, name: user.displayName, role: "organizer" }, context(user));
+    for (const entry of staff) {
+      if (entry.userId === user.id) {
+        if ((entry.position ?? entry.role) !== "organizer") throw new HttpError(403, "forbidden_role");
+        continue;
+      }
+      state = applyCommand(state, { type: "AddStaff", ...entry }, context(user));
+    }
     let code: string;
     do { code = randomBytes(5).toString("hex").toUpperCase(); } while (database().prepare("SELECT 1 FROM events WHERE code=?").get(code));
     database().prepare("INSERT INTO events(code,owner_user_id,state,version) VALUES (?,?,?,1)").run(code, user.id, JSON.stringify(state));
@@ -38,7 +46,7 @@ export function newEvent(user: TournamentUser, name: string, settings: Parameter
   }).immediate();
 }
 export async function resolveCommand(command: Command): Promise<Command> {
-  const ids = command.type === "AddPlayers" ? command.players.flatMap(p => p.userId === null ? [] : [p.userId]) : command.type === "AddStaff" || command.type === "LinkPlayerAccount" ? [command.userId] : [];
+  const ids = command.type === "UpdateSettings" && command.staff ? command.staff.map(s => s.userId) : command.type === "AddPlayers" ? command.players.flatMap(p => p.userId === null ? [] : [p.userId]) : command.type === "AddStaff" || command.type === "LinkPlayerAccount" ? [command.userId] : [];
   if (!ids.length) return command;
   const { users, missing } = await lookupAccounts(ids);
   if (missing.length) throw new HttpError(422, "account_not_found");
@@ -47,6 +55,7 @@ export async function resolveCommand(command: Command): Promise<Command> {
     if (!user) throw new HttpError(422, "account_not_found");
     return user;
   }
+  if (command.type === "UpdateSettings" && command.staff) return { ...command, staff: command.staff.map(s => ({ ...s, name: account(s.userId).displayName })) };
   if (command.type === "AddPlayers") return { ...command, players: command.players.map(p => {
     if (p.userId === null) return p;
     const user = account(p.userId); return { userId: user.id, name: user.displayName, memberId: user.memberId };
@@ -63,7 +72,8 @@ function runCommands(code: string, user: TournamentUser, expectedVersion: number
     if (event.version !== expectedVersion) throw new HttpError(409, "version_conflict", { desk: deskView(event, role) });
     const commands = makeCommands(event);
     let state = event.state;
-    for (const command of commands) state = applyCommand(state, command, context(user));
+    for (const command of commands) state = applyCommand(state, command.type === "UpdateSettings"
+      ? { ...command, settings: locationSettings(event.ownerUserId, command.settings) } : command, context(user));
     return { desk: deskView(saveEvent(event, state), role), count: commands.length };
   }).immediate();
 }
@@ -131,17 +141,20 @@ async function matchLegacyPlayers(players: readonly LegacyPlayer[]) {
   }
   return byMemberId;
 }
-export async function importEvent(code: string, user: TournamentUser, kind: "tournament" | "players", xml: string) {
+export async function importEvent(code: string, user: TournamentUser, kind: "tournament" | "players" | "team-players", xml: string) {
   const before = eventRecord(code);
   requireImport(before, user.id);
-  if (kind === "players" && before.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
-  const parsed = kind === "tournament" ? parseLegacyTournament(xml, context(user)) : null;
-  const players = parsed ? parsed.players : parseLegacyPlayerList(xml);
+  if (kind !== "tournament" && before.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
+  const source = kind !== "players" ? parseLegacyTournament(xml, context(user)) : null;
+  const parsed = kind === "tournament" ? source : null;
+  if (kind === "team-players" && ((source?.state.settings.playerStructure ?? 1) === 1 || before.state.settings.playerStructure !== 1)) throw new HttpError(422, "INVALID_PLAYER_STRUCTURE");
+  const players = source ? source.players : parseLegacyPlayerList(xml);
   const matches = await matchLegacyPlayers(players);
   return database().transaction(() => {
     const event = eventRecord(code);
     requireImport(event, user.id);
     if (event.version !== before.version) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id)) });
+    if (kind !== "tournament" && event.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
     let state: EventState;
     let imported = 0;
     let unmatched = 0;
@@ -160,12 +173,13 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
       for (const player of players) {
         const account = player.memberId ? matches.get(player.memberId) : undefined;
         if (state.players.some(p => (player.memberId !== null && p.memberId === player.memberId) || (account && p.userId === account.id))) continue;
-        state.players.push({ id: randomBytes(12).toString("hex"), userId: account?.id ?? null,
-          name: [player.firstName, player.lastName].filter(Boolean).join(" ") || "Imported player", memberId: player.memberId,
-          status: "active", droppedAfterRound: null, enteredRound: 1, fixedTable: null, checkedIn: false, notes: null });
+        state = applyCommand(state, { type: "AddPlayers", players: [{ userId: account?.id ?? null,
+          name: [player.firstName, player.lastName].filter(Boolean).join(" ") || "Imported player", memberId: player.memberId }] }, context(user));
         imported++; if (!account) unmatched++;
       }
     }
+    if (parsed) state.activityLog = structuredClone(event.state.activityLog ?? []);
+    recordActivity(state, parsed ? "ImportTournament" : "ImportPlayers", context(user));
     return { desk: deskView(saveEvent(event, state), requireStaff(event, user.id)), imported, unmatched };
   }).immediate();
 }

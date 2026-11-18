@@ -5,6 +5,9 @@ import { assignTables, makeMatch, pairSwiss } from "./pairing.js";
 import { advanceBracket, initialBracket, refreshEliminations } from "./bracket.js";
 import { compareStandings, standings } from "./standings.js";
 import { isTemporaryMemberId, normalizeMemberId } from "./member-id.js";
+import { competitors, competitorId, nextTeamId, syncTeamMembers, teamForPlayer, teamSize, validateTeamMembers } from "./competitors.js";
+import { recordActivity } from "./activity.js";
+import { staffAssignment } from "./staff.js";
 import { integrity } from "./integrity.js";
 
 function requireCondition(condition: unknown, code: string, message: string): asserts condition {
@@ -17,6 +20,10 @@ function validateContext(ctx: CommandContext): void {
 }
 
 function validateSettings(settings: EventSettings): void {
+  requireCondition(["swiss", "single_elim", "open_dueling"].includes(settings.format), "INVALID_FORMAT", "Choose a pairing structure.");
+  requireCondition(["advanced", "traditional", "sealed", "open_dueling"].includes(settings.style), "INVALID_STYLE", "Choose a tournament style.");
+  requireCondition([1, 2, 3, 4, 5].includes(settings.playerStructure), "INVALID_PLAYER_STRUCTURE", "Choose a player structure from one through five.");
+  requireCondition(settings.startsAt === null || Number.isFinite(Date.parse(settings.startsAt)), "INVALID_TIME", "Choose a valid event date and time.");
   requireCondition(settings.name.trim(), "INVALID_NAME", "Give the event a name.");
   requireCondition(Number.isInteger(settings.startingTable) && settings.startingTable >= 1, "INVALID_TABLE", "Starting table must be a positive integer.");
   requireCondition(Number.isFinite(settings.roundMinutes) && settings.roundMinutes > 0, "INVALID_MINUTES", "Round length must be positive.");
@@ -28,18 +35,26 @@ function validateSettings(settings: EventSettings): void {
 export function createEvent(settings: Partial<EventSettings> & { name: string }, ctx: CommandContext): EventState {
   validateContext(ctx);
   const configured: EventSettings = structuredClone({
-    format: "swiss", plannedRounds: null, topCut: 0, tiebreak: "legacy",
+    format: "swiss", style: "advanced", playerStructure: 1, locationId: null, locationDetails: null, plannedRounds: null, topCut: 0, tiebreak: "legacy",
     startingTable: 1, roundMinutes: 50, location: null, startsAt: null,
     infractions: DEFAULT_INFRACTIONS, publicNames: "full", registrationOpen: true,
     requireMemberId: false, allowLateEntry: true, ...settings,
   });
   validateSettings(configured);
-  return { schemaVersion: 1, settings: configured, phase: "registration", players: [], rounds: [], cut: [], swissCuts: [], penalties: [], staff: [], createdAt: ctx.now, completedAt: null };
+  const state: EventState = { schemaVersion: 1, settings: configured, phase: "registration", players: [], teams: [], rounds: [], cut: [], swissCuts: [], penalties: [], staff: [], createdAt: ctx.now, completedAt: null };
+  recordActivity(state, "CreateEvent", ctx);
+  return state;
 }
 
 function player(state: EventState, id: string): Player {
-  const found = state.players.find(p => p.id === id);
+  const found = [...competitors(state), ...state.players].find(p => p.id === id);
   requireCondition(found, "PLAYER_NOT_FOUND", "That player is not registered for this event.");
+  return found;
+}
+
+function registeredPlayer(state: EventState, id: string): Player {
+  const found = state.players.find(p => p.id === id);
+  requireCondition(found, "PLAYER_NOT_FOUND", "That person is not registered for this event.");
   return found;
 }
 
@@ -68,7 +83,7 @@ function validateResult(round: Round, match: Match, result: MatchResult | null):
 }
 
 function drop(state: EventState, id: string): void {
-  const p = player(state, id);
+  const p = player(state, competitorId(state, id));
   p.status = "dropped";
   p.droppedAfterRound = state.rounds.at(-1)?.number ?? 0;
 }
@@ -80,8 +95,9 @@ function allResults(state: EventState): void {
 
 function pairNextRound(state: EventState, ctx: CommandContext, random: () => number, ids: Set<string>): void {
   allResults(state);
-  const active = state.players.filter(p => p.status === "active");
+  const active = competitors(state).filter(p => p.status === "active");
   requireCondition(active.length, "NO_PLAYERS", "Add or reactivate players before pairing a round.");
+  for (const t of state.teams ?? []) if (t.status === "active") validateTeamMembers(state, t.memberIds, t.id);
   requireCondition(active.length >= 2, "NOT_ENOUGH_PLAYERS", "At least two active players are required to pair a round.");
   for (const cut of state.swissCuts) cut.roundPairedAfter = true;
   if (state.phase === "playoff") state.rounds.push(advanceBracket(state, ctx.seed, random, ids));
@@ -109,7 +125,7 @@ function requireUnusedAccount(state: EventState, userId: number): void {
 }
 
 function requireUnpaired(state: EventState, round: Round, id: string): void {
-  requireCondition(player(state, id).status === "active", "INACTIVE_PLAYER", "Only active players can be assigned to a pairing.");
+  requireCondition(competitors(state).some(p => p.id === id && p.status === "active"), "INACTIVE_PLAYER", "Only active players can be assigned to a pairing.");
   requireCondition(!round.matches.some(m => m.p1 === id || m.p2 === id), "PLAYER_ALREADY_PAIRED", "This player already has a current-round match.");
 }
 
@@ -124,9 +140,11 @@ function addManualMatch(state: EventState, round: Round, match: Match, table?: n
     requireCondition(table == null || (Number.isInteger(table) && table > 0), "INVALID_TABLE", "A table must be a positive integer.");
     requireCondition(fixed === null || table == null || table === fixed, "FIXED_TABLE_CONFLICT", "The pairing must use the player's fixed table.");
     let assigned = table ?? fixed ?? state.settings.startingTable;
-    const used = new Set(round.matches.map(m => m.table));
-    if (table == null && fixed === null) while (used.has(assigned)) assigned++;
-    requireCondition(!used.has(assigned), "TABLE_IN_USE", "That table already has a match.");
+    const width = teamSize(state);
+    const used = new Set(round.matches.flatMap(m => m.table === null ? [] : Array.from({ length: width }, (_, i) => m.table! + i)));
+    const overlaps = () => Array.from({ length: width }, (_, i) => assigned + i).some(t => used.has(t));
+    if (table == null && fixed === null) while (overlaps()) assigned++;
+    requireCondition(!overlaps(), "TABLE_IN_USE", "That table already has a match.");
     match.table = assigned;
   } else requireCondition(table == null, "INVALID_TABLE", "A bye has no table.");
   round.matches.push(match);
@@ -155,12 +173,12 @@ function editable(match: Match): void {
 function validatePairings(state: EventState, round: Round, before: Round): void {
   const ids = round.matches.flatMap(m => m.p2 === null ? [m.p1] : [m.p1, m.p2]);
   requireCondition(ids.length === new Set(ids).size, "DUPLICATE_PLAYER", "Each player must appear exactly once in this round.");
-  for (const id of ids) player(state, id);
+  for (const id of ids) requireCondition(competitors(state).some(p => p.id === id), "PLAYER_NOT_FOUND", "Choose an enrolled competitor.");
   // The round roster excludes next-round undrops. Late entrants already have
   // their one-player backfill matches, so they remain part of this roster.
   const required = before.matches.flatMap(m => m.p2 === null ? [m.p1] : [m.p1, m.p2]).filter(id => player(state, id).status === "active");
   requireCondition(required.every(id => ids.includes(id)), "MISSING_PLAYER", "Every active player in this round must appear exactly once.");
-  assignTables(round.matches, state.players, state.settings.startingTable, round.stage === "swiss");
+  assignTables(round.matches, competitors(state), state.settings.startingTable, round.stage === "swiss", teamSize(state));
 }
 
 function shiftTime(time: string, minutes: number): string {
@@ -174,15 +192,69 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
   validateContext(ctx);
   requireCondition(input.phase !== "complete" || command.type === "ReopenEvent", "EVENT_COMPLETE", "Reopen the event before making changes.");
   const state = structuredClone(input);
+  state.teams ??= [];
+  if ("teamId" in command) requireCondition(state.teams.some(t => t.id === command.teamId), "TEAM_NOT_FOUND", "That team is not enrolled.");
   const random = createRng(ctx.seed);
-  const ids = new Set([...state.players.map(p => p.id), ...state.rounds.flatMap(r => r.matches.map(m => m.id)), ...state.staff.map(s => s.id), ...state.penalties.map(p => p.id)]);
+  const ids = new Set([...state.players.map(p => p.id), ...state.teams.map(t => t.id), ...state.rounds.flatMap(r => r.matches.map(m => m.id)), ...state.staff.map(s => s.id), ...state.penalties.map(p => p.id)]);
   switch (command.type) {
     case "UpdateSettings": {
-      requireCondition(command.settings.format === undefined || command.settings.format === state.settings.format || state.rounds.length === 0, "FORMAT_LOCKED", "The format cannot change after a round has been paired.");
+      requireCondition(command.settings.playerStructure === undefined || command.settings.playerStructure === state.settings.playerStructure || (!state.playerStructureLocked && state.players.length === 0 && state.teams.length === 0),
+        "PLAYER_STRUCTURE_LOCKED", "Player structure cannot change after anyone is enrolled.");
       state.settings = { ...state.settings, ...structuredClone(command.settings) };
       validateSettings(state.settings);
+      if (command.staff) {
+        const previousStaff = new Map(state.staff.map(s => [s.userId, s]));
+        state.staff = [];
+        for (const entry of command.staff) {
+          requireAccount(entry.userId);
+          requireCondition(entry.name.trim(), "INVALID_NAME", "The staff member needs a name.");
+          requireCondition(!state.staff.some(s => s.userId === entry.userId), "duplicate_account", "This account is already on the event staff.");
+          state.staff.push({ id: previousStaff.get(entry.userId)?.id ?? randomId(random, ids), userId: entry.userId, name: entry.name.trim(), ...staffAssignment(entry) });
+        }
+      }
       break;
     }
+    case "AddTeams": {
+      requireCondition(state.phase === "registration" || state.phase === "swiss", "REGISTRATION_CLOSED", "Teams cannot enter after the playoff cut.");
+      requireCondition(state.rounds.length === 0 || state.settings.allowLateEntry, "LATE_ENTRY_CLOSED", "Late entry is disabled for this event.");
+      for (const entry of command.teams) {
+        requireCondition(entry.name.trim(), "INVALID_NAME", "Every team needs a name.");
+        const existing = entry.teamId ? state.teams.find(t => t.id === entry.teamId) : undefined;
+        const id = entry.teamId ?? nextTeamId(state);
+        requireCondition(/^\d{10}$/.test(id) && Number(id) >= 9988000000 && Number(id) <= 9998999999, "INVALID_TEAM_ID", "Use a team ID in the reserved team range.");
+        validateTeamMembers(state, entry.memberIds, id);
+        if (existing) {
+          existing.name = entry.name.trim(); existing.memberIds = [...entry.memberIds];
+          requireCondition(existing.status !== "cut", "PLAYER_CUT", "A cut team cannot be re-enrolled.");
+          existing.status = "active"; existing.droppedAfterRound = null;
+          for (const r of state.rounds) if (!r.matches.some(m => m.p1 === id || m.p2 === id)) r.matches.push(makeMatch(id, null, r.number, random, ids, "bye_loss"));
+        } else {
+          requireCondition(!ids.has(id), "DUPLICATE_TEAM_ID", "That team ID is already used."); ids.add(id);
+          state.teams.push({ id, userId: null, memberId: id, name: entry.name.trim(), memberIds: [...entry.memberIds], status: "active", droppedAfterRound: null,
+            enteredRound: (state.rounds.at(-1)?.number ?? 0) + 1, fixedTable: null, checkedIn: false, notes: null });
+          for (const r of state.rounds) r.matches.push(makeMatch(id, null, r.number, random, ids, "bye_loss"));
+        }
+        state.playerStructureLocked = true;
+      }
+      break;
+    }
+    case "UpdateTeam": {
+      const team = state.teams.find(t => t.id === command.teamId);
+      requireCondition(team, "TEAM_NOT_FOUND", "That team is not enrolled.");
+      if (command.name !== undefined) { requireCondition(command.name.trim(), "INVALID_NAME", "The team needs a name."); team.name = command.name.trim(); }
+      if (command.memberIds) { validateTeamMembers(state, command.memberIds, team.id); team.memberIds = [...command.memberIds]; }
+      if (command.fixedTable !== undefined) {
+        requireCondition(command.fixedTable === null || (Number.isInteger(command.fixedTable) && command.fixedTable > 0), "INVALID_TABLE", "A fixed table must be positive.");
+        team.fixedTable = command.fixedTable;
+      }
+      break;
+    }
+    case "RemoveTeam":
+      requireCondition(state.phase === "registration", "REGISTRATION_ONLY", "Teams can only be removed during registration.");
+      requireCondition(state.teams.some(t => t.id === command.teamId), "TEAM_NOT_FOUND", "That team is not enrolled.");
+      state.teams = state.teams.filter(t => t.id !== command.teamId);
+      state.penalties = state.penalties.filter(p => p.playerId !== command.teamId);
+      break;
     case "AddPlayers": {
       requireCondition(state.phase === "registration" || state.phase === "swiss", "REGISTRATION_CLOSED", "Players cannot enter after the playoff cut.");
       requireCondition(state.rounds.length === 0 || state.settings.allowLateEntry, "LATE_ENTRY_CLOSED", "Late entry is disabled for this event.");
@@ -194,17 +266,20 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
         const p: Player = { id: randomId(random, ids), userId: entry.userId, name: entry.name.trim(), memberId, status: "active", droppedAfterRound: null,
           enteredRound: (state.rounds.at(-1)?.number ?? 0) + 1, fixedTable: null, checkedIn: false, notes: null };
         state.players.push(p);
-        for (const r of state.rounds) r.matches.push(makeMatch(p.id, null, r.number, random, ids, "bye_loss"));
+        state.playerStructureLocked = true;
+        for (const r of teamSize(state) > 1 ? [] : state.rounds) r.matches.push(makeMatch(p.id, null, r.number, random, ids, "bye_loss"));
       }
       break;
     }
     case "UpdatePlayer": {
-      const p = player(state, command.playerId);
+      const p = registeredPlayer(state, command.playerId);
       if (command.name !== undefined) { requireCondition(command.name.trim(), "INVALID_NAME", "The player needs a name."); p.name = command.name.trim(); }
       if (command.memberId !== undefined) {
         const memberId = command.memberId === null ? null : normalizeMemberId(command.memberId);
         requireCondition(!state.settings.requireMemberId || memberId !== null, "member_id_required", "A member ID is required for this event.");
         p.memberId = memberId;
+        const team = teamForPlayer(state, p.id);
+        if (team) validateTeamMembers(state, team.memberIds, team.id);
       }
       if (command.notes !== undefined) p.notes = command.notes;
       if (command.fixedTable !== undefined) {
@@ -214,14 +289,15 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       break;
     }
     case "LinkPlayerAccount": {
-      const p = player(state, command.playerId);
+      const p = registeredPlayer(state, command.playerId);
       requireCondition(p.userId === null, "ACCOUNT_ALREADY_LINKED", "This entry already has an account.");
       requireUnusedAccount(state, command.userId);
       p.userId = command.userId;
       break;
     }
+    case "ReEnrollTeam":
     case "ReEnroll": {
-      const p = player(state, command.playerId);
+      const p = player(state, competitorId(state, "teamId" in command ? command.teamId : command.playerId));
       requireCondition(p.status === "dropped", "PLAYER_NOT_DROPPED", "This player has not been dropped.");
       requireCondition(state.phase !== "playoff", "PLAYOFF_ORDER_LOCKED", "Dropped playoff players cannot re-enter the bracket.");
       for (const round of state.rounds) if (!round.matches.some(m => m.p1 === p.id || m.p2 === p.id)) {
@@ -232,21 +308,28 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
     }
     case "RemovePlayer":
       requireCondition(state.phase === "registration", "REGISTRATION_ONLY", "Players can only be removed during registration. Drop them after play begins.");
-      player(state, command.playerId);
+      registeredPlayer(state, command.playerId);
+      requireCondition(!state.teams.some(t => t.memberIds.includes(command.playerId)), "MEMBER_ON_TEAM", "Remove the player from their team first.");
       state.players = state.players.filter(p => p.id !== command.playerId);
       state.penalties = state.penalties.filter(p => p.playerId !== command.playerId);
       break;
-    case "SetCheckedIn": player(state, command.playerId).checkedIn = command.checkedIn; break;
+    case "SetCheckedIn": registeredPlayer(state, command.playerId).checkedIn = command.checkedIn; break;
     case "AddStaff":
       requireCondition(command.name.trim(), "INVALID_NAME", "The staff member needs a name.");
       requireAccount(command.userId);
       requireCondition(!state.staff.some(s => s.userId === command.userId), "duplicate_account", "This account is already on the event staff.");
-      state.staff.push({ id: randomId(random, ids), userId: command.userId, name: command.name.trim(), role: command.role });
+      state.staff.push({ id: randomId(random, ids), userId: command.userId, name: command.name.trim(), ...staffAssignment(command) });
       break;
+    case "SetStaffPosition": {
+      const staff = state.staff.find(s => s.id === command.staffId);
+      requireCondition(staff, "STAFF_NOT_FOUND", "That staff member does not exist.");
+      Object.assign(staff, staffAssignment({ position: command.position }));
+      break;
+    }
     case "SetStaffRole": {
       const staff = state.staff.find(s => s.id === command.staffId);
       requireCondition(staff, "STAFF_NOT_FOUND", "That staff member does not exist.");
-      staff.role = command.role;
+      Object.assign(staff, staffAssignment({ role: command.role }));
       break;
     }
     case "RemoveStaff":
@@ -269,7 +352,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       }
       const late = round.matches.filter(m => player(state, m.p1).enteredRound > round.number);
       // Late entrants already have backfill for this round and wait until the next.
-      const pairingState = { ...state, players: state.players.filter(p => p.enteredRound <= round.number) };
+      const pairingState = { ...state, players: state.players.filter(p => p.enteredRound <= round.number), teams: state.teams.filter(t => t.enteredRound <= round.number) };
       const replacement = pairSwiss(pairingState, round.number, ctx.seed, random, ids);
       replacement.matches.push(...late);
       state.rounds.push(replacement);
@@ -281,7 +364,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       if (removed.stage === "playoff" && !state.rounds.some(r => r.stage === "playoff")) {
         for (const id of state.cut) { const p = player(state, id); if (p.status !== "dropped") p.status = "active"; }
         const swissCutPlayers = new Set(state.swissCuts.flatMap(c => c.cutPlayers));
-        for (const p of state.players) if (p.status === "cut" && !swissCutPlayers.has(p.id)) p.status = "active";
+        for (const p of competitors(state)) if (p.status === "cut" && !swissCutPlayers.has(p.id)) p.status = "active";
         state.cut = [];
         state.phase = state.settings.format === "single_elim" ? "registration" : "swiss";
       } else if (removed.stage === "playoff") refreshEliminations(state);
@@ -362,6 +445,14 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       match.extensionMinutes += command.minutes;
       break;
     }
+    case "AdjustPoints": {
+      requireCondition(state.settings.format === "open_dueling" || state.settings.style === "open_dueling", "OPEN_DUELING_ONLY", "Manual points are available for Open Dueling events.");
+      const p = player(state, competitorId(state, command.playerId));
+      const points = (p.openDuelingPoints ?? 0) + command.delta;
+      requireCondition(Number.isSafeInteger(command.delta) && Number.isSafeInteger(points), "INVALID_POINTS", "Points and adjustments must be safe integers.");
+      p.openDuelingPoints = points;
+      break;
+    }
     case "EnterResult": {
       if (command.result !== null) requirePaired(state);
       const { round, match } = findMatch(state, command.matchId);
@@ -380,28 +471,48 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       requirePaired(state);
       const { round, match } = findMatch(state, command.matchId);
       requireCondition(round === currentRound(state), "CURRENT_ROUND_ONLY", "Players can only report their current-round match.");
-      requireCondition(match.p1 === command.playerId || match.p2 === command.playerId, "NOT_YOUR_MATCH", "A player may only report their own match.");
+      const reportingId = competitorId(state, command.playerId);
+      requireCondition(match.p1 === reportingId || match.p2 === reportingId, "NOT_YOUR_MATCH", "A player may only report their own match.");
       requireCondition(match.p2 !== null, "BYE_ALREADY_SCORED", "Byes are scored automatically.");
       requireCondition(match.result === null || match.reports.length > 0, "RESULT_ALREADY_ENTERED", "Staff have already entered this result.");
       validateResult(round, match, command.result);
-      match.reports = match.reports.filter(r => r.by !== command.playerId);
-      match.reports.push({ by: command.playerId, result: command.result, at: ctx.now });
+      match.reports = match.reports.filter(r => r.by !== reportingId);
+      match.reports.push({ by: reportingId, result: command.result, at: ctx.now });
       match.result = match.reports.length === 2 && match.reports.every(r => r.result === command.result) ? command.result : null;
       if (round.stage === "playoff") refreshEliminations(state);
       break;
     }
-    case "DropPlayer":
-      requireCondition(player(state, command.playerId).status !== "cut", "PLAYER_CUT", "A cut player cannot be dropped. Undo the cut to restore them.");
-      drop(state, command.playerId);
+    case "DropTeam":
+    case "DropPlayer": {
+      const id = competitorId(state, "teamId" in command ? command.teamId : command.playerId);
+      requireCondition(player(state, id).status !== "cut", "PLAYER_CUT", "A cut player cannot be dropped. Undo the cut to restore them.");
+      drop(state, id);
       break;
+    }
+    case "UndropTeam":
     case "UndropPlayer": {
-      const p = player(state, command.playerId);
+      const p = player(state, competitorId(state, "teamId" in command ? command.teamId : command.playerId));
       requireCondition(p.status === "dropped", "PLAYER_NOT_DROPPED", "This player has not been dropped.");
       requireCondition(state.phase !== "playoff", "PLAYOFF_ORDER_LOCKED", "Dropped playoff players cannot re-enter the bracket.");
       if (command.option !== "next_round") {
         const round = currentRound(state);
         requireCondition(!round.matches.some(m => m.p1 === p.id || m.p2 === p.id), "PLAYER_ALREADY_PAIRED", "This player already has a current-round match. Use next round or correct that result.");
-        if (command.option === "swap_with_dropped") {
+        if (command.option === "repair") {
+          const other = competitors(state).find(q => q.id !== p.id && q.status === "active" && !round.matches.some(m => m.p1 === q.id || m.p2 === q.id));
+          addManualMatch(state, round, makeMatch(p.id, other?.id ?? null, round.number, random, ids));
+        } else if (command.option === "swap_previous_opponent") {
+          const former = [...state.rounds].reverse().filter(r => r !== round).flatMap(r => r.matches).find(m => m.p2 !== null && (m.p1 === p.id || m.p2 === p.id));
+          requireCondition(former, "NO_FORMER_OPPONENT", "The returning player has no previous opponent.");
+          const other = player(state, former.p1 === p.id ? former.p2! : former.p1);
+          requireCondition(other.status === "active", "INVALID_SWAP", "The former opponent must still be active.");
+          const match = round.matches.find(m => m.p1 === other.id || m.p2 === other.id);
+          requireCondition(match, "PLAYER_NOT_PAIRED", "The former opponent has no current-round match.");
+          editable(match);
+          drop(state, other.id);
+          if (match.p1 === other.id) match.p1 = p.id; else match.p2 = p.id;
+          match.reports = [];
+          assignTables(round.matches, competitors(state), state.settings.startingTable, true, teamSize(state));
+        } else if (command.option === "swap_with_dropped") {
           const other = player(state, command.swapWith ?? "");
           requireCondition(other.status === "dropped" && other.id !== p.id, "INVALID_SWAP", "Choose another dropped player with an unscored current-round seat.");
           const match = round.matches.find(m => m.p1 === other.id || m.p2 === other.id);
@@ -409,7 +520,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
           editable(match);
           if (match.p1 === other.id) match.p1 = p.id; else match.p2 = p.id;
           match.reports = [];
-          assignTables(round.matches, state.players, state.settings.startingTable, true);
+          assignTables(round.matches, competitors(state), state.settings.startingTable, true, teamSize(state));
         } else if (command.option === "take_bye") {
           const bye = round.matches.find(m => m.p2 === null && m.result === "bye_win" && player(state, m.p1).status === "active");
           requireCondition(bye, "NO_BYE", "There is no active player's bye to take in the current round.");
@@ -424,10 +535,10 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       requireCondition(state.settings.format === "swiss" && state.phase !== "playoff", "INVALID_PHASE", "A Swiss event can be cut only before playoffs begin.");
       allResults(state);
       const size = command.size ?? state.settings.topCut;
-      requireCondition(Number.isInteger(size) && size >= 2 && size <= state.players.filter(p => p.status === "active").length, "INVALID_CUT", "Choose a cut size of at least two and no larger than the active field.");
+      requireCondition(Number.isInteger(size) && size >= 2 && size <= competitors(state).filter(p => p.status === "active").length, "INVALID_CUT", "Choose a cut size of at least two and no larger than the active field.");
       const rows = orderAtCut(state, size, command.tieOrder, random);
       state.cut = rows.slice(0, size).map(s => s.playerId);
-      for (const p of state.players) if (p.status === "active" && !state.cut.includes(p.id)) p.status = "cut";
+      for (const p of competitors(state)) if (p.status === "active" && !state.cut.includes(p.id)) p.status = "cut";
       state.phase = "playoff";
       for (const cut of state.swissCuts) cut.roundPairedAfter = true;
       state.rounds.push(initialBracket(state, state.cut, ctx.seed, random, ids));
@@ -436,7 +547,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
     case "SwissCut": {
       requireCondition(state.settings.format === "swiss" && state.phase === "swiss", "INVALID_PHASE", "A Swiss cut requires a Swiss round and cannot run during playoffs.");
       allResults(state);
-      const active = state.players.filter(p => p.status === "active");
+      const active = competitors(state).filter(p => p.status === "active");
       requireCondition(Number.isInteger(command.value) && command.value >= 0 && (command.mode !== "top" || command.value <= active.length), "INVALID_CUT", "Choose a nonnegative cut value within the active field for a top cut.");
       const rows = command.mode === "top" ? orderAtCut(state, command.value, command.tieOrder, random) : standings(state).filter(s => s.status === "active");
       requireCondition(command.mode === "top" || command.tieOrder === undefined, "INVALID_TIE_ORDER", "Minimum points cuts do not use a tie order.");
@@ -456,7 +567,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
     }
     case "CompleteEvent":
       allResults(state);
-      requireCondition(!state.settings.requireMemberId || !state.players.some(p => p.status === "active" && p.memberId !== null && isTemporaryMemberId(p.memberId)),
+      requireCondition(!state.players.some(p => p.memberId !== null && isTemporaryMemberId(p.memberId)),
         "TEMPORARY_MEMBER_IDS", "Temporary IDs must be replaced before finalizing");
       state.phase = "complete"; state.completedAt = ctx.now;
       break;
@@ -480,5 +591,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       break;
     default: { const exhaustive: never = command; throw new CommandError("UNKNOWN_COMMAND", `Unknown command: ${String(exhaustive)}`); }
   }
+  syncTeamMembers(state);
+  recordActivity(state, command.type, ctx, command);
   return state;
 }

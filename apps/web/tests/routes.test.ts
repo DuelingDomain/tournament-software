@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { createServer } from "node:http";
 import { z } from "zod";
 import type { Command, StaffRole } from "@dd-tournament/engine";
-import { GET as apiGet, POST as apiPost, PUT as apiPut } from "../app/api/[...path]/route";
+import { GET as apiGet, POST as apiPost, PUT as apiPut, DELETE as apiDelete } from "../app/api/[...path]/route";
 import { GET as authGet, POST as authPost } from "../app/auth/[action]/route";
 import { GET as healthGet } from "../app/api/health/route";
 import { database } from "../lib/db";
@@ -39,7 +39,7 @@ async function api(path: string, cookie?: string, method = "GET", data?: unknown
   const request = new Request(`http://localhost:3000/api/${path}`, { method, headers: { ...(cookie ? { cookie } : {}), ...(data ? { "Content-Type": "application/json" } : {}) },
     ...(data ? { body: JSON.stringify(data) } : {}) });
   const context = { params: Promise.resolve({ path: new URL(request.url).pathname.slice(5).split("/") }) };
-  return method === "GET" ? apiGet(request, context) : method === "PUT" ? apiPut(request, context) : apiPost(request, context);
+  return method === "GET" ? apiGet(request, context) : method === "PUT" ? apiPut(request, context) : method === "DELETE" ? apiDelete(request, context) : apiPost(request, context);
 }
 async function create(cookie: string, settings = {}) {
   const response = await api("events", cookie, "POST", { name: "Cloudberry Cup", createCode: "", settings });
@@ -438,7 +438,7 @@ describe("dummy-data route", () => {
     const owner = await login(); const code = await create(owner);
     const missing = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 1 });
     expect(missing.status).toBe(422); expect(await missing.json()).toMatchObject({ error: "NO_ROUND" });
-    await dummyPlayers(code, owner, 1, 4);
+    await command(code, owner, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) });
     const paired = deskSchema.parse(await (await command(code, owner, 2, { type: "PairNextRound" })).json());
     await command(code, owner, 3, { type: "SplitMatch", matchId: paired.state.rounds[0]!.matches[0]!.id });
     const before = await desk(code, owner);
@@ -578,5 +578,109 @@ describe("legacy files and service bridge", () => {
       expect(received).toContain('POST /api/tournament-bridge/users/lookup {"ids":[1]}');
       expect(received).toContain('PUT /api/tournament-bridge/users/1/member-id {"memberId":"101"}');
     } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+  });
+});
+
+
+describe("tournament configuration", () => {
+  it("creates and edits full settings and staff, and protects organizer locations in use", async () => {
+    const cookie = await login();
+    const other = await login(2);
+    const fields = { name: "Sample Hall", address1: "1 Example Way", address2: "Room 2", city: "Example City", state: "ST",
+      postal: "00000", country: "Example", phone: "000-0000", website: "https://example.test" };
+    const added = await api("locations", cookie, "POST", fields);
+    expect(added.status).toBe(201);
+    const location = await added.json() as { id: string };
+    expect((await api(`locations/${location.id}`, other, "PUT", fields)).status).toBe(404);
+    const created = await api("events", cookie, "POST", { name: "Team Cup", createCode: "", settings: {
+      style: "traditional", format: "open_dueling", playerStructure: 3, locationId: location.id, startsAt: "2026-12-02T13:15:00Z" },
+      staff: [{ userId: 2, name: "Sample Judge", position: "floor_judge_team_lead" }] });
+    expect(created.status).toBe(201);
+    const { code } = await created.json() as { code: string };
+    const initial = await (await api(`events/${code}/desk`, cookie)).json() as { version: number; state: { settings: object; staff: object[] } };
+    expect(initial.state.settings).toMatchObject({ location: fields.name, locationId: location.id, locationDetails: fields, style: "traditional", playerStructure: 3 });
+    expect(initial.state.staff).toContainEqual(expect.objectContaining({ userId: 2, role: "judge", position: "floor_judge_team_lead" }));
+    expect((await api(`locations/${location.id}`, cookie, "DELETE")).status).toBe(409);
+    expect((await api(`locations/${location.id}`, cookie, "PUT", { ...fields, city: "Updated City" })).status).toBe(200);
+    expect((await api("locations", cookie)).status).toBe(200);
+    expect((await command(code, cookie, initial.version, { type: "UpdateSettings", settings: { locationId: null, name: "Updated Cup" } })).status).toBe(200);
+    expect((await api(`locations/${location.id}`, cookie, "DELETE")).status).toBe(200);
+    expect((await api(`events/${code}/commands`, other, "POST", { expectedVersion: initial.version + 1,
+      command: { type: "SetStaffPosition", staffId: "missing", position: "organizer" } })).status).toBe(403);
+  });
+});
+
+describe("team HTTP workflow", () => {
+  it("enrolls teams, versions roster edits and lets members report their team match", async () => {
+    const cookie = await login();
+    const memberCookie = await login(2);
+    const code = await create(cookie, { playerStructure: 2 });
+    const people = await command(code, cookie, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) });
+    expect(people.status).toBe(200);
+    const enrolled = deskSchema.parse(await people.json());
+    const teamResponse = await command(code, cookie, 2, { type: "AddTeams", teams: [
+      { name: "North", memberIds: enrolled.state.players.slice(0, 2).map(p => p.id) },
+      { name: "South", memberIds: enrolled.state.players.slice(2).map(p => p.id) },
+    ] });
+    expect(teamResponse.status).toBe(200);
+    expect((await command(code, cookie, 2, { type: "DropTeam", teamId: "9988000000" })).status).toBe(409);
+    const paired = await command(code, cookie, 3, { type: "PairNextRound" });
+    expect(paired.status).toBe(200);
+    const view = await (await api(`events/${code}/me`, memberCookie)).json() as { view: { currentMatch: { id: string; tables: number[] }; me: { teamId: string } } };
+    expect(view.view.me.teamId).toBe("9988000000");
+    expect(view.view.currentMatch.tables).toEqual([1, 2]);
+    expect((await api(`events/${code}/report`, memberCookie, "POST", { matchId: view.view.currentMatch.id, result: "p1" })).status).toBe(200);
+    expect((await api(`events/${code}/drop`, memberCookie, "POST")).status).toBe(200);
+    const dropped = await (await api(`events/${code}/desk`, cookie)).json() as { state: { teams: { id: string; status: string }[] } };
+    expect(dropped.state.teams.find(t => t.id === "9988000000")?.status).toBe("dropped");
+  });
+});
+
+describe("team file interchange", () => {
+  it("expands CSV by member with tag cross-pairs and enrolls a team file roster into an individual event", async () => {
+    const cookie = await login();
+    const code = await create(cookie, { playerStructure: 2 });
+    const people = deskSchema.parse(await (await command(code, cookie, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) })).json());
+    await command(code, cookie, 2, { type: "AddTeams", teams: [{ name: "Left", memberIds: people.state.players.slice(0, 2).map(p => p.id) }, { name: "Right", memberIds: people.state.players.slice(2).map(p => p.id) }] });
+    await command(code, cookie, 3, { type: "PairNextRound" });
+    const csv = await (await api(`events/${code}/export/matches.csv`, cookie)).text();
+    const lines = csv.trim().split("\r\n").map(line => line.split(",").map(cell => cell.slice(1, -1)));
+    expect(lines).toHaveLength(3);
+    const pairs = lines.slice(1).map(row => [row[3], row[4]]);
+    const p = people.state.players;
+    expect(pairs.every(([a, b]) => (a === p[0].id && b === p[3].id) || (a === p[1].id && b === p[2].id) || (a === p[2].id && b === p[1].id) || (a === p[3].id && b === p[0].id))).toBe(true);
+    expect((await (await api(`events/${code}/export/standings.csv`, cookie)).text()).trim().split("\r\n")).toHaveLength(5);
+    const xmlResponse = await api(`events/${code}/export/tournament`, cookie);
+    expect(xmlResponse.status).toBe(200);
+    const xml = await xmlResponse.text();
+    const target = await create(cookie);
+    const imported = await upload(target, cookie, "team-players", xml);
+    expect(imported.status).toBe(200);
+    expect(await imported.json()).toMatchObject({ imported: 4, desk: { state: { settings: { playerStructure: 1 } } } });
+  });
+});
+
+describe("staff operational data", () => {
+  it("keeps command history and print data staff-only and leaves conflicts and errors out of history", async () => {
+    const cookie = await login();
+    const outsider = await login(2);
+    const code = await create(cookie);
+    const before = await api(`events/${code}/activity`, cookie);
+    expect(before.status).toBe(200);
+    const initial = await before.json() as { activity: unknown[] };
+    const failed = await command(code, cookie, 1, { type: "CancelRound" });
+    expect(failed.status).toBe(422);
+    const added = await command(code, cookie, 1, { type: "AddPlayers", players: [{ userId: 1, name: "Account" }, { userId: 2, name: "Account" }] });
+    expect(added.status).toBe(200);
+    expect((await command(code, cookie, 1, { type: "PairNextRound" })).status).toBe(409);
+    const activity = await (await api(`events/${code}/activity`, cookie)).json() as { activity: { action: string; actor: string }[] };
+    expect(activity.activity).toHaveLength(initial.activity.length + 1);
+    expect(activity.activity[0]).toMatchObject({ action: "AddPlayers", actor: "1" });
+    expect((await api(`events/${code}/activity`, outsider)).status).toBe(403);
+    expect((await api(`events/${code}/print-data`)).status).toBe(401);
+    await command(code, cookie, 2, { type: "PairNextRound" });
+    const prints = await (await api(`events/${code}/print-data`, cookie)).json() as { unreportedMatches: unknown[] };
+    expect(prints.unreportedMatches).toHaveLength(1);
+    expect(await (await api(`events/${code}`)).json()).not.toHaveProperty("activityLog");
   });
 });
