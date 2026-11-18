@@ -24,14 +24,20 @@ export function Dialog({ open, onClose, title, children, actions }: { open: bool
   </dialog>;
 }
 
-/** Confirm/cancel dialog. The confirm button is focused first only when not destructive. */
-export function ConfirmDialog({ open, title, message, confirmLabel, confirmVariant = "rose", busy, onConfirm, onCancel }: {
-  open: boolean; title: string; message: ReactNode; confirmLabel: string; confirmVariant?: ButtonVariant; busy?: boolean; onConfirm: () => void; onCancel: () => void;
+/**
+ * Confirm/cancel dialog. The cancel button is focused first. `error` shows a server refusal inside the dialog;
+ * `confirmDisabled` blocks the confirm button, and `blockedReason` says why.
+ */
+export function ConfirmDialog({ open, title, message, confirmLabel, cancelLabel = "Cancel", confirmVariant = "rose", busy, confirmDisabled, blockedReason, error, onConfirm, onCancel }: {
+  open: boolean; title: string; message: ReactNode; confirmLabel: string; cancelLabel?: string; confirmVariant?: ButtonVariant; busy?: boolean;
+  confirmDisabled?: boolean; blockedReason?: ReactNode; error?: ReactNode; onConfirm: () => void; onCancel: () => void;
 }) {
   return <Dialog open={open} onClose={onCancel} title={title} actions={<>
-    <Button onClick={onCancel} autoFocus>Cancel</Button>
-    <Button variant={confirmVariant} onClick={onConfirm} disabled={busy}>{confirmLabel}</Button>
+    <Button onClick={onCancel} autoFocus>{cancelLabel}</Button>
+    <Button variant={confirmVariant} onClick={onConfirm} disabled={busy || confirmDisabled}>{confirmLabel}</Button>
   </>}>
     <div style={{ color: "var(--text-3)" }}>{message}</div>
+    {blockedReason ? <p className="dd-error" role="alert" style={{ margin: "12px 0 0" }}>{blockedReason}</p> : null}
+    {error ? <p className="dd-error" role="alert" style={{ margin: "12px 0 0" }}>{error}</p> : null}
   </Dialog>;
 }

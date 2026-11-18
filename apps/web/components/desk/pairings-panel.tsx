@@ -108,8 +108,8 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
     if (!match) { setEcho({ kind: "error", text: `No table ${slot || "?"} in round ${viewRound}` }); return; }
     if (match.p2 === null) { setEcho({ kind: "error", text: "A bye is scored automatically." }); return; }
     if (round?.stage === "playoff" && (kind === "draw" || kind === "double_loss")) { setEcho({ kind: "error", text: "Playoff matches cannot be a draw or a double loss." }); return; }
-    // Changing a result in an earlier round is rare and easy to do by accident: ask once.
-    if (!confirmed && round && round.number !== current?.number && match.result !== null && match.result !== kind) {
+    // A result is already on this match: ask before replacing it, like the original.
+    if (!confirmed && round && match.result !== null) {
       setOverwrite({ kind, withDrop, match, was: match.result, table: match.table, round: round.number }); return;
     }
     const drop = withDrop ? (kind === "p1" || kind === "p2" ? "loser" : kind === "double_loss" ? "both" : "none") : "none";
@@ -312,8 +312,11 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
         </div>
       </aside>
     </div>
-    <ConfirmDialog open={overwrite !== null} title="Change a result from an earlier round?" confirmLabel="Change result" confirmVariant="violet" onCancel={() => { setOverwrite(null); reselect(); }}
-      message={overwrite ? <>Round {overwrite.round}, table {overwrite.table ?? "?"} is already reported ({STAMP_TEXT[overwrite.was]}). Replace it with {overwrite.kind ? STAMP_TEXT[overwrite.kind] : "Unreported"}? Standings and later pairings are not redone.</> : null}
+    <ConfirmDialog open={overwrite !== null} title="Confirm change" confirmLabel="Yes" cancelLabel="No" confirmVariant="violet" onCancel={() => { setOverwrite(null); reselect(); }}
+      message={overwrite ? <>
+        <p style={{ margin: 0, color: "var(--text)" }}>Winner already recorded. Overwrite the result?</p>
+        <p className="dd-meta" style={{ margin: "8px 0 0" }}>Round {overwrite.round}, table {overwrite.table ?? "?"} now shows {winnerText({ ...overwrite.match, result: overwrite.was }, name(overwrite.match.p1), name(overwrite.match.p2 ?? ""))}. It would become {overwrite.kind ? winnerText({ ...overwrite.match, result: overwrite.kind }, name(overwrite.match.p1), name(overwrite.match.p2 ?? "")) : "unreported"}.{overwrite.round !== current?.number ? " Standings and later pairings are not redone." : ""}</p>
+      </> : null}
       onConfirm={() => { const o = overwrite; setOverwrite(null); if (o) void commit(o.kind, o.withDrop, o.match, true); }} />
   </div>;
 }
