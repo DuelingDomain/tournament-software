@@ -5,6 +5,7 @@ import { syncTeamMembers, teamSize, validateTeamMembers } from "../competitors.j
 import { STAFF_POSITIONS } from "../staff.js";
 import { integrity } from "../integrity.js";
 import { Element, parseXml } from "./xml.js";
+import { builtInInfractionId } from "./infractions.js";
 
 export interface LegacyPlayer { memberId: string | null; firstName: string; lastName: string }
 export interface LegacyTournamentImport {
@@ -72,8 +73,21 @@ function matchResult(node: Element, p1: string, p2: string | null, winner: strin
 function key(id: string): string { return normalizeMemberId(id) ?? id; }
 function isBye(id: string): boolean { return id === "" || normalizeMemberId(id) === "0"; }
 
+/** Same as the original: a file written by a newer program version is refused. */
+export const LEGACY_SOFTWARE_VERSION = "3.0.0.0";
+function newerThanSupported(version: string): boolean {
+  if (!/^\d+(\.\d+){0,3}$/.test(version)) return false;
+  const have = version.split(".").map(Number), supported = LEGACY_SOFTWARE_VERSION.split(".").map(Number);
+  for (let i = 0; i < 4; i++) {
+    const a = have[i] ?? 0, b = supported[i] ?? 0;
+    if (a !== b) return a > b;
+  }
+  return false;
+}
+
 export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyTournamentImport {
   const root = parseXml(xml, "Tournament");
+  if (newerThanSupported(root.get("SoftwareVersion"))) throw new CommandError("legacy_version_too_new", "This file was saved by a newer version of the program.");
   const structure = root.get("Structure") || root.get("StructureCode");
   const roster = root.child("TournamentPlayers");
   const namedSizes: Record<string, number> = { individual: 1, twoplayers: 2, threeplayers: 3, fourplayers: 4, fiveplayers: 5 };
@@ -203,14 +217,19 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
     const rawId = node.get("Player");
     const p = resolve(rawId, node.int("Round"), true);
     const penalty = readPenalty(node);
-    const label = node.get("Infraction") || "Unknown legacy infraction";
-    let infraction = state.settings.infractions.find(i => i.label === label);
+    let label = node.get("Infraction") || "Unknown legacy infraction";
+    let notes = node.get("Notes") || null;
+    // A custom infraction is written as "None" with its label at the start of the notes; take it back out.
+    const tagged = label === "None" && notes ? /^\[Infraction: (.+?)\](?: ([\s\S]*))?$/.exec(notes) : null;
+    if (tagged) { label = tagged[1]!; notes = tagged[2] || null; }
+    const builtIn = builtInInfractionId(label);
+    let infraction = state.settings.infractions.find(i => i.label === label) ?? (builtIn ? state.settings.infractions.find(i => i.id === builtIn) : undefined);
     if (!infraction) {
       infraction = { id: `legacy-infraction-${state.settings.infractions.length + 1}`, label, defaultPenalty: penalty };
       state.settings.infractions.push(infraction);
     }
     state.penalties.push({ id: `legacy-penalty-${state.penalties.length + 1}`, playerId: p.id, round: node.int("Round") || null, infractionId: infraction.id, penalty,
-      judge: staffNames.get(key(node.get("Judge"))) ?? (isBye(node.get("Judge")) ? null : node.get("Judge")), notes: node.get("Notes") || null, at: ctx.now });
+      judge: staffNames.get(key(node.get("Judge"))) ?? (isBye(node.get("Judge")) ? null : node.get("Judge")), notes, at: ctx.now });
   }
   state.phase = root.bool("Finalized") ? "complete" : firstPlayoff ? "playoff" : state.rounds.length ? "swiss" : "registration";
   state.completedAt = state.phase === "complete" ? ctx.now : null;

@@ -3,8 +3,9 @@ import { normalizeMemberId, padMemberId } from "../member-id.js";
 import { teamSize } from "../competitors.js";
 import { ROLE_POSITIONS, staffPositionCode } from "../staff.js";
 import { standings } from "../standings.js";
-import type { LegacyPlayer } from "./parse.js";
+import { LEGACY_SOFTWARE_VERSION, type LegacyPlayer } from "./parse.js";
 import { buildXml } from "./xml.js";
+import { defaultInfractionNames, infractionNames } from "./infractions.js";
 
 export interface LegacyExportOptions {
   eventId?: string;
@@ -30,13 +31,6 @@ function penaltyCode(penalty: Penalty): string {
     case "disqualification": return "05";
   }
 }
-
-const infractionNames = ["None", "ProceduralErrorMinor", "ProceduralErrorMajor", "ProceduralErrorStrict", "TardinessMajor", "TardinessStrict", "DeckErrorMinor", "DeckErrorMajor", "DrawingCardsMinor", "DrawingCardsMajor", "MarkedCardsMinor", "MarkedCardsMajor", "SlowPlayMinor", "UnsportingConductMinor", "UnsportingConductMajor", "UnsportingConductSevere", "Cheating"];
-const defaultInfractionNames: Readonly<Record<string, string>> = {
-  slow_play: "SlowPlayMinor", conduct_minor: "UnsportingConductMinor", deck_problem: "DeckErrorMajor", extra_look: "ProceduralErrorMinor",
-  extra_draw: "DrawingCardsMajor", rule_violation: "ProceduralErrorMinor", maintain_state: "ProceduralErrorMinor", communication: "ProceduralErrorMinor",
-  tardiness: "TardinessMajor", outside_help: "UnsportingConductMajor", marked_cards: "MarkedCardsMajor", cheating: "Cheating",
-};
 
 export function serializeLegacyTournament(state: EventState, opts: LegacyExportOptions = {}): string {
   const used = new Set(state.players.flatMap(p => p.memberId === null ? [] : [normalizeMemberId(p.memberId)]));
@@ -110,7 +104,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     Name: state.settings.name, ID: opts.eventId ?? "X99-000000", TournamentStyleCode: ({ advanced: "01", traditional: "02", sealed: "03", open_dueling: "04" } as const)[state.settings.style ?? "advanced"],
     StructureCode: state.settings.format === "single_elim" ? "02" : state.settings.format === "open_dueling" ? "03" : "01", EventTypeCode: "01", PlayerStructure: String(teamSize(state)).padStart(2, "0"),
     ReferenceDateTime: "2003-01-02", Date: date.slice(0, 10), Time: date.slice(11, 16), CurrentRound: current,
-    TableOffset: state.settings.startingTable, PlayoffRound: firstPlayoff?.number ?? 0, SoftwareVersion: "3.0.0.0", Finalized: state.phase === "complete" ? "True" : "False",
+    TableOffset: state.settings.startingTable, PlayoffRound: firstPlayoff?.number ?? 0, SoftwareVersion: LEGACY_SOFTWARE_VERSION, Finalized: state.phase === "complete" ? "True" : "False",
     Staff: { XmlStaffArray: { XmlStaff: staffEntries } },
     PenaltyList: { PlayerPenalty: state.penalties.map(p => {
       const infraction = state.settings.infractions.find(i => i.id === p.infractionId);
