@@ -32,6 +32,7 @@ export function newEvent(user: TournamentUser, name: string, settings: Parameter
   return database().transaction(() => {
     cacheUser(user);
     let state = createEvent({ ...locationSettings(user.id, settings), name }, context(user));
+    state.legacyEventId = newLegacyEventId();
     state = applyCommand(state, { type: "AddStaff", userId: user.id, name: user.displayName, role: "organizer" }, context(user));
     for (const entry of staff) {
       if (entry.userId === user.id) {
@@ -132,16 +133,26 @@ export function playerCommand(code: string, user: TournamentUser, make: (player:
     return playerResponse(saveEvent(event, applyCommand(event.state, make(player), context(user))), user);
   }).immediate();
 }
+/** Most people one uploaded file may enrol; each one can cost a lookup at the account service. */
+export const MAX_FILE_PLAYERS = 2000;
+const LOOKUP_PARALLEL = 8;
+/** The account service has no lookup by member ID in bulk, so IDs are searched a few at a time. */
 async function matchLegacyPlayers(players: readonly LegacyPlayer[]) {
+  if (players.length > MAX_FILE_PLAYERS) throw new HttpError(422, "too_many_players", { limit: MAX_FILE_PLAYERS });
+  const ids = [...new Set(players.flatMap(player => player.memberId && !isTemporaryMemberId(player.memberId) ? [player.memberId] : []))];
   const byMemberId = new Map<string, TournamentUser>();
-  for (const player of players) {
-    if (!player.memberId || isTemporaryMemberId(player.memberId) || byMemberId.has(player.memberId)) continue;
-    const users = await searchAccounts(player.memberId);
-    const exact = users.filter(user => user.memberId === player.memberId);
-    if (exact.length === 1) byMemberId.set(player.memberId, exact[0]!);
+  for (let i = 0; i < ids.length; i += LOOKUP_PARALLEL) {
+    const chunk = ids.slice(i, i + LOOKUP_PARALLEL);
+    const found = await Promise.all(chunk.map(id => searchAccounts(id)));
+    chunk.forEach((id, index) => {
+      const exact = found[index]!.filter(user => user.memberId === id);
+      if (exact.length === 1) byMemberId.set(id, exact[0]!);
+    });
   }
   return byMemberId;
 }
+/** A random file-format event number, "X99-" followed by six digits, as the original wrote for its own events. */
+export function newLegacyEventId() { return `X99-${String(randomInt(0, 1_000_000)).padStart(6, "0")}`; }
 export async function importEvent(code: string, user: TournamentUser, kind: "tournament" | "players" | "team-players", xml: string) {
   const before = eventRecord(code);
   requireImport(before, user.id);
@@ -162,6 +173,7 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
     if (parsed) {
       state = parsed.state;
       state.staff = event.state.staff;
+      state.legacyEventId ??= event.state.legacyEventId;
       const linked = new Set<number>();
       for (const player of state.players) {
         const account = player.memberId ? matches.get(player.memberId) : undefined;
@@ -192,6 +204,13 @@ export async function openTournamentAsNewEvent(user: TournamentUser, xml: string
   const matches = await matchLegacyPlayers(parsed.players);
   return database().transaction(() => {
     cacheUser(user);
+    // The original does not open one tournament twice; here the rule is per owner.
+    const fileId = parsed.state.legacyEventId;
+    if (fileId && fileId !== "X99-000000") {
+      const existing = database().prepare<[number, string], { code: string }>("SELECT code FROM events WHERE owner_user_id=? AND json_extract(state,'$.legacyEventId')=?").get(user.id, fileId);
+      if (existing) throw new HttpError(409, "already_open", { code: existing.code });
+    }
+    if (!fileId || fileId === "X99-000000") parsed.state.legacyEventId = newLegacyEventId();
     const phase = parsed.state.phase;
     // Staff can be added only while the event is open for changes; the real phase comes back straight after.
     let state: EventState = applyCommand({ ...parsed.state, phase: "registration" }, { type: "AddStaff", userId: user.id, name: user.displayName, role: "organizer" }, context(user));

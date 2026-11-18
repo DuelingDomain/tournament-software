@@ -18,6 +18,15 @@ function requireCreateCode(value: unknown) {
   const digest = (text: string) => createHash("sha256").update(text).digest();
   if (configured && !timingSafeEqual(digest(configured), digest(typeof value === "string" ? value : ""))) throw new HttpError(403, "invalid_create_code");
 }
+/** A small in-memory limit per account on file opens, which cost account lookups. */
+const openTimes = new Map<number, number[]>();
+function limitOpens(userId: number) {
+  const now = Date.now();
+  const recent = (openTimes.get(userId) ?? []).filter(time => now - time < 60_000);
+  if (recent.length >= 10) throw new HttpError(429, "rate_limited");
+  openTimes.set(userId, [...recent, now]);
+  if (openTimes.size > 1000) for (const [id, times] of openTimes) if (times.every(time => now - time >= 60_000)) openTimes.delete(id);
+}
 /** Reads one uploaded file from a multipart request; legacy files may be UTF-16. */
 async function uploadedFile(request: Request) {
   const bytes = await readBody(request, 1024 * 1024);
@@ -79,6 +88,7 @@ export function handleApi(request: Request, path: string[]) {
     }
     if (path.length === 2 && path[0] === "events" && path[1] === "import" && method === "POST") {
       const user = signedIn(request);
+      limitOpens(user.id);
       const { form, text } = await uploadedFile(request);
       requireCreateCode(form.get("createCode"));
       return json(await openTournamentAsNewEvent(user, text), 201);

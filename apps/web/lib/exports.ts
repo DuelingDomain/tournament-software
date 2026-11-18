@@ -16,11 +16,11 @@ function playerList(state: EventState) {
     return { firstName, lastName: last.join(" "), memberId: player.memberId };
   });
 }
-/** The original wrote `<Name> (ID <id>).Tournament`, with characters a file name cannot hold changed to "_". */
-export function cleanFilename(name: string) { return name.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_") || "Tournament"; }
-/** A stable file-format event ID for an event code. */
-export function legacyEventId(code: string) {
-  return `X99-${String(createHash("sha256").update(code).digest().readUInt32BE(0) % 1_000_000).padStart(6, "0")}`;
+/** The original wrote `<Name> (ID <id>).Tournament`, with characters a file name cannot hold changed to "_". The name is clipped to keep the file name short. */
+export function cleanFilename(name: string) { return name.trim().slice(0, 150).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_") || "Tournament"; }
+/** The event number kept for the file. Events made before it was stored get a stable number from their code. */
+export function legacyEventId(code: string, stored?: string) {
+  return stored ?? `X99-${String(createHash("sha256").update(code).digest().readUInt32BE(0) % 1_000_000).padStart(6, "0")}`;
 }
 export function attachment(filename: string) {
   const ascii = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
@@ -37,7 +37,7 @@ export function exportEvent(event: EventRecord, kind: string) {
   switch (kind) {
     case "tournament": case "finalized": {
       if (kind === "finalized" && state.phase !== "complete") throw new HttpError(422, "NOT_FINALIZED");
-      const eventId = legacyEventId(event.code);
+      const eventId = legacyEventId(event.code, state.legacyEventId);
       body = serializeLegacyTournament(state, { eventId }); filename = `${cleanFilename(state.settings.name)} (ID ${eventId}).Tournament`; contentType = "application/xml; charset=utf-8"; break;
     }
     case "players-xml": body = serializeLegacyPlayerList(playerList(state)); filename = `${event.code}-AllPlayers.xml`; contentType = "application/xml; charset=utf-8"; break;

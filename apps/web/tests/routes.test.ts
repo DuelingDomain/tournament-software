@@ -650,7 +650,7 @@ describe("open tournament and global player list", () => {
   it("opens a saved file as a new event with nothing lost, offers the finalized file, and keeps the global list", async () => {
     const cookie = await login();
     const code = await create(cookie);
-    const reals = ["1000000013", "1000000024", "1000000035", "1000000046"];
+    const reals = ["1000000014", "1000000026", "1000000038", "1000000040"];
     await command(code, cookie, 1, { type: "AddPlayers", players: reals.map((memberId, i) => ({ userId: null, name: `Pilot ${"ABCD"[i]} Fieldstone`, memberId })) });
     await command(code, cookie, 2, { type: "PairNextRound" });
     let view = await desk(code, cookie);
@@ -658,6 +658,8 @@ describe("open tournament and global player list", () => {
     const dropped = view.state.players[3]!.id;
     view = deskSchema.parse(await (await command(code, cookie, view.version, { type: "DropPlayer", playerId: dropped })).json());
     view = deskSchema.parse(await (await command(code, cookie, view.version, { type: "AddPenalty", playerId: view.state.players[0]!.id, infractionId: "slow_play", notes: "Warned" })).json());
+    // Several built-in infractions share one legacy name; each must still come back as itself.
+    view = deskSchema.parse(await (await command(code, cookie, view.version, { type: "AddPenalty", playerId: view.state.players[1]!.id, infractionId: "extra_look" })).json());
     expect((await api(`events/${code}/export/finalized`, cookie)).status).toBe(422);
     view = deskSchema.parse(await (await command(code, cookie, view.version, { type: "CompleteEvent" })).json());
     const finalized = await api(`events/${code}/export/finalized`, cookie);
@@ -684,13 +686,29 @@ describe("open tournament and global player list", () => {
         penalties: s.penalties.map(p => [id(p.playerId), p.round, p.infractionId, p.penalty, p.notes]) };
     };
     expect(shape(next.state as unknown as Shape)).toEqual(shape(mine.state as unknown as Shape));
-    expect((next.state as unknown as Shape).penalties).toHaveLength(1);
+    expect((next.state as unknown as Shape).penalties).toHaveLength(2);
     const board = (rows: unknown) => (rows as { playerId: string }[]).map(({ playerId: _id, ...row }) => row);
     expect(board(next.standings)).toEqual(board(mine.standings));
 
     // Files from a newer program version are refused.
     const newer = await openFile(other, xml.replace("<SoftwareVersion>3.0.0.0", "<SoftwareVersion>3.1.0.0"));
     expect(newer.status).toBe(422); expect(await newer.json()).toMatchObject({ error: "legacy_version_too_new" });
+
+    // The event number is kept (letters upper-cased), shows in the file name, and a file already opened by its owner is refused.
+    const numbered = xml.replace(/<ID>X99-\d{6}<\/ID>/, "<ID>a12-345678</ID>");
+    const sixth = await login(6);
+    const first = await openFile(sixth, numbered);
+    expect(first.status).toBe(201);
+    const firstCode = z.object({ code: z.string() }).parse(await first.json()).code;
+    const resaved = await api(`events/${firstCode}/export/finalized`, sixth);
+    expect(resaved.headers.get("content-disposition")).toContain("(ID A12-345678).Tournament");
+    expect(await resaved.text()).toContain("<ID>A12-345678</ID>");
+    const again = await openFile(sixth, numbered);
+    expect(again.status).toBe(409); expect(await again.json()).toMatchObject({ error: "already_open", code: firstCode });
+    expect((await openFile(await login(4), numbered)).status).toBe(201);
+    // A copy of an event I made myself is also refused: its number is the same.
+    const own = await openFile(cookie, xml);
+    expect(own.status).toBe(409); expect(await own.json()).toMatchObject({ error: "already_open", code });
     expect((await openFile(await login(6), "<PlayerList/>")).status).toBe(422);
 
     // Opening added the real player IDs to the caller's global list; the CSV round-trips and never changes a listed ID.
@@ -702,9 +720,30 @@ describe("open tournament and global player list", () => {
     const third = await login(3);
     expect(((await (await api("players", third)).json()) as { players: unknown[] }).players).toEqual([]);
     expect(await (await uploadPlayers(third, csv)).json()).toMatchObject({ added: 4, skipped: 0, invalid: 0, total: 4 });
-    expect(await (await uploadPlayers(third, `${csv}"0000000000","No","Id"\r\n"1000000013","Other","Name"\r\nbad line\r\n`)).json()).toMatchObject({ added: 0, skipped: 5, invalid: 2, total: 4 });
+    expect(await (await uploadPlayers(third, `${csv}"0000000000","No","Id"\r\n"1000000014","Other","Name"\r\nbad line\r\n`)).json()).toMatchObject({ added: 0, skipped: 5, invalid: 2, total: 4 });
     expect((await api("players", third)).status).toBe(200);
-    expect(await (await api("players", third)).json()).toMatchObject({ players: expect.arrayContaining([{ memberId: "1000000013", firstName: "Pilot A", lastName: "Fieldstone" }]) });
+    expect(await (await api("players", third)).json()).toMatchObject({ players: expect.arrayContaining([{ memberId: "1000000014", firstName: "Pilot A", lastName: "Fieldstone" }]) });
+  });
+  it("keeps a global list safe from hostile files and reports invalid IDs apart", async () => {
+    const cookie = await login(2);
+    // Quotes in names cannot break out of a cell, and no cell can start like a formula.
+    const hostile = `"ID","First Name","Last Name"\r\n"1000000014","x\\",\\"=cmd|' /C calc'!A0","-2+3"\r\n"1000000026","+1","@SUM(1)"\r\n"1000000038","=1+1","Tab\tName"\r\n"1000000040","Ok","Name"\r\n"1000000050","Bad","Digit"\r\n`;
+    const result = await (await uploadPlayers(cookie, hostile)).json() as { added: number; badCheckDigit: { count: number; csv: string | null } };
+    expect(result.added).toBe(4);
+    expect(result.badCheckDigit.count).toBe(1);
+    expect(result.badCheckDigit.csv).toContain("1000000050");
+    const rows = (await (await api("players/export", cookie)).text()).split("\r\n").filter(Boolean).slice(1);
+    expect(rows).toHaveLength(4);
+    // An RFC 4180 reader: only "" escapes a quote; every row must give exactly three cells.
+    const rfc = (line: string) => [...line.matchAll(/"((?:[^"]|"")*)"(?:,|$)/g)].map(m => m[1]!.replaceAll('""', '"'));
+    for (const row of rows) {
+      const cells = rfc(row);
+      expect(cells).toHaveLength(3);
+      for (const cell of cells) expect(cell).not.toMatch(/^[=+\-@\t\r]/);
+    }
+    // Broken or hostile XML is a 422, not a server error.
+    expect((await openFile(cookie, `<Tournament>${"<a>".repeat(5000)}${"</a>".repeat(5000)}</Tournament>`)).status).toBe(422);
+    expect((await openFile(cookie, "<Tournament><__proto__>x</__proto__></Tournament>")).status).toBe(422);
   });
   it("keeps teams, members and a team match through Open Tournament", async () => {
     const cookie = await login();
@@ -713,9 +752,10 @@ describe("open tournament and global player list", () => {
     await command(code, cookie, 2, { type: "AddTeams", teams: [{ name: "Left", memberIds: people.state.players.slice(0, 2).map(p => p.id) }, { name: "Right", memberIds: people.state.players.slice(2).map(p => p.id) }] });
     await command(code, cookie, 3, { type: "PairNextRound" });
     const xml = await (await api(`events/${code}/export/tournament`, cookie)).text();
-    const copy = z.object({ code: z.string() }).parse(await (await openFile(cookie, xml)).json()).code;
+    const copyCookie = await login(5);
+    const copy = z.object({ code: z.string() }).parse(await (await openFile(copyCookie, xml)).json()).code;
     const mine = await (await api(`events/${code}/desk`, cookie)).json() as { state: { teams: { name: string; memberIds: string[]; status: string }[]; settings: { playerStructure: number }; rounds: unknown[] } };
-    const next = await (await api(`events/${copy}/desk`, cookie)).json() as typeof mine;
+    const next = await (await api(`events/${copy}/desk`, copyCookie)).json() as typeof mine;
     expect(next.state.settings.playerStructure).toBe(2);
     expect(next.state.teams.map(t => [t.name, t.memberIds.length, t.status])).toEqual(mine.state.teams.map(t => [t.name, t.memberIds.length, t.status]));
     expect(next.state.rounds).toHaveLength(1);

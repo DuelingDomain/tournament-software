@@ -1,4 +1,4 @@
-import { CommandError, isTemporaryMemberId, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
+import { CommandError, isTemporaryMemberId, memberIdCheckDigitOk, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { database } from "./db";
 import { HttpError } from "./http";
@@ -17,21 +17,36 @@ export function globalPlayers(ownerId: number): GlobalPlayer[] {
     .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName) || Number(a.memberId) - Number(b.memberId));
 }
 
-/** Existing IDs are never changed, as in the original. */
+/** Most players one account can keep in its global list. */
+export const MAX_GLOBAL_PLAYERS = 20000;
+
+/** Names hold no quotes (the original changed " to '), no backslashes and no line breaks, so a CSV row cannot be broken open. */
+function cleanName(value: string) {
+  return value.replace(/["]/g, "'").replace(/\\/g, "/").replace(/[\r\n\t]+/g, " ").trim().slice(0, 100);
+}
+
+/** Existing IDs are never changed, as in the original. IDs that fail the check digit are not added; they are returned apart, as the original did. */
 export function mergeGlobalPlayers(ownerId: number, players: readonly { memberId: string | null; firstName: string; lastName: string }[]) {
-  const insert = database().prepare("INSERT OR IGNORE INTO global_players(owner_user_id,member_id,first_name,last_name) VALUES (?,?,?,?)");
-  let added = 0, skipped = 0, invalid = 0;
+  const insert = database().prepare("INSERT INTO global_players(owner_user_id,member_id,first_name,last_name) VALUES (?,?,?,?)");
+  const has = database().prepare("SELECT 1 FROM global_players WHERE owner_user_id=? AND member_id=?");
+  let count = (database().prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM global_players WHERE owner_user_id=?").get(ownerId))!.n;
+  let added = 0, skipped = 0, invalid = 0, overLimit = 0;
+  const badCheckDigit: GlobalPlayer[] = [];
   for (const player of players) {
     const id = realId(player.memberId);
-    if (!id || !(player.firstName.trim() || player.lastName.trim())) { invalid++; continue; }
-    if (insert.run(ownerId, id, player.firstName.trim().slice(0, 100), player.lastName.trim().slice(0, 100)).changes) added++; else skipped++;
+    const firstName = cleanName(player.firstName), lastName = cleanName(player.lastName);
+    if (!id || !(firstName || lastName)) { invalid++; continue; }
+    if (!memberIdCheckDigitOk(id)) { badCheckDigit.push({ memberId: id, firstName, lastName }); continue; }
+    if (has.get(ownerId, id)) skipped++;
+    else if (count >= MAX_GLOBAL_PLAYERS) overLimit++;
+    else { insert.run(ownerId, id, firstName, lastName); added++; count++; }
   }
-  return { added, skipped, invalid };
+  return { added, skipped, invalid, overLimit, badCheckDigit };
 }
 
 /** Header "ID","First Name","Last Name"; ID padded to ten digits; quotes escaped with a backslash. */
 export function globalPlayersCsv(list: readonly GlobalPlayer[]): string {
-  const cell = (value: string) => `"${(/^[=+@\t\r]/.test(value) ? "'" + value : value).replaceAll('"', '\\"')}"`;
+  const cell = (value: string) => `"${(/^[=+\-@\t\r]/.test(value) ? "'" + value : value).replaceAll('"', '\\"')}"`;
   return ['"ID","First Name","Last Name"', ...list.map(p => [padMemberId(p.memberId), p.firstName, p.lastName].map(cell).join(","))].join("\r\n") + "\r\n";
 }
 
@@ -58,7 +73,7 @@ export function parsePlayerCsv(text: string): { players: LegacyPlayer[]; invalid
     const fields = csvFields(line);
     const id = fields.length === 3 && /^\s*\d+\s*$/.test(fields[0]!) ? normalizeMemberId(fields[0]!) : null;
     if (!id || id === "0") { invalid++; continue; }
-    const text = (v: string) => v.trim().replace(/^'(?=[=+@])/, "");
+    const text = (v: string) => v.trim().replace(/^'(?=[=+\-@])/, "");
     players.push({ memberId: id, firstName: text(fields[1]!), lastName: text(fields[2]!) });
   }
   return { players, invalid };
@@ -76,7 +91,8 @@ export function importGlobalPlayers(ownerId: number, text: string) {
     } catch (error) { if (error instanceof HttpError || error instanceof CommandError) throw error; throw new HttpError(422, "invalid_player_file"); }
   } else ({ players, invalid } = parsePlayerCsv(body));
   return database().transaction(() => {
-    const merged = mergeGlobalPlayers(ownerId, players);
-    return { ...merged, invalid: merged.invalid + invalid, total: globalPlayers(ownerId).length };
+    const { badCheckDigit, ...merged } = mergeGlobalPlayers(ownerId, players);
+    return { ...merged, invalid: merged.invalid + invalid, total: globalPlayers(ownerId).length,
+      badCheckDigit: { count: badCheckDigit.length, csv: badCheckDigit.length ? globalPlayersCsv(badCheckDigit) : null } };
   }).immediate();
 }
