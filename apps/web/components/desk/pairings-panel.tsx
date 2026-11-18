@@ -248,7 +248,11 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
                 <span className="dk-pname">{right ? <><b data-win={rightWin}>{right.name}</b><span className="dk-rec">{records.get(right.id)}</span>{right.status === "dropped" && <span className="dk-tag">Drop</span>}{team && <MemberLine names={membersFor(m, right.id)} />}</> : <span className="dk-rec">Bye</span>}</span>
                 <span className="dk-res">
                   {shown !== null ? <Stamp kind={stampKind(shown)} size="sm" key={`${m.id}:${shown}`}>{shown === "bye_win" ? "Bye" : shown === "bye_loss" ? "Bye (loss)" : STAMP_TEXT[shown]}</Stamp>
-                    : <><EmptyStamp /><span style={{ whiteSpace: "nowrap" }}>Unreported</span>{pend && <span className="dk-res-note" data-bad={pend.disagree}>{pend.disagree && "⚠ "}· {pend.text}</span>}</>}
+                    : <><EmptyStamp /><span style={{ whiteSpace: "nowrap" }}>Unreported</span>{bye && canEnter && !finished
+                      && <Button size="sm" onClick={async () => {
+                        const result = await send({ type: "EnterResult", matchId: m.id, result: "bye_win" });
+                        if (!result.ok) notify(result.message);
+                      }}>Award bye</Button>}{pend && <span className="dk-res-note" data-bad={pend.disagree}>{pend.disagree && "⚠ "}· {pend.text}</span>}</>}
                 </span>
               </>;
               const label = `Table ${m.table === null ? "bye" : span(tablesOf(m))}, ${left.name} versus ${right?.name ?? "bye"}, ${shown ? STAMP_TEXT[shown] : "unreported"}`;

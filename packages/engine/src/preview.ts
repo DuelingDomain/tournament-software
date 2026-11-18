@@ -1,7 +1,7 @@
 import { applyCommand } from "./reducer.js";
 import type { Command, CommandContext, EventState, MatchPlayerChange } from "./types.js";
 
-/** Preview participant changes with the same validation and seed as execution. */
+/** Preview participant changes and cleared results using the command reducer. */
 export function previewCommand(state: EventState, command: Command, ctx: CommandContext): MatchPlayerChange[] {
   const next = applyCommand(state, command, ctx);
   const before = new Map(state.rounds.flatMap(r => r.matches.map(m => [m.id, m] as const)));
@@ -10,7 +10,8 @@ export function previewCommand(state: EventState, command: Command, ctx: Command
   for (const matchId of new Set([...before.keys(), ...after.keys()])) {
     const previous = before.get(matchId) ?? null;
     const current = after.get(matchId) ?? null;
-    if (previous && current && previous.p1 === current.p1 && previous.p2 === current.p2) continue;
+    if (previous && current && previous.p1 === current.p1 && previous.p2 === current.p2
+      && (previous.result === null || current.result !== null)) continue;
     changes.push(structuredClone({ matchId, before: previous, after: current }));
   }
   return changes;

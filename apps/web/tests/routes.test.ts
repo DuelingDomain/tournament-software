@@ -2,7 +2,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createHmac, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { createServer } from "node:http";
 import { z } from "zod";
 import type { Command, StaffRole } from "@dd-tournament/engine";
 import { GET as apiGet, POST as apiPost, PUT as apiPut, DELETE as apiDelete } from "../app/api/[...path]/route";
@@ -192,19 +191,21 @@ describe("event HTTP contract", () => {
     const owner = await login(); const code = await create(owner);
     await dummyPlayers(code, owner, 1, 4);
     expect((await command(code, owner, 2, { type: "PairNextRound" })).status).toBe(200);
-    expect((await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 3 })).status).toBe(200);
+    const [first, second] = (await desk(code, owner)).state.rounds[0]!.matches;
+    expect((await command(code, owner, 3, { type: "EnterResult", matchId: first!.id, result: "p1" })).status).toBe(200);
+    expect((await command(code, owner, 4, { type: "EnterResult", matchId: second!.id, result: "p1" })).status).toBe(200);
     const before: unknown = await (await api(`events/${code}/desk`, owner)).json();
-    const rejected = await command(code, owner, 4, { type: "SwissCut", mode: "top", value: 1, pairNext: true });
+    const rejected = await command(code, owner, 5, { type: "SwissCut", mode: "top", value: 1, pairNext: true, tieOrder: [first!.p1] });
     expect(rejected.status).toBe(422);
     expect(await rejected.json()).toMatchObject({ error: "NOT_ENOUGH_PLAYERS" });
     expect(await (await api(`events/${code}/desk`, owner)).json()).toEqual(before);
-    const paired = await command(code, owner, 4, { type: "SwissCut", mode: "top", value: 2, pairNext: true });
+    const paired = await command(code, owner, 5, { type: "SwissCut", mode: "top", value: 2, pairNext: true });
     expect(paired.status).toBe(200);
-    expect(await paired.json()).toMatchObject({ version: 5, state: {
+    expect(await paired.json()).toMatchObject({ version: 6, state: {
       phase: "swiss", swissCuts: [{ afterRound: 1, roundPairedAfter: true }], rounds: [{ number: 1 }, { number: 2 }],
     } });
     const saved = await desk(code, owner);
-    expect(saved.version).toBe(5);
+    expect(saved.version).toBe(6);
     expect(saved.state.players.filter(p => p.status === "cut")).toHaveLength(2);
     expect(saved.state.rounds[1]!.matches.flatMap(m => [m.p1, m.p2]).sort())
       .toEqual(saved.state.players.filter(p => p.status === "active").map(p => p.id).sort());
@@ -558,36 +559,33 @@ describe("legacy files and service bridge", () => {
   });
   it("signs exact service paths and bodies for search, lookup, profile update, and propagates member-ID conflicts", async () => {
     const received: string[] = [];
-    const server = createServer(async (request, response) => {
-      const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const raw = Buffer.concat(chunks).toString("utf8");
-      const header = String(request.headers["x-bridge-signature"]);
-      const match = /^t=(\d+),v1=([a-f0-9]{64})$/.exec(header);
-      const expected = createHmac("sha256", bridgeSecret).update(`dd-tournament-api.v1\n${request.method}\n${request.url}\n${match?.[1]}\n${raw}`).digest("hex");
-      if (!match || match[2] !== expected) { response.writeHead(401).end(); return; }
-      received.push(`${request.method} ${request.url} ${raw}`);
-      response.setHeader("Content-Type", "application/json");
+    process.env.DD_APP_URL = "https://service.example.test";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      expect(url.origin).toBe(process.env.DD_APP_URL);
+      const path = url.pathname + url.search;
+      const raw = await request.text();
+      const signature = /^t=(\d+),v1=([a-f0-9]{64})$/.exec(request.headers.get("x-bridge-signature") ?? "");
+      const expected = createHmac("sha256", bridgeSecret).update(`dd-tournament-api.v1\n${request.method}\n${path}\n${signature?.[1]}\n${raw}`).digest("hex");
+      if (!signature || signature[2] !== expected) return new Response(null, { status: 401 });
+      received.push(`${request.method} ${path} ${raw}`);
       if (request.method === "PUT") {
-        if (raw.includes("999")) { response.writeHead(409).end(JSON.stringify({ error: "member_id_taken" })); return; }
-        response.end(JSON.stringify({ memberId: "101", checkDigitOk: false }));
-      } else if (request.method === "POST") response.end(JSON.stringify({ users: [user()], missing: [] }));
-      else response.end(JSON.stringify({ users: [user()] }));
+        if (raw.includes("999")) return Response.json({ error: "member_id_taken" }, { status: 409 });
+        return Response.json({ memberId: "101", checkDigitOk: false });
+      }
+      return Response.json(request.method === "POST" ? { users: [user()], missing: [] } : { users: [user()] });
     });
-    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-    try {
-      const address = server.address(); if (!address || typeof address === "string") throw new Error("No listener");
-      process.env.DD_APP_URL = `http://127.0.0.1:${address.port}`;
-      const cookie = await login(); const code = await create(cookie);
-      expect(await (await api(`accounts/search?event=${code}&q=Mira%20%26%20friends`, cookie)).json()).toMatchObject({ users: [{ userId: 1, username: "mira-demo" }] });
-      expect((await command(code, cookie, 1, { type: "AddPlayers", players: [{ userId: 1, name: "Spoofed name" }] })).status).toBe(200);
-      expect((await desk(code, cookie)).state.players[0]!.name).toBe("Mira Meadow");
-      expect(await (await api(`accounts/1/member-id?event=${code}`, cookie, "PUT", { memberId: "000-101" })).json()).toEqual({ memberId: "101", checkDigitOk: false });
-      const conflict = await api(`accounts/1/member-id?event=${code}`, cookie, "PUT", { memberId: "999" });
-      expect(conflict.status).toBe(409); expect(await conflict.json()).toEqual({ error: "member_id_taken" });
-      expect(received).toContain("GET /api/tournament-bridge/users/search?q=Mira+%26+friends ");
-      expect(received).toContain('POST /api/tournament-bridge/users/lookup {"ids":[1]}');
-      expect(received).toContain('PUT /api/tournament-bridge/users/1/member-id {"memberId":"101"}');
-    } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+    const cookie = await login(); const code = await create(cookie);
+    expect(await (await api(`accounts/search?event=${code}&q=Mira%20%26%20friends`, cookie)).json()).toMatchObject({ users: [{ userId: 1, username: "mira-demo" }] });
+    expect((await command(code, cookie, 1, { type: "AddPlayers", players: [{ userId: 1, name: "Spoofed name" }] })).status).toBe(200);
+    expect((await desk(code, cookie)).state.players[0]!.name).toBe("Mira Meadow");
+    expect(await (await api(`accounts/1/member-id?event=${code}`, cookie, "PUT", { memberId: "000-101" })).json()).toEqual({ memberId: "101", checkDigitOk: false });
+    const conflict = await api(`accounts/1/member-id?event=${code}`, cookie, "PUT", { memberId: "999" });
+    expect(conflict.status).toBe(409); expect(await conflict.json()).toEqual({ error: "member_id_taken" });
+    expect(received).toContain("GET /api/tournament-bridge/users/search?q=Mira+%26+friends ");
+    expect(received).toContain('POST /api/tournament-bridge/users/lookup {"ids":[1]}');
+    expect(received).toContain('PUT /api/tournament-bridge/users/1/member-id {"memberId":"101"}');
   });
 });
 

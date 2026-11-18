@@ -1,4 +1,4 @@
-import type { Command, DeskView, EventState, Match, MatchResult, Player, Round, Standing, Team, UndropOption } from "@dd-tournament/engine";
+import type { Command, DeskView, EventState, Match, MatchResult, Player, Round, Team, UndropOption } from "@dd-tournament/engine";
 
 export type ResultKind = "p1" | "p2" | "draw" | "double_loss";
 export type Entry = ResultKind | null;
@@ -100,9 +100,6 @@ export function nextTempId(players: readonly Player[]) {
   return String(n);
 }
 
-export function standingsThrough(state: EventState, standingsFn: (s: EventState) => Standing[], through: number) {
-  return standingsFn({ ...state, rounds: state.rounds.filter(r => r.number <= through) });
-}
 export function statusText(p: Player) {
   if (p.status === "dropped") return `Dropped R${p.droppedAfterRound ?? 0}`;
   if (p.status === "cut") return "Cut";

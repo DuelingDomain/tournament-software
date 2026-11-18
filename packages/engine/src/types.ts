@@ -62,7 +62,7 @@ export interface Player {
   status: "active" | "dropped" | "cut";
   droppedAfterRound: number | null;
   enteredRound: number; // 1 for normal entry; >1 for late entry
-  fixedTable: number | null; // accessibility seat; honoured in Swiss
+  fixedTable: number | null; // accessibility seat, required in Swiss and preferred in playoffs
   openDuelingPoints?: number;
   checkedIn: boolean;
   notes: string | null;
@@ -77,6 +77,7 @@ export interface Match {
   id: MatchId;
   round: number;
   table: number | null; // null for byes
+  byeTable?: number; // reserved table number for file exchange and bracket order
   p1: PlayerId;
   p2: PlayerId | null;
   result: MatchResult | null; // null = unreported
@@ -85,7 +86,7 @@ export interface Match {
   extensionMinutes: number;
 }
 
-/** Participant edits, including match creation (before null) and removal (after null). */
+/** Participant edits and cleared results. Creation has before null and removal has after null. */
 export interface MatchPlayerChange {
   matchId: MatchId;
   before: Match | null;
@@ -195,7 +196,7 @@ export type Command =
   | { type: "ExtendMatch"; matchId: MatchId; minutes: number }
   | { type: "AdjustPoints"; playerId: PlayerId; delta: number }
   // Results
-  | { type: "EnterResult"; matchId: MatchId; result: MatchResult | null; drop?: "loser" | "both" | "none" } // null clears; works on any round (correction); playoff refuses draw/double_loss
+  | { type: "EnterResult"; matchId: MatchId; result: MatchResult | null; drop?: "loser" | "both" | "none"; swapPlayers?: boolean } // set swapPlayers for a result correction
   | { type: "ReportResult"; playerId: PlayerId; matchId: MatchId; result: MatchResult } // player self-report: applied when both agree; a disagreement stays pending for staff
   | { type: "DropPlayer"; playerId: PlayerId }
   | { type: "UndropPlayer"; playerId: PlayerId; option: UndropOption; swapWith?: PlayerId } // current-round re-entry and pairing options
@@ -286,7 +287,7 @@ export interface ScorekeeperEngine {
   createEvent(settings: Partial<EventSettings> & { name: string }, ctx: CommandContext): EventState;
   applyCommand(state: EventState, command: Command, ctx: CommandContext): EventState; // throws CommandError; never mutates input
   previewCommand(state: EventState, command: Command, ctx: CommandContext): MatchPlayerChange[];
-  standings(state: EventState): Standing[];
+  standings(state: EventState, options?: import("./standings.js").StandingsOptions): Standing[];
   suggestRounds(playerCount: number): number;
   publicView(state: EventState, version: number): PublicView;
   integrity(state: EventState): IntegrityReport;

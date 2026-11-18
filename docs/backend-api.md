@@ -107,6 +107,8 @@ Round-trip limits of Save Tournament then Open Tournament: the activity log and 
 
 Legacy files do not encode account IDs or timezone offsets. Dates use the existing UTC interpretation and minute precision. Automated synthetic round-trips establish representable data behavior; compatibility with an original desktop installation has not been executed.
 
+Tournament XML stores match tables relative to `TableOffset`. Add the offset to a stored match table to get its displayed number. An offset of 6 makes table 1 display as table 7. Fixed seats are stored as displayed numbers. If a match has a table below the configured offset, export lowers the file's offset so the displayed tables survive reopening and all stored match tables are nonnegative.
+
 ## Event list
 
 `GET /api/events` returns `{ events: EventListItem[] }` for events the signed-in account staffs or has entered, newest created first. Each item has `{ code, name, phase, role, joined, startsAt, createdAt, format, playerStructure, playerCount, teamCount, round, plannedRounds }`. `createdAt` is the creation time; `firstRoundAt` is when play began (round 1 timer start, else its pairing time, else the first pairing in the activity log; null before pairing); `round` is the latest round number or null before pairing; `plannedRounds` is the planned Swiss round count, or the suggested count when none is set; `playerCount` counts enrolled people and `teamCount` counts teams (0 for individual events). The last eight fields are additions; earlier clients that ignore them keep working.

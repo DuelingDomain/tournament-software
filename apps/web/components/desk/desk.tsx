@@ -164,7 +164,7 @@ export function Desk({ code, nav }: { code: string; nav: DeskNav }) {
     {dialog === "timer" && <TimerDialog desk={desk} role={role} send={send} onClose={close} />}
     {dialog === "cut" && <CutDialog desk={desk} send={send} onClose={close} onDone={t => { done(t); go("pairings"); }} />}
     {dialog === "undrop" && <UndropDialog code={code} desk={desk} send={send} onClose={close} onDone={done} />}
-    {dialog === "change" && <ChangeResultDialog desk={desk} send={send} onClose={close} onDone={done} />}
+    {dialog === "change" && <ChangeResultDialog desk={desk} role={role} send={send} onClose={close} onDone={done} />}
     {dialog === "manual" && <ManualPairingsDialog desk={desk} send={send} onClose={close} />}
     {dialog === "print" && <BatchPrintDialog code={code} onClose={close} />}
     {dialog === "keys" && <KeyboardDialog onClose={close} />}

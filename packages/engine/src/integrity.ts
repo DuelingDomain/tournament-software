@@ -1,6 +1,6 @@
 import { competitors } from "./competitors.js";
 import type { EventState, IntegrityReport } from "./types.js";
-import { isTemporaryMemberId, memberIdCheckDigitOk, normalizeMemberId } from "./member-id.js";
+import { isReservedMemberId, memberIdCheckDigitOk, normalizeMemberId } from "./member-id.js";
 
 export function integrity(state: EventState): IntegrityReport {
   const report: IntegrityReport = { repeatMatches: [], pairedTwiceInRound: [], unpairedActive: [], memberIdWarnings: [] };
@@ -29,7 +29,7 @@ export function integrity(state: EventState): IntegrityReport {
     if (p.memberId === null) continue;
     const id = normalizeMemberId(p.memberId) ?? p.memberId;
     members.set(id, [...(members.get(id) ?? []), p.id]);
-    if (!isTemporaryMemberId(id) && !memberIdCheckDigitOk(id)) report.memberIdWarnings.push({ playerId: p.id, memberId: id, problem: "check_digit" });
+    if (!isReservedMemberId(id) && !memberIdCheckDigitOk(id)) report.memberIdWarnings.push({ playerId: p.id, memberId: id, problem: "check_digit" });
   }
   for (const [memberId, ids] of members) if (ids.length > 1) {
     for (const playerId of ids) report.memberIdWarnings.push({ playerId, memberId, problem: "duplicate" });

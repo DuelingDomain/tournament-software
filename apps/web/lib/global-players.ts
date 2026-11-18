@@ -1,4 +1,4 @@
-import { CommandError, isTemporaryMemberId, memberIdCheckDigitOk, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
+import { CommandError, isReservedMemberId, memberIdCheckDigitOk, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { database } from "./db";
 import { HttpError } from "./http";
@@ -8,7 +8,7 @@ export interface GlobalPlayer { memberId: string; firstName: string; lastName: s
 /** A real player ID: one to ten digits, not zero, and not in the temporary range. */
 function realId(raw: string | null): string | null {
   const id = raw === null ? null : normalizeMemberId(raw);
-  return id && id !== "0" && !isTemporaryMemberId(id) ? id : null;
+  return id && id !== "0" && !isReservedMemberId(id) ? id : null;
 }
 
 export function globalPlayers(ownerId: number): GlobalPlayer[] {

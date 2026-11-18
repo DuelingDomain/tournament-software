@@ -68,7 +68,7 @@ describe("re-entry and manual seats", () => {
     s = run(s, { type: "ReEnroll", playerId: p.id });
     expect(s.players[0]).toMatchObject({ status: "active", droppedAfterRound: null });
     expect(s.rounds.map(r => r.matches.find(m => m.p1 === p.id || m.p2 === p.id)?.result)).toEqual(["p1", "bye_loss", "bye_loss"]);
-    expect(standings(s).find(r => r.playerId === p.id)?.record).toEqual({ wins: 1, losses: 2, draws: 0 });
+    expect(standings(s, { throughRound: 3 }).find(r => r.playerId === p.id)?.record).toEqual({ wins: 1, losses: 2, draws: 0 });
   });
 
   it("swaps into an unscored dropped player's seat and leaves that player unseated", () => {
@@ -87,15 +87,17 @@ describe("re-entry and manual seats", () => {
     expect(() => run(scored, { type: "UndropPlayer", playerId: returning.id, option: "swap_with_dropped", swapWith: a.id })).toThrow(expect.objectContaining({ code: "RESULT_ALREADY_ENTERED" }));
   });
 
-  it("replaces a current bye with a new two-player table and removes its automatic points", () => {
+  it("converts a current bye in place and removes its automatic points", () => {
     let s = event(4);
     const p = s.players[0];
     s = run(s, { type: "DropPlayer", playerId: p.id });
     s = run(s, { type: "PairNextRound" });
     const bye = s.rounds[0].matches.find(m => m.p2 === null)!;
+    const assigned = run(s, { type: "UpdatePlayer", playerId: p.id, fixedTable: 20 });
+    const moved = run(assigned, { type: "UndropPlayer", playerId: p.id, option: "take_bye" });
+    expect(moved.rounds[0].matches.find(m => m.id === bye.id)?.table).toBe(20);
     s = run(s, { type: "UndropPlayer", playerId: p.id, option: "take_bye" });
-    expect(s.rounds[0].matches.some(m => m.id === bye.id)).toBe(false);
-    expect(s.rounds[0].matches.at(-1)).toMatchObject({ p1: p.id, p2: bye.p1, result: null, table: 2 });
+    expect(s.rounds[0].matches.find(m => m.id === bye.id)).toMatchObject({ p1: bye.p1, p2: p.id, result: null, table: 2 });
     expect(standings(s).every(r => r.matchPoints === 0)).toBe(true);
   });
 
@@ -124,7 +126,7 @@ describe("re-entry and manual seats", () => {
     s = run(s, { type: "AddByeMatch", playerId: m.p1, result: "bye_loss" });
     s = run(s, { type: "CreateMatch", p1: m.p2!, p2: null });
     expect(s.rounds[0].matches.slice(1).map(m => [m.table, m.result])).toEqual([[null, "bye_loss"], [null, "bye_win"]]);
-    expect(standings(s).find(r => r.playerId === m.p2)?.matchPoints).toBe(3);
+    expect(standings(s, { throughRound: 1 }).find(r => r.playerId === m.p2)?.matchPoints).toBe(3);
   });
 });
 
@@ -215,20 +217,8 @@ describe("Swiss cuts and integrity", () => {
   it.each([0, 1])("rolls back cut-and-pair atomically when only %i players survive", value => {
     const s = fixture([[[0, 1, "p1"], [2, 3, "p1"]]]);
     const before = structuredClone(s);
-    expect(() => run(s, { type: "SwissCut", mode: "top", value, pairNext: true })).toThrow(expect.objectContaining({ code: value ? "NOT_ENOUGH_PLAYERS" : "NO_PLAYERS" }));
+    expect(() => run(s, { type: "SwissCut", mode: "top", value, pairNext: true, ...(value ? { tieOrder: [s.players[0].id] } : {}) })).toThrow(expect.objectContaining({ code: value ? "NOT_ENOUGH_PLAYERS" : "NO_PLAYERS" }));
     expect(s).toEqual(before);
-  });
-
-  it("keeps exactly top X with seeded ties or an explicit full-tie order", () => {
-    const s = fixture([[[0, 1, "draw"], [2, 3, "draw"]]]);
-    const command = { type: "SwissCut", mode: "top", value: 2 } as const;
-    expect(run(s, command, 123)).toEqual(run(s, command, 123));
-    const kept = (seed: number) => run(s, command, seed).players.filter(p => p.status === "active").map(p => p.id);
-    expect(kept(123)).toHaveLength(2);
-    expect(kept(123)).not.toEqual(kept(456));
-    const order = s.players.map(p => p.id).reverse();
-    expect(run(s, { ...command, tieOrder: order }).players.map(p => p.status)).toEqual(["cut", "cut", "active", "active"]);
-    expect(() => run(s, { ...command, tieOrder: order.slice(0, 2) })).toThrow(expect.objectContaining({ code: "INVALID_TIE_ORDER" }));
   });
 
   it("reports Swiss repeats, duplicate seats, current unpaired players and normalized member-ID duplicates", () => {

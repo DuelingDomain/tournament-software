@@ -48,7 +48,8 @@ it("pairs and ranks teams with table blocks, team byes, member reports and team-
   state = run(state, { type: "ReportResult", playerId: right.memberIds[0], matchId: match.id, result: "p1" });
   expect(state.rounds[0].matches[0].result).toBe("p1");
   expect(standings(state)).toHaveLength(5);
-  expect(playerView(state, left.memberIds[2], 1).me.standing?.matchPoints).toBe(3);
+  expect(playerView(state, left.memberIds[2], 1).me.standing?.matchPoints).toBe(0);
+  expect(playerView(scoreAll(state), left.memberIds[2], 1).me.standing?.matchPoints).toBe(3);
   for (const size of [2, 4, 5] as const) {
     let elimination = teamEvent(size, 3);
     elimination = run(elimination, { type: "UpdateSettings", settings: { format: "single_elim" } });

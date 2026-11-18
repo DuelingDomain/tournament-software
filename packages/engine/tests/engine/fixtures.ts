@@ -24,6 +24,6 @@ export function fixture(rounds: FixtureMatch[][], n = 4, settings: Partial<Event
 }
 
 export function scoreAll(state: EventState, result: "p1" | "draw" = "p1"): EventState {
-  for (const m of state.rounds.at(-1)?.matches ?? []) if (m.result === null) state = run(state, { type: "EnterResult", matchId: m.id, result });
+  for (const m of state.rounds.at(-1)?.matches ?? []) if (m.result === null) state = run(state, { type: "EnterResult", matchId: m.id, result: m.p2 === null ? "bye_win" : result });
   return state;
 }

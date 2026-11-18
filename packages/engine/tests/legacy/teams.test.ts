@@ -12,7 +12,9 @@ it("round-trips ordered teams, results, byes, settings, manual points and staff 
   state = scoreAll(run(state, { type: "PairNextRound" }));
   state = run(state, { type: "AdjustPoints", playerId: state.teams[0].id, delta: 7 });
   state = run(state, { type: "AddPenalty", playerId: state.players[0].id, infractionId: state.settings.infractions[0].id, judge: state.staff[0].id });
-  state = run(state, { type: "UpdatePlayer", playerId: state.players[1].id, memberId: state.teams[1].id });
+  expect(() => run(state, { type: "UpdatePlayer", playerId: state.players[1].id, memberId: state.teams[1].id }))
+    .toThrow(expect.objectContaining({ code: "INVALID_MEMBER_ID" }));
+  state.players[1].memberId = state.teams[1].id; // An older saved roster could contain this collision.
   const xml = serializeLegacyTournament(state);
   expect(xml).toContain("<TournamentTeam>");
   expect(xml).toContain("<XmlStaffPositionCode>03</XmlStaffPositionCode>");

@@ -1,8 +1,8 @@
 import { CommandError, type EventState, type Penalty, type Player } from "../types.js";
-import { normalizeMemberId, padMemberId } from "../member-id.js";
+import { FIRST_TEMPORARY_MEMBER_ID, MEMBER_ID_LIMIT, isTeamId, normalizeMemberId, padMemberId } from "../member-id.js";
 import { teamSize } from "../competitors.js";
 import { ROLE_POSITIONS, staffPositionCode } from "../staff.js";
-import { standings } from "../standings.js";
+import { encodedPoints, playoffWins, standings } from "../standings.js";
 import { LEGACY_SOFTWARE_VERSION, type LegacyPlayer } from "./parse.js";
 import { buildXml } from "./xml.js";
 import { defaultInfractionNames, infractionNames } from "./infractions.js";
@@ -34,17 +34,17 @@ function penaltyCode(penalty: Penalty): string {
 
 export function serializeLegacyTournament(state: EventState, opts: LegacyExportOptions = {}): string {
   const used = new Set(state.players.flatMap(p => p.memberId === null ? [] : [normalizeMemberId(p.memberId)]));
-  let next = 9999000000;
+  let next = FIRST_TEMPORARY_MEMBER_ID;
   function temporaryId(): string {
     while (used.has(String(next))) next++;
-    if (next > 9999999999) throw new CommandError("legacy_id_exhausted", "There are no unused temporary legacy player IDs.");
+    if (next >= MEMBER_ID_LIMIT) throw new CommandError("legacy_id_exhausted", "There are no unused temporary legacy player IDs.");
     const id = String(next++); used.add(id); return padMemberId(id);
   }
   const ids = new Map<string, string>();
   const assigned = new Set<string>((state.teams ?? []).map(t => t.id));
   for (const p of state.players) {
     const normalized = p.memberId === null ? null : normalizeMemberId(p.memberId);
-    const id = normalized && normalized !== "0" && !assigned.has(normalized) ? padMemberId(normalized) : temporaryId();
+    const id = normalized && normalized !== "0" && !isTeamId(normalized) && !assigned.has(normalized) ? padMemberId(normalized) : temporaryId();
     assigned.add(normalizeMemberId(id) ?? id);
     ids.set(p.id, id);
   }
@@ -56,6 +56,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   }
   const rows = new Map(standings({ ...state, settings: { ...state.settings, tiebreak: "legacy" } }).map(s => [s.playerId, s]));
   const current = state.rounds.at(-1)?.number ?? 0;
+  const wins = playoffWins(state, current);
   const firstPlayoff = state.rounds.find(r => r.stage === "playoff");
   function dropRound(p: Player): number {
     if (p.status === "active") return 0;
@@ -70,7 +71,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   const legacyStaff = state.legacyStaff ?? [];
   const legacyStaffIds = legacyStaff.map(s => {
     const normalized = s.memberId === null ? null : normalizeMemberId(s.memberId);
-    if (normalized && normalized !== "0" && !used.has(normalized) && !assigned.has(normalized)) {
+    if (normalized && normalized !== "0" && !isTeamId(normalized) && !used.has(normalized) && !assigned.has(normalized)) {
       used.add(normalized); return padMemberId(normalized);
     }
     return temporaryId();
@@ -79,13 +80,20 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     ...state.staff.map(s => ({ Player: playerXml(staffIds.get(s.id)!, names(s.name)), XmlStaffPositionCode: staffPositionCode(s.position ?? ROLE_POSITIONS[s.role]) })),
     ...legacyStaff.map((s, i) => ({ Player: playerXml(legacyStaffIds[i], names(s.name)), XmlStaffPositionCode: staffPositionCode(s.position) })),
   ];
+  function dropReason(p: Player): string {
+    if (p.status === "active") return "Active";
+    if (p.status === "dropped") return "Drop";
+    const swissCut = state.swissCuts.find(c => c.cutPlayers.includes(p.id));
+    if (swissCut) return swissCut.mode === "top" ? "TopX" : "Cut";
+    return firstPlayoff && state.settings.format !== "single_elim" ? "PlayoffCut" : "Cut";
+  }
   function rosterFields(p: Player) {
     const row = rows.get(p.id);
     return { DropRound: dropRound(p), Rank: row?.rank ?? 0,
-      PlayoffPoints: state.rounds.filter(r => r.stage === "playoff").flatMap(r => r.matches).filter(m => (m.p1 === p.id && (m.result === "p1" || m.result === "bye_win")) || (m.p2 === p.id && m.result === "p2")).length,
-      Wins: row?.matchPoints ?? 0, Points: row ? row.matchPoints * 1000000 + Math.round(row.omw * 10) * 1000 + Math.round(row.oomw * 10) : 0, OpenDueling: p.openDuelingPoints ?? 0,
-      DropReason: p.status === "active" ? "Active" : p.status === "dropped" ? "Drop" : state.cut.includes(p.id) ? "PlayoffCut" : "Cut",
-      AssignedSeat: p.fixedTable ?? 0, Notes: p.notes ?? "" };
+      PlayoffPoints: wins.get(p.id) ?? 0,
+      Wins: row?.matchPoints ?? 0, Points: row ? encodedPoints(row) : 0, OpenDueling: p.openDuelingPoints ?? 0,
+      DropReason: dropReason(p),
+      AssignedSeat: p.fixedTable ?? -1, Notes: p.notes ?? "" };
   }
   const roster = teamSize(state) === 1 ? { TournPlayer: [...state.players].sort((a, b) => idFor(a.id).localeCompare(idFor(b.id))).map(p => ({
     Player: playerXml(idFor(p.id), opts.playerNames?.[p.id] ?? names(p.name)), ...rosterFields(p),
@@ -100,11 +108,17 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   }
   const location = state.settings.locationDetails;
   const date = state.settings.startsAt && Number.isFinite(Date.parse(state.settings.startsAt)) ? new Date(state.settings.startsAt).toISOString() : state.createdAt;
+  const startingOffset = state.settings.startingTable - 1;
+  let lowestTable = Infinity;
+  for (const round of state.rounds) for (const match of round.matches) {
+    lowestTable = Math.min(lowestTable, match.table ?? match.byeTable ?? Infinity);
+  }
+  const tableOffset = lowestTable < startingOffset ? lowestTable - 1 : startingOffset;
   return buildXml("Tournament", {
     Name: state.settings.name, ID: opts.eventId ?? state.legacyEventId ?? "X99-000000", TournamentStyleCode: ({ advanced: "01", traditional: "02", sealed: "03", open_dueling: "04" } as const)[state.settings.style ?? "advanced"],
     StructureCode: state.settings.format === "single_elim" ? "02" : state.settings.format === "open_dueling" ? "03" : "01", EventTypeCode: "01", PlayerStructure: String(teamSize(state)).padStart(2, "0"),
     ReferenceDateTime: "2003-01-02", Date: date.slice(0, 10), Time: date.slice(11, 16), CurrentRound: current,
-    TableOffset: state.settings.startingTable, PlayoffRound: firstPlayoff?.number ?? 0, SoftwareVersion: LEGACY_SOFTWARE_VERSION, Finalized: state.phase === "complete" ? "True" : "False",
+    TableOffset: tableOffset, PlayoffRound: state.settings.format === "single_elim" ? 0 : firstPlayoff?.number ?? 0, SoftwareVersion: LEGACY_SOFTWARE_VERSION, Finalized: state.phase === "complete" ? "True" : "False",
     Staff: { XmlStaffArray: { XmlStaff: staffEntries } },
     PenaltyList: { PlayerPenalty: state.penalties.map(p => {
       const infraction = state.settings.infractions.find(i => i.id === p.infractionId);
@@ -120,7 +134,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     TournamentPlayers: roster,
     Matches: { TournMatch: state.rounds.flatMap(r => r.matches.map(m => ({ Player: [idFor(m.p1), m.p2 === null ? "0000000000" : idFor(m.p2)], Round: r.number,
       Status: m.result === null ? "Incomplete" : m.result === "draw" ? "Draw" : m.result === "double_loss" ? "DoubleLoss" : "Winner",
-      Table: m.table ?? 0, Winner: m.result === "p1" || m.result === "bye_win" ? idFor(m.p1) : m.result === "p2" && m.p2 !== null ? idFor(m.p2) : "0000000000",
+      Table: (m.table ?? m.byeTable ?? tableOffset) - tableOffset, Winner: m.result === "p1" || m.result === "bye_win" ? idFor(m.p1) : m.result === "p2" && m.p2 !== null ? idFor(m.p2) : "0000000000",
       PlayoffMatch: r.stage === "playoff" ? "True" : "False" }))) },
   });
 }

@@ -1,6 +1,6 @@
 import { CommandError, type CommandContext, type EventState, type MatchResult, type Penalty, type Player, type PlayerStructure, type Round, type StaffPosition, type Team } from "../types.js";
 import { createEvent } from "../reducer.js";
-import { normalizeMemberId } from "../member-id.js";
+import { isTeamId, normalizeMemberId } from "../member-id.js";
 import { syncTeamMembers, teamSize, validateTeamMembers } from "../competitors.js";
 import { STAFF_POSITIONS } from "../staff.js";
 import { integrity } from "../integrity.js";
@@ -106,10 +106,11 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
   const locationDetails = location.has("Name") ? { id: location.get("Id") || "imported-location", name: location.get("Name"),
     address1: location.get("Address1"), address2: location.get("Address2"), city: location.get("City"), state: location.get("State"),
     postal: location.get("Zip"), country: location.get("Country"), phone: location.get("Phone"), website: location.get("WebSite") } : null;
+  const tableOffset = root.int("TableOffset");
   const state = createEvent({ name: root.get("Name").slice(0, MAX_EVENT_NAME) || "Imported event", format: /^(singleelimination|0?2)$/i.test(structure) ? "single_elim" : /^(opendueling|0?3)$/i.test(structure) ? "open_dueling" : "swiss",
     style, playerStructure: size as PlayerStructure, locationDetails,
     startsAt: timestamp(root, warnings), location: location.get("Name") || null,
-    startingTable: Math.max(1, root.int("TableOffset", 1)) }, ctx);
+    startingTable: Math.max(1, tableOffset + 1) }, ctx);
   const eventId = /^[A-Za-z]\d{2}-\d{6}$/.test(root.get("ID")) ? root.get("ID").toUpperCase() : null;
   if (eventId) state.legacyEventId = eventId;
   const imported: LegacyTournamentImport["players"] = [];
@@ -165,7 +166,7 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
   function addTeam(node: Element, sourceId: string, missing: boolean): Team {
     const id = key(sourceId);
     if (byLegacyId.has(id)) throw new CommandError("invalid_legacy_xml", "Team IDs must be unique and separate from member IDs.");
-    if (!/^\d{10}$/.test(id) || Number(id) < 9988000000 || Number(id) > 9998999999)
+    if (!isTeamId(id))
       throw new CommandError("invalid_legacy_xml", "A team ID is outside the reserved team range.");
     const nested = node.child("Team");
     const members = nested.child("PlayerList").all("Player").sort((a, b) => a.int("TeamPosition") - b.int("TeamPosition"));
@@ -200,7 +201,11 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
     const round = rounds.get(number) ?? { number, stage: playoff ? "playoff" : "swiss", seed: ctx.seed, startedAt: null, endsAt: null, matches: [], warnings: [] };
     if (playoff) round.stage = "playoff";
     const winner = byLegacyId.get(key(node.get("Winner")))?.id ?? "";
-    round.matches.push({ id: `legacy-match-${number}-${round.matches.length + 1}`, round: number, table: p2 === null ? null : node.int("Table") || null,
+    const relativeTable = node.int("Table");
+    const table = relativeTable !== 0 || (node.has("Table") && (p2 !== null || p1.fixedTable === tableOffset))
+      ? relativeTable + tableOffset : 0;
+    round.matches.push({ id: `legacy-match-${number}-${round.matches.length + 1}`, round: number, table: p2 === null || table <= 0 ? null : table,
+      ...(p2 === null && table > 0 ? { byeTable: table } : {}),
       p1: p1.id, p2: p2?.id ?? null, result: matchResult(node, p1.id, p2?.id ?? null, winner), reports: [], extensionMinutes: 0 });
     rounds.set(number, round);
   }
@@ -213,7 +218,7 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
   state.rounds = [...rounds.values()].sort((a, b) => a.number - b.number);
   const firstPlayoff = state.rounds.find(r => r.stage === "playoff");
   if (firstPlayoff) {
-    // Bracket table order is preserved; seed order cannot be recovered from the file.
+    // The file supplies match order but does not carry a separate seed list.
     state.cut = [...new Set(firstPlayoff.matches.flatMap(m => m.p2 === null ? [m.p1] : [m.p1, m.p2]))];
     state.settings.topCut = [2, 4, 8, 16, 32, 64].includes(state.cut.length) ? state.cut.length : 0;
   }

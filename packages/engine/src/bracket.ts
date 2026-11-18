@@ -1,5 +1,5 @@
 import { competitors, teamSize } from "./competitors.js";
-import { CommandError, type EventState, type Round } from "./types.js";
+import { CommandError, type EventState, type Match, type Round } from "./types.js";
 import { assignTables, makeMatch } from "./pairing.js";
 import { winner } from "./standings.js";
 
@@ -25,8 +25,13 @@ export function initialBracket(state: EventState, entrants: string[], seed: numb
     if (a === null && b === null) continue;
     matches.push(makeMatch(a ?? b!, a === null ? null : b, number, random, ids));
   }
-  assignTables(matches, competitors(state), state.settings.startingTable, false, teamSize(state));
+  assignTables(matches, competitors(state), state.settings.startingTable, "prefer", teamSize(state));
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
+}
+
+/** Match array order determines the playoff feeders. */
+export function bracketMatchesInOrder(matches: readonly Match[]): Match[] {
+  return [...matches];
 }
 
 export function advanceBracket(state: EventState, seed: number, random: () => number, ids: Set<string>): Round {
@@ -35,25 +40,34 @@ export function advanceBracket(state: EventState, seed: number, random: () => nu
   if (previous.matches.some(m => m.result === null)) throw new CommandError("MISSING_RESULTS", "Enter every result before advancing the bracket.");
   if (previous.matches.length <= 1) throw new CommandError("BRACKET_FINISHED", "The final is decided. Complete the event to finish.");
   const number = previous.number + 1;
+  const active = new Set(competitors(state).filter(p => p.status === "active").map(p => p.id));
+  const advancing = previous.matches.map(match => {
+    const id = winner(match);
+    return id !== null && active.has(id) ? id : null;
+  });
   const matches = [];
-  for (let i = 0; i < previous.matches.length; i += 2) {
-    const a = winner(previous.matches[i]);
-    const b = previous.matches[i + 1] ? winner(previous.matches[i + 1]) : null;
-    if (a === null && b === null) continue;
-    matches.push(makeMatch(a ?? b!, a === null ? null : b, number, random, ids));
+  for (let i = 0; i < advancing.length; i += 2) {
+    const a = advancing[i], b = advancing[i + 1] ?? null;
+    if (a === null && b === null) throw new CommandError("EMPTY_BRACKET_MATCH", "Two feeder matches have no active winner.");
+    const match = makeMatch(a ?? b!, a === null ? null : b, number, random, ids);
+    match.result = null;
+    matches.push(match);
   }
-  assignTables(matches, competitors(state), state.settings.startingTable, false, teamSize(state));
+  assignTables(matches, competitors(state), state.settings.startingTable, "prefer", teamSize(state));
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
 }
 
-/** Only bracket participants are updated; independently dropped players stay dropped. */
-export function refreshEliminations(state: EventState): void {
-  const eliminated = new Set<string>();
-  for (const r of state.rounds.filter(r => r.stage === "playoff")) for (const m of r.matches) {
-    const won = winner(m);
-    if (won && m.p2 !== null) eliminated.add(won === m.p1 ? m.p2 : m.p1);
+/** Apply results from the affected matches so a later report cannot rewrite earlier eliminations. */
+export function updateEliminations(state: EventState, matches: Match[], reset = false): void {
+  const statuses = new Map<string, "active" | "cut">();
+  for (const match of matches) {
+    const won = reset ? null : winner(match);
+    statuses.set(match.p1, won !== null && won !== match.p1 ? "cut" : "active");
+    if (match.p2 !== null) statuses.set(match.p2, won !== null && won !== match.p2 ? "cut" : "active");
   }
-  for (const p of competitors(state)) if (state.cut.includes(p.id) && p.status !== "dropped") {
-    p.status = eliminated.has(p.id) ? "cut" : "active";
+  const seeded = new Set(state.cut);
+  for (const p of competitors(state)) {
+    const status = statuses.get(p.id);
+    if (status && p.status !== "dropped" && seeded.has(p.id)) p.status = status;
   }
 }

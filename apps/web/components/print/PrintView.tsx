@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { isTemporaryMemberId, type DeskView, type MatchResult, type PrintData, type PublicView, type Standing } from "@dd-tournament/engine";
+import { bracketMatchesInOrder, isTemporaryMemberId, type DeskView, type MatchResult, type PrintData, type PublicView, type Standing } from "@dd-tournament/engine";
 import { Button, Checkbox, Select } from "../ui";
 
 export type PrintKind = "pairings" | "slips" | "standings" | "players" | "brackets" | "pairings-by-team" | "unreported" | "paired-down" | "penalties";
@@ -28,7 +28,7 @@ function fromDesk(desk: DeskView, code: string): Source {
   const players = state.players.map(p => ({ name: p.name, memberId: p.memberId, status: p.status, table: teamEvent ? tableOf(state.teams.find(t => t.memberIds.includes(p.id))?.id ?? "") : tableOf(p.id), team: teamOf.get(p.id) ?? null }));
   const teamMembers = new Map(state.teams.map(t => [t.id, t.memberIds.map(id => byId.get(id) ?? "?")]));
   const firstSide = new Map(state.rounds.flatMap(r => r.matches.map(m => [m.id, m.p1] as const)));
-  return { firstSide, players, name: state.settings.name, teamEvent, teamMembers, rounds: state.rounds.map(r => ({ number: r.number, stage: r.stage, matches: r.matches.map(mapMatch) })), standings: desk.standings,
+  return { firstSide, players, name: state.settings.name, teamEvent, teamMembers, rounds: state.rounds.map(r => ({ number: r.number, stage: r.stage, matches: (r.stage === "playoff" ? bracketMatchesInOrder(r.matches) : r.matches).map(mapMatch) })), standings: desk.standings,
     extra: { pairingsByTeam: desk.printData.pairingsByTeam, unreportedMatches: desk.printData.unreportedMatches, pairedDownPlayers: desk.printData.pairedDownPlayers, penalties: desk.printData.penalties }, full: true, backHref: `/e/${code}/desk` };
 }
 function fromPublic(view: PublicView, code: string): Source {
@@ -104,7 +104,7 @@ export function PrintView({ code, kind, sortByPlayer = false, onlyTables = null 
       {kind === "standings" && <StandingsTable rows={rows} team={source.teamEvent} members={source.teamMembers} />}
       {kind === "players" && (source.players ? <PlayerList players={source.players} team={source.teamEvent} /> : <p>The player list is available to event staff. Sign in to the desk to print it.</p>)}
       {kind === "brackets" && (playoffs.length ? <div className="print-brackets">{playoffs.map(r => <div key={r.number} className="print-bracket-col"><h2>Round {r.number}</h2>
-        {[...r.matches].sort(byTable).map(m => <div key={m.id} className="print-bracket-match"><span className={m.result === "p1" ? "w" : ""}>{m.p1}</span><span className={m.result === "p2" ? "w" : ""}>{m.p2 ?? "Bye"}</span><small>Table {m.table === null ? "-" : tableText(m)}</small></div>)}</div>)}</div> : <p>No playoff yet.</p>)}
+        {r.matches.map(m => <div key={m.id} className="print-bracket-match"><span className={m.result === "p1" || m.result === "bye_win" ? "w" : ""}>{m.p1}</span><span className={m.result === "p2" ? "w" : ""}>{m.p2 ?? "Bye"}</span><small>Table {m.table === null ? "-" : tableText(m)}</small></div>)}</div>)}</div> : <p>No playoff yet.</p>)}
       {kind === "pairings-by-team" && (!source.extra ? staffOnly : !source.teamEvent ? <p>This tournament has no teams.</p> : <ByTeamTable rows={source.extra.pairingsByTeam} firstSide={source.firstSide} />)}
       {kind === "unreported" && (!source.extra ? staffOnly : <UnreportedTable rows={source.extra.unreportedMatches} />)}
       {kind === "paired-down" && (!source.extra ? staffOnly : <PairedDownTable rows={source.extra.pairedDownPlayers} team={source.teamEvent} />)}

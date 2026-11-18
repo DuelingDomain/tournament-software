@@ -1,7 +1,7 @@
 import { randomBytes, randomInt } from "node:crypto";
 import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole, type StaffAssignment, competitors, printData, recordActivity } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
-import { isTemporaryMemberId, normalizeMemberId } from "@dd-tournament/engine";
+import { isReservedMemberId, normalizeMemberId } from "@dd-tournament/engine";
 import { lookupAccounts, searchAccounts } from "./bridge";
 import { cacheUser, cachedUser, database, eventRecord, saveEvent, type EventRecord } from "./db";
 import { HttpError } from "./http";
@@ -119,7 +119,7 @@ export function joinEvent(code: string, user: TournamentUser) {
     const reason = joinReason(event.state, user.memberId);
     if (reason) return playerResponse(event, user);
     const memberId = user.memberId === null ? null : normalizeMemberId(user.memberId);
-    const imported = memberId && !isTemporaryMemberId(memberId) && event.state.players.find(player => player.userId === null && player.memberId === memberId);
+    const imported = memberId && !isReservedMemberId(memberId) && event.state.players.find(player => player.userId === null && player.memberId === memberId);
     const command: Command = imported ? { type: "LinkPlayerAccount", playerId: imported.id, userId: user.id }
       : { type: "AddPlayers", players: [{ userId: user.id, name: user.displayName, memberId }] };
     return playerResponse(saveEvent(event, applyCommand(event.state, command, context(user))), user);
@@ -139,7 +139,7 @@ const LOOKUP_PARALLEL = 8;
 /** The account service has no lookup by member ID in bulk, so IDs are searched a few at a time. */
 async function matchLegacyPlayers(players: readonly LegacyPlayer[]) {
   if (players.length > MAX_FILE_PLAYERS) throw new HttpError(422, "too_many_players", { limit: MAX_FILE_PLAYERS });
-  const ids = [...new Set(players.flatMap(player => player.memberId && !isTemporaryMemberId(player.memberId) ? [player.memberId] : []))];
+  const ids = [...new Set(players.flatMap(player => player.memberId && !isReservedMemberId(player.memberId) ? [player.memberId] : []))];
   const byMemberId = new Map<string, TournamentUser>();
   for (let i = 0; i < ids.length; i += LOOKUP_PARALLEL) {
     const chunk = ids.slice(i, i + LOOKUP_PARALLEL);
