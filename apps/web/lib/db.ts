@@ -21,6 +21,7 @@ export function database() {
     CREATE TABLE IF NOT EXISTS locations (id TEXT PRIMARY KEY, owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS global_players (owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, member_id TEXT NOT NULL, first_name TEXT NOT NULL, last_name TEXT NOT NULL, PRIMARY KEY (owner_user_id, member_id));
     CREATE TABLE IF NOT EXISTS discord_settings (event_code TEXT PRIMARY KEY REFERENCES events(code) ON DELETE CASCADE, webhook_url TEXT, post_pairings INTEGER NOT NULL DEFAULT 0, post_standings INTEGER NOT NULL DEFAULT 0);`);
   active = { path, db };
   return db;

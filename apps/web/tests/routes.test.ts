@@ -64,6 +64,16 @@ async function upload(code: string, cookie: string, kind = "tournament", xml = r
   return apiPost(new Request(`http://localhost:3000/api/events/${code}/import`, { method: "POST", headers: { cookie }, body: form }),
     { params: Promise.resolve({ path: ["events", code, "import"] }) });
 }
+async function openFile(cookie: string, xml: string, createCode = "") {
+  const form = new FormData(); form.set("file", new File([xml], "x.Tournament", { type: "application/xml" })); form.set("createCode", createCode);
+  return apiPost(new Request("http://localhost:3000/api/events/import", { method: "POST", headers: { cookie }, body: form }),
+    { params: Promise.resolve({ path: ["events", "import"] }) });
+}
+async function uploadPlayers(cookie: string, text: string) {
+  const form = new FormData(); form.set("file", new File([text], "list.csv", { type: "text/csv" }));
+  return apiPost(new Request("http://localhost:3000/api/players/import", { method: "POST", headers: { cookie }, body: form }),
+    { params: Promise.resolve({ path: ["players", "import"] }) });
+}
 beforeAll(() => {
   mkdirSync(directory, { recursive: true });
   process.env.DATABASE_PATH = resolve(directory, "test.sqlite");
@@ -633,6 +643,82 @@ describe("team HTTP workflow", () => {
     expect((await api(`events/${code}/drop`, memberCookie, "POST")).status).toBe(200);
     const dropped = await (await api(`events/${code}/desk`, cookie)).json() as { state: { teams: { id: string; status: string }[] } };
     expect(dropped.state.teams.find(t => t.id === "9988000000")?.status).toBe("dropped");
+  });
+});
+
+describe("open tournament and global player list", () => {
+  it("opens a saved file as a new event with nothing lost, offers the finalized file, and keeps the global list", async () => {
+    const cookie = await login();
+    const code = await create(cookie);
+    const reals = ["1000000013", "1000000024", "1000000035", "1000000046"];
+    await command(code, cookie, 1, { type: "AddPlayers", players: reals.map((memberId, i) => ({ userId: null, name: `Pilot ${"ABCD"[i]} Fieldstone`, memberId })) });
+    await command(code, cookie, 2, { type: "PairNextRound" });
+    let view = await desk(code, cookie);
+    for (const m of view.state.rounds[0]!.matches) await command(code, cookie, view.version, { type: "EnterResult", matchId: m.id, result: "p1" }).then(async r => { view = deskSchema.parse(await r.json()); });
+    const dropped = view.state.players[3]!.id;
+    view = deskSchema.parse(await (await command(code, cookie, view.version, { type: "DropPlayer", playerId: dropped })).json());
+    view = deskSchema.parse(await (await command(code, cookie, view.version, { type: "AddPenalty", playerId: view.state.players[0]!.id, infractionId: "slow_play", notes: "Warned" })).json());
+    expect((await api(`events/${code}/export/finalized`, cookie)).status).toBe(422);
+    view = deskSchema.parse(await (await command(code, cookie, view.version, { type: "CompleteEvent" })).json());
+    const finalized = await api(`events/${code}/export/finalized`, cookie);
+    expect(finalized.status).toBe(200);
+    expect(finalized.headers.get("content-disposition")).toMatch(/Cloudberry Cup \(ID X99-\d{6}\)\.Tournament/);
+    const xml = await finalized.text();
+
+    const other = await login(5);
+    const opened = await openFile(other, xml);
+    expect(opened.status).toBe(201);
+    const { code: copy, imported } = z.object({ code: z.string(), imported: z.number() }).parse(await opened.json());
+    expect(copy).not.toBe(code); expect(imported).toBe(4);
+    const mine = await (await api(`events/${code}/desk`, cookie)).json() as { state: Record<string, unknown>; standings: unknown };
+    const next = await (await api(`events/${copy}/desk`, other)).json() as { state: Record<string, unknown>; standings: unknown; viewerRole: string };
+    expect(next.viewerRole).toBe("organizer");
+    // Internal player IDs are new in the copy, so compare through the member ID.
+    type Shape = { phase: string; players: { id: string; name: string; memberId: string; status: string; openDuelingPoints?: number; droppedAfterRound: number | null; enteredRound: number; checkedIn: boolean }[];
+      rounds: { number: number; matches: { p1: string; p2: string | null; result: string | null; table: number | null }[] }[];
+      penalties: { playerId: string; round: number | null; infractionId: string; penalty: string; notes: string | null }[] };
+    const shape = (s: Shape) => {
+      const id = (playerId: string | null) => s.players.find(p => p.id === playerId)?.memberId ?? null;
+      return { phase: s.phase, players: s.players.map(({ id: _id, ...p }) => ({ ...p, openDuelingPoints: undefined })),
+        rounds: s.rounds.map(r => [r.number, r.matches.map(m => [id(m.p1), id(m.p2), m.result, m.table])]),
+        penalties: s.penalties.map(p => [id(p.playerId), p.round, p.infractionId, p.penalty, p.notes]) };
+    };
+    expect(shape(next.state as unknown as Shape)).toEqual(shape(mine.state as unknown as Shape));
+    expect((next.state as unknown as Shape).penalties).toHaveLength(1);
+    const board = (rows: unknown) => (rows as { playerId: string }[]).map(({ playerId: _id, ...row }) => row);
+    expect(board(next.standings)).toEqual(board(mine.standings));
+
+    // Files from a newer program version are refused.
+    const newer = await openFile(other, xml.replace("<SoftwareVersion>3.0.0.0", "<SoftwareVersion>3.1.0.0"));
+    expect(newer.status).toBe(422); expect(await newer.json()).toMatchObject({ error: "legacy_version_too_new" });
+    expect((await openFile(await login(6), "<PlayerList/>")).status).toBe(422);
+
+    // Opening added the real player IDs to the caller's global list; the CSV round-trips and never changes a listed ID.
+    const exported = await api("players/export", other);
+    expect(exported.headers.get("content-disposition")).toContain("AllPlayers.csv");
+    const csv = await exported.text();
+    expect(csv.split("\r\n")[0]).toBe('"ID","First Name","Last Name"');
+    expect(csv.split("\r\n")).toHaveLength(6);
+    const third = await login(3);
+    expect(((await (await api("players", third)).json()) as { players: unknown[] }).players).toEqual([]);
+    expect(await (await uploadPlayers(third, csv)).json()).toMatchObject({ added: 4, skipped: 0, invalid: 0, total: 4 });
+    expect(await (await uploadPlayers(third, `${csv}"0000000000","No","Id"\r\n"1000000013","Other","Name"\r\nbad line\r\n`)).json()).toMatchObject({ added: 0, skipped: 5, invalid: 2, total: 4 });
+    expect((await api("players", third)).status).toBe(200);
+    expect(await (await api("players", third)).json()).toMatchObject({ players: expect.arrayContaining([{ memberId: "1000000013", firstName: "Pilot A", lastName: "Fieldstone" }]) });
+  });
+  it("keeps teams, members and a team match through Open Tournament", async () => {
+    const cookie = await login();
+    const code = await create(cookie, { playerStructure: 2 });
+    const people = deskSchema.parse(await (await command(code, cookie, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) })).json());
+    await command(code, cookie, 2, { type: "AddTeams", teams: [{ name: "Left", memberIds: people.state.players.slice(0, 2).map(p => p.id) }, { name: "Right", memberIds: people.state.players.slice(2).map(p => p.id) }] });
+    await command(code, cookie, 3, { type: "PairNextRound" });
+    const xml = await (await api(`events/${code}/export/tournament`, cookie)).text();
+    const copy = z.object({ code: z.string() }).parse(await (await openFile(cookie, xml)).json()).code;
+    const mine = await (await api(`events/${code}/desk`, cookie)).json() as { state: { teams: { name: string; memberIds: string[]; status: string }[]; settings: { playerStructure: number }; rounds: unknown[] } };
+    const next = await (await api(`events/${copy}/desk`, cookie)).json() as typeof mine;
+    expect(next.state.settings.playerStructure).toBe(2);
+    expect(next.state.teams.map(t => [t.name, t.memberIds.length, t.status])).toEqual(mine.state.teams.map(t => [t.name, t.memberIds.length, t.status]));
+    expect(next.state.rounds).toHaveLength(1);
   });
 });
 

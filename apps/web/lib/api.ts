@@ -4,14 +4,32 @@ import { z } from "zod";
 import { currentUser, signedIn } from "./auth";
 import { lookupAccounts, searchAccounts, setMemberId } from "./bridge";
 import { cachedUser, database, eventRecord, eventRecords } from "./db";
-import { deskView, importEvent, joinEvent, newEvent, playerCommand, playerResponse, resolveCommand, runCommand, runDummyData } from "./events";
-import { exportEvent } from "./exports";
+import { deskView, importEvent, joinEvent, newEvent, openTournamentAsNewEvent, playerCommand, playerResponse, resolveCommand, runCommand, runDummyData } from "./events";
+import { csvDownload, exportEvent } from "./exports";
+import { globalPlayers, globalPlayersCsv, importGlobalPlayers } from "./global-players";
 import { boundary, bodyJson, checkOrigin, HttpError, json, readBody } from "./http";
 import { requireCommand, requireDummyData, requireImport, requireStaff, viewerRole } from "./permissions";
 import { commandSchema, dummyDataSchema, partialSettings, result, userId, staffSchema, locationFields } from "./validation";
 
 import { locations, createLocation, changeLocation } from "./locations";
 
+function requireCreateCode(value: unknown) {
+  const configured = process.env.CREATE_CODE ?? "";
+  const digest = (text: string) => createHash("sha256").update(text).digest();
+  if (configured && !timingSafeEqual(digest(configured), digest(typeof value === "string" ? value : ""))) throw new HttpError(403, "invalid_create_code");
+}
+/** Reads one uploaded file from a multipart request; legacy files may be UTF-16. */
+async function uploadedFile(request: Request) {
+  const bytes = await readBody(request, 1024 * 1024);
+  let form: FormData;
+  try { form = await new Response(Buffer.from(bytes), { headers: { "Content-Type": request.headers.get("content-type") ?? "" } }).formData(); }
+  catch { throw new HttpError(400, "invalid_body"); }
+  const file = form.get("file");
+  if (!(file instanceof File)) throw new HttpError(400, "invalid_file");
+  const fileBytes = new Uint8Array(await file.arrayBuffer());
+  const encoding = fileBytes[0] === 255 && fileBytes[1] === 254 ? "utf-16le" : fileBytes[0] === 254 && fileBytes[1] === 255 ? "utf-16be" : "utf-8";
+  return { form, text: new TextDecoder(encoding).decode(fileBytes) };
+}
 async function body<T>(request: Request, schema: z.ZodType<T>) {
   return schema.parse(await bodyJson(request));
 }
@@ -52,6 +70,19 @@ export function handleApi(request: Request, path: string[]) {
       if (path.length === 2 && path[1] && method === "DELETE") return json(changeLocation(user.id, path[1]));
       throw new HttpError(404, "not_found");
     }
+    if (path[0] === "players") {
+      const user = signedIn(request);
+      if (path.length === 1 && method === "GET") return json({ players: globalPlayers(user.id) });
+      if (path.length === 2 && path[1] === "export" && method === "GET") return csvDownload(globalPlayersCsv(globalPlayers(user.id)), "AllPlayers.csv");
+      if (path.length === 2 && path[1] === "import" && method === "POST") return json(importGlobalPlayers(user.id, (await uploadedFile(request)).text));
+      throw new HttpError(404, "not_found");
+    }
+    if (path.length === 2 && path[0] === "events" && path[1] === "import" && method === "POST") {
+      const user = signedIn(request);
+      const { form, text } = await uploadedFile(request);
+      requireCreateCode(form.get("createCode"));
+      return json(await openTournamentAsNewEvent(user, text), 201);
+    }
     if (path.length === 1 && path[0] === "events") {
       const user = signedIn(request);
       if (method === "GET") return json({ events: eventRecords().flatMap(event => {
@@ -73,9 +104,7 @@ export function handleApi(request: Request, path: string[]) {
       }) });
       if (method === "POST") {
         const data = await body(request, z.strictObject({ name: z.string().trim().min(1).max(200), createCode: z.string(), settings: partialSettings.optional(), staff: z.array(staffSchema).max(100).optional() }));
-        const configured = process.env.CREATE_CODE ?? "";
-        const digest = (value: string) => createHash("sha256").update(value).digest();
-        if (configured && !timingSafeEqual(digest(configured), digest(data.createCode))) throw new HttpError(403, "invalid_create_code");
+        requireCreateCode(data.createCode);
         const staffCommand = await resolveCommand({ type: "UpdateSettings", settings: {}, staff: data.staff ?? [] });
         return json({ code: newEvent(user, data.name, { ...data.settings, name: data.name }, staffCommand.type === "UpdateSettings" ? staffCommand.staff : []) }, 201);
       }
@@ -152,16 +181,9 @@ export function handleApi(request: Request, path: string[]) {
     if (path.length === 3 && action === "import" && method === "POST") {
       const { user, event } = staff(request, code);
       requireImport(event, user.id);
-      const bytes = await readBody(request, 1024 * 1024);
-      let form: FormData;
-      try { form = await new Response(Buffer.from(bytes), { headers: { "Content-Type": request.headers.get("content-type") ?? "" } }).formData(); }
-      catch { throw new HttpError(400, "invalid_body"); }
-      const file = form.get("file");
+      const { form, text } = await uploadedFile(request);
       const kind = z.enum(["tournament", "players", "team-players"]).parse(form.get("kind"));
-      if (!(file instanceof File)) throw new HttpError(400, "invalid_file");
-      const fileBytes = new Uint8Array(await file.arrayBuffer());
-      const encoding = fileBytes[0] === 255 && fileBytes[1] === 254 ? "utf-16le" : fileBytes[0] === 254 && fileBytes[1] === 255 ? "utf-16be" : "utf-8";
-      return json(await importEvent(code, user, kind, new TextDecoder(encoding).decode(fileBytes)));
+      return json(await importEvent(code, user, kind, text));
     }
     if (path.length === 4 && action === "export" && path[3] && method === "GET") {
       return exportEvent(staff(request, code).event, path[3]);

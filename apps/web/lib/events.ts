@@ -5,6 +5,7 @@ import { isTemporaryMemberId, normalizeMemberId } from "@dd-tournament/engine";
 import { lookupAccounts, searchAccounts } from "./bridge";
 import { cacheUser, cachedUser, database, eventRecord, saveEvent, type EventRecord } from "./db";
 import { HttpError } from "./http";
+import { mergeGlobalPlayers } from "./global-players";
 import { joinReason, requireCommand, requireDummyData, requireImport, requireStaff } from "./permissions";
 import { locationSettings } from "./locations";
 import type { DummyData, TournamentUser } from "./validation";
@@ -180,6 +181,32 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
     }
     if (parsed) state.activityLog = structuredClone(event.state.activityLog ?? []);
     recordActivity(state, parsed ? "ImportTournament" : "ImportPlayers", context(user));
+    mergeGlobalPlayers(user.id, players);
     return { desk: deskView(saveEvent(event, state), requireStaff(event, user.id)), imported, unmatched };
+  }).immediate();
+}
+
+/** Open Tournament: the file becomes a new event and the caller becomes its organizer. */
+export async function openTournamentAsNewEvent(user: TournamentUser, xml: string) {
+  const parsed = parseLegacyTournament(xml, context(user));
+  const matches = await matchLegacyPlayers(parsed.players);
+  return database().transaction(() => {
+    cacheUser(user);
+    const phase = parsed.state.phase;
+    // Staff can be added only while the event is open for changes; the real phase comes back straight after.
+    let state: EventState = applyCommand({ ...parsed.state, phase: "registration" }, { type: "AddStaff", userId: user.id, name: user.displayName, role: "organizer" }, context(user));
+    state = { ...state, phase };
+    let unmatched = 0;
+    const linked = new Set<number>();
+    for (const player of state.players) {
+      const account = player.memberId ? matches.get(player.memberId) : undefined;
+      if (account && !linked.has(account.id)) { player.userId = account.id; linked.add(account.id); } else unmatched++;
+    }
+    recordActivity(state, "ImportTournament", context(user));
+    mergeGlobalPlayers(user.id, parsed.players);
+    let code: string;
+    do { code = randomBytes(5).toString("hex").toUpperCase(); } while (database().prepare("SELECT 1 FROM events WHERE code=?").get(code));
+    database().prepare("INSERT INTO events(code,owner_user_id,state,version) VALUES (?,?,?,1)").run(code, user.id, JSON.stringify(state));
+    return { code, imported: state.players.length, unmatched, warnings: parsed.warnings };
   }).immediate();
 }

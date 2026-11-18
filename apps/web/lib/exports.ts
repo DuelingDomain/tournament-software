@@ -1,5 +1,6 @@
 import { standings, teamForPlayer, teamSize, type EventState } from "@dd-tournament/engine";
 import { serializeLegacyPlayerList, serializeLegacyTournament } from "@dd-tournament/engine/legacy";
+import { createHash } from "node:crypto";
 import { HttpError } from "./http";
 import type { EventRecord } from "./db";
 
@@ -15,13 +16,30 @@ function playerList(state: EventState) {
     return { firstName, lastName: last.join(" "), memberId: player.memberId };
   });
 }
+/** The original wrote `<Name> (ID <id>).Tournament`, with characters a file name cannot hold changed to "_". */
+export function cleanFilename(name: string) { return name.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_") || "Tournament"; }
+/** A stable file-format event ID for an event code. */
+export function legacyEventId(code: string) {
+  return `X99-${String(createHash("sha256").update(code).digest().readUInt32BE(0) % 1_000_000).padStart(6, "0")}`;
+}
+export function attachment(filename: string) {
+  const ascii = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`;
+}
+export function csvDownload(body: string, filename: string) {
+  return new Response(body, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": attachment(filename), "Cache-Control": "no-store" } });
+}
 export function exportEvent(event: EventRecord, kind: string) {
   const state = event.state;
   let body: string;
   let filename: string;
   let contentType = "text/csv; charset=utf-8";
   switch (kind) {
-    case "tournament": body = serializeLegacyTournament(state); filename = `${event.code}.Tournament`; contentType = "application/xml; charset=utf-8"; break;
+    case "tournament": case "finalized": {
+      if (kind === "finalized" && state.phase !== "complete") throw new HttpError(422, "NOT_FINALIZED");
+      const eventId = legacyEventId(event.code);
+      body = serializeLegacyTournament(state, { eventId }); filename = `${cleanFilename(state.settings.name)} (ID ${eventId}).Tournament`; contentType = "application/xml; charset=utf-8"; break;
+    }
     case "players-xml": body = serializeLegacyPlayerList(playerList(state)); filename = `${event.code}-AllPlayers.xml`; contentType = "application/xml; charset=utf-8"; break;
     case "players.csv": body = csv([["playerId", "name", "memberId", "status", "checkedIn", ...(teamSize(state) > 1 ? ["teamId", "teamName", "position", "userId"] : [])], ...state.players.map(p => {
       const team = teamForPlayer(state, p.id);
@@ -44,5 +62,5 @@ export function exportEvent(event: EventRecord, kind: string) {
     }))]); filename = `${event.code}-matches.csv`; break;
     default: throw new HttpError(404, "not_found");
   }
-  return new Response(body, { headers: { "Content-Type": contentType, "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });
+  return new Response(body, { headers: { "Content-Type": contentType, "Content-Disposition": attachment(filename), "Cache-Control": "no-store" } });
 }
