@@ -44,6 +44,10 @@ export async function bodyJson(request: Request): Promise<unknown> {
 export function checkOrigin(request: Request) {
   if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
   const origin = request.headers.get("origin");
-  if ((origin && origin !== new URL(process.env.PUBLIC_URL || request.url).origin)
-      || request.headers.get("sec-fetch-site") === "cross-site") throw new HttpError(403, "forbidden_origin");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  // Browsers send "Origin: null" on form POSTs under our no-referrer policy;
+  // accept that only when the browser also says the request is same-origin.
+  const nullSameOrigin = origin === "null" && fetchSite === "same-origin";
+  if ((origin && !nullSameOrigin && origin !== new URL(process.env.PUBLIC_URL || request.url).origin)
+      || fetchSite === "cross-site") throw new HttpError(403, "forbidden_origin");
 }
