@@ -1,5 +1,5 @@
 import { competitors, teamSize } from "./competitors.js";
-import { CommandError, type EventState, type Round } from "./types.js";
+import { CommandError, type EventState, type Match, type Round } from "./types.js";
 import { assignTables, makeMatch } from "./pairing.js";
 import { winner } from "./standings.js";
 
@@ -29,6 +29,14 @@ export function initialBracket(state: EventState, entrants: string[], seed: numb
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
 }
 
+export function bracketMatchesInOrder(matches: readonly Match[]): Match[] {
+  const ordered = [...matches];
+  if (ordered.every(m => (m.table ?? m.byeTable) !== undefined)) {
+    ordered.sort((a, b) => (a.table ?? a.byeTable!) - (b.table ?? b.byeTable!));
+  }
+  return ordered;
+}
+
 export function advanceBracket(state: EventState, seed: number, random: () => number, ids: Set<string>): Round {
   const previous = state.rounds.at(-1);
   if (!previous || previous.stage !== "playoff") throw new CommandError("NO_BRACKET", "There is no playoff bracket to advance.");
@@ -36,11 +44,7 @@ export function advanceBracket(state: EventState, seed: number, random: () => nu
   if (previous.matches.length <= 1) throw new CommandError("BRACKET_FINISHED", "The final is decided. Complete the event to finish.");
   const number = previous.number + 1;
   const active = new Set(competitors(state).filter(p => p.status === "active").map(p => p.id));
-  const feeders = [...previous.matches];
-  if (feeders.every(m => (m.table ?? m.byeTable) !== undefined)) {
-    feeders.sort((a, b) => (a.table ?? a.byeTable!) - (b.table ?? b.byeTable!));
-  }
-  const advancing = feeders.map(match => {
+  const advancing = bracketMatchesInOrder(previous.matches).map(match => {
     const id = winner(match);
     return id !== null && active.has(id) ? id : null;
   });
@@ -56,14 +60,17 @@ export function advanceBracket(state: EventState, seed: number, random: () => nu
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
 }
 
-/** Only bracket participants are updated; independently dropped players stay dropped. */
-export function refreshEliminations(state: EventState): void {
-  const eliminated = new Set<string>();
-  for (const r of state.rounds.filter(r => r.stage === "playoff")) for (const m of r.matches) {
-    const won = winner(m);
-    if (won && m.p2 !== null) eliminated.add(won === m.p1 ? m.p2 : m.p1);
+/** Apply results from the affected matches so a later report cannot rewrite earlier eliminations. */
+export function updateEliminations(state: EventState, matches: Match[], reset = false): void {
+  const statuses = new Map<string, "active" | "cut">();
+  for (const match of matches) {
+    const won = reset ? null : winner(match);
+    statuses.set(match.p1, won !== null && won !== match.p1 ? "cut" : "active");
+    if (match.p2 !== null) statuses.set(match.p2, won !== null && won !== match.p2 ? "cut" : "active");
   }
-  for (const p of competitors(state)) if (state.cut.includes(p.id) && p.status !== "dropped") {
-    p.status = eliminated.has(p.id) ? "cut" : "active";
+  const seeded = new Set(state.cut);
+  for (const p of competitors(state)) {
+    const status = statuses.get(p.id);
+    if (status && p.status !== "dropped" && seeded.has(p.id)) p.status = status;
   }
 }

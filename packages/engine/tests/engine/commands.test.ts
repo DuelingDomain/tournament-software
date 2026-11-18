@@ -93,6 +93,9 @@ describe("re-entry and manual seats", () => {
     s = run(s, { type: "DropPlayer", playerId: p.id });
     s = run(s, { type: "PairNextRound" });
     const bye = s.rounds[0].matches.find(m => m.p2 === null)!;
+    const assigned = run(s, { type: "UpdatePlayer", playerId: p.id, fixedTable: 20 });
+    const moved = run(assigned, { type: "UndropPlayer", playerId: p.id, option: "take_bye" });
+    expect(moved.rounds[0].matches.find(m => m.id === bye.id)?.table).toBe(20);
     s = run(s, { type: "UndropPlayer", playerId: p.id, option: "take_bye" });
     expect(s.rounds[0].matches.find(m => m.id === bye.id)).toMatchObject({ p1: bye.p1, p2: p.id, result: null, table: 2 });
     expect(standings(s).every(r => r.matchPoints === 0)).toBe(true);

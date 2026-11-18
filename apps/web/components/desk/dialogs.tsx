@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { DeskView, EventState, Match, MatchPlayerChange, Player, StaffRole, UndropOption } from "@dd-tournament/engine";
-import { CommandError, previewCommand } from "@dd-tournament/engine";
+import { CommandError, cutoffTies, previewCommand } from "@dd-tournament/engine";
 import { Button, ButtonLink, Checkbox, Dialog, Field, FilePicker, Input, Keycap, Radio, Select, Textarea, matchesAccept } from "../ui";
 import { STAMP_TEXT, byName, clockLabel, competitors, competitorLabel, dropCommand, formatClock, isTeamEvent, playerById, reEnrollCommand, removeCommand, roundTitle, undropCommand } from "./helpers";
 import { can } from "./roles";
@@ -48,10 +48,11 @@ export function CutDialog({ desk, send, onClose, onDone }: Base & { onDone: (tex
   const [top, setTop] = useState(Math.max(2, Math.min(rows.length, 8)));
   const [points, setPoints] = useState(9);
   const n = mode === "playoff" ? size : top;
-  const tied = mode !== "min_points" && rows[n] && rows[n - 1] && rows[n]!.rank === rows[n - 1]!.rank ? rows.filter(r => r.rank === rows[n - 1]!.rank) : [];
+  const ties = mode === "min_points" ? null : cutoffTies(rows, n);
+  const tied = ties ? rows.slice(ties.start, ties.end) : [];
   const [selection, setSelection] = useState<string[] | null>(null);
   const selected = selection?.every(id => tied.some(row => row.playerId === id)) ? selection : [];
-  const required = tied.length ? n - rows.indexOf(tied[0]) : 0;
+  const required = ties ? n - ties.start : 0;
   const validSelection = tied.length === 0 || (mode === "playoff" ? selected.length === required : selected.length >= required);
   const validSize = mode === "min_points" ? Number.isInteger(points) && points >= 0
     : Number.isInteger(n) && n >= 2 && n <= (mode === "playoff" ? maxPlayoffSize : rows.length);
@@ -119,7 +120,7 @@ export function UndropDialog({ code, desk, send, onClose, onDone }: Base & { cod
   // The returning player's match in the previous round, and the opponent who is still active.
   const prev = round ? state.rounds.find(r => r.number === round.number - 1)?.matches.find(m => m.p1 === playerId || m.p2 === playerId) : undefined;
   const prevOpp = prev ? names.get(prev.p1 === playerId ? prev.p2 ?? "" : prev.p1) : undefined;
-  const oppSeat = prevOpp && prevOpp.status === "active" ? round?.matches.find(m => (m.p1 === prevOpp.id || m.p2 === prevOpp.id) ) : undefined;
+  const oppSeat = prevOpp && prevOpp.status === "active" ? round?.matches.find(m => m.p1 === prevOpp.id || m.p2 === prevOpp.id) : undefined;
   const byeMatch = round?.matches.find(m => m.p2 === null && m.result === "bye_win");
   const live = !!round && state.phase === "swiss";
   const why: Record<UndropOption, string | null> = {
@@ -138,7 +139,7 @@ export function UndropDialog({ code, desk, send, onClose, onDone }: Base & { cod
     bye_win: "Bye Opponent - Win", bye_loss: "Bye Opponent - Loss", repair: "Re-Pair as necessary",
     next_round: "Re-enter next round (no match this round)",
   };
-  // "Re-Pair as necessary" shifts pairings: show the matches that change before anything is written.
+  // The paired round's seed keeps the same table choices in the preview and on save.
   const preview = useMemo<{ changes: MatchPlayerChange[] } | { error: string } | null>(() => {
     if (effective !== "repair" || !playerId || state.phase === "playoff") return null;
     try { return { changes: previewCommand(state, undropCommand(team, playerId, "repair"), { now: new Date().toISOString(), seed: 1, actor: "preview" }) }; }
@@ -152,13 +153,17 @@ export function UndropDialog({ code, desk, send, onClose, onDone }: Base & { cod
     // Open the slips tab now (inside the click) so the browser does not block it after the command returns.
     const slips = printNew && newTables.length ? window.open("about:blank", "_blank") : null;
     if (slips) slips.opener = null;
-    // One server command per option: it also drops the old opponent or re-pairs where the option needs it.
-    const steps: Parameters<SendFn>[0][] = [undropCommand(team, playerId, effective)];
-    for (const step of steps) {
-      const res = await send(step);
-      if (!res.ok) { slips?.close(); setBusy(false); setErr(res.message); return; }
+    const res = await send(undropCommand(team, playerId, effective));
+    if (!res.ok) { slips?.close(); setBusy(false); setErr(res.message); return; }
+    if (slips) {
+      const previous = new Map(res.before.state.rounds.at(-1)?.matches.map(m => [m.id, m]));
+      const tables = res.desk.state.rounds.at(-1)?.matches.flatMap(m => {
+        const before = previous.get(m.id);
+        return m.p2 !== null && m.table !== null && (m.p1 !== before?.p1 || m.p2 !== before.p2) ? [m.table] : [];
+      }) ?? [];
+      if (tables.length) slips.location.href = `/e/${encodeURIComponent(code)}/print/slips?tables=${tables.join(",")}`;
+      else slips.close();
     }
-    if (slips) slips.location.href = `/e/${encodeURIComponent(code)}/print/slips?tables=${newTables.join(",")}`;
     setBusy(false);
     onDone(`${player?.name ?? competitorLabel(state)} is back in the tournament.`); onClose();
   }
@@ -266,17 +271,19 @@ export function SeatsDialog({ desk, send, onClose }: Base) {
 }
 
 /* ---------- Change Result wizard ---------- */
-export function ChangeResultDialog({ desk, send, onClose, onDone }: Base & { onDone: (t: string) => void }) {
+export function ChangeResultDialog({ desk, role, send, onClose, onDone }: Base & { role: StaffRole; onDone: (t: string) => void }) {
   const { state } = desk;
   const [round, setRound] = useState(state.rounds.at(-1)?.number ?? 1);
   const [table, setTable] = useState("");
+  const [byeId, setByeId] = useState("");
   const [result, setResult] = useState<"p1" | "p2" | "draw" | "double_loss" | "clear">("p1");
   const [drop, setDrop] = useState<"none" | "loser" | "both">("none");
   const [swapPlayers, setSwapPlayers] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const names = playerById(state);
   const selectedRound = state.rounds.find(r => r.number === round);
-  const match = selectedRound?.matches.find(m => (m.table ?? m.byeTable) === Number(table));
+  const match = selectedRound?.matches.find(m => byeId ? m.id === byeId : (m.table ?? m.byeTable) === Number(table));
+  const byes = selectedRound?.matches.filter(m => m.p2 === null) ?? [];
   const bye = !!match && match.p2 === null;
   const canDraw = selectedRound?.stage !== "playoff" && !bye;
   const canAwardP2 = !bye || selectedRound?.stage !== "playoff";
@@ -284,19 +291,22 @@ export function ChangeResultDialog({ desk, send, onClose, onDone }: Base & { onD
   const currentMatches = state.rounds.at(-1)?.matches ?? [];
   const first = currentMatches.find(m => match && (m.p1 === match.p1 || m.p2 === match.p1));
   const second = currentMatches.find(m => match?.p2 && (m.p1 === match.p2 || m.p2 === match.p2));
-  const canSwap = !!first && !!second && first !== second;
+  const canSwap = can(role, "SwapPlayers") && !!first && !!second && first !== second;
   async function run() {
     if (!match) { setErr(`No table ${table || "?"} in round ${round}.`); return; }
     const corrected = result === "clear" ? null : bye ? (result === "p1" ? "bye_win" : "bye_loss") : result;
     const res = await send({ type: "EnterResult", matchId: match.id, result: corrected, drop: result === "clear" ? "none" : drop, swapPlayers: canSwap && swapPlayers });
     if (!res.ok) { setErr(res.message); return; }
-    onDone(`Round ${round}, table ${table} updated.`); onClose();
+    onDone(bye ? `Round ${round} bye updated.` : `Round ${round}, table ${table} updated.`); onClose();
   }
   return <Dialog open onClose={onClose} title="Change Match Result" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!match || (!canDraw && (result === "draw" || result === "double_loss")) || (!canAwardP2 && result === "p2")} onClick={() => void run()}>Change result</Button></>}>
     <div className="dk-dlg-row">
-      <Field label="Round"><Select value={round} onChange={e => { setRound(Number(e.target.value)); setResult("p1"); setSwapPlayers(false); }}>{state.rounds.map(r => <option key={r.number} value={r.number}>{roundTitle(r)}</option>)}</Select></Field>
-      <Field label="Table"><Input inputMode="numeric" value={table} onChange={e => { setTable(e.target.value.replace(/\D/g, "")); setResult("p1"); setSwapPlayers(false); }} autoFocus /></Field>
+      <Field label="Round"><Select value={round} onChange={e => { setRound(Number(e.target.value)); setByeId(""); setResult("p1"); setSwapPlayers(false); }}>{state.rounds.map(r => <option key={r.number} value={r.number}>{roundTitle(r)}</option>)}</Select></Field>
+      <Field label="Table"><Input inputMode="numeric" value={table} onChange={e => { setTable(e.target.value.replace(/\D/g, "")); setByeId(""); setResult("p1"); setSwapPlayers(false); }} autoFocus /></Field>
     </div>
+    {byes.length > 0 && <Field label="Bye"><Select value={byeId} onChange={e => {
+      setByeId(e.target.value); setTable(""); setResult("p1"); setSwapPlayers(false);
+    }}><option value="">Choose a bye</option>{byes.map(m => <option key={m.id} value={m.id}>{names.get(m.p1)?.name ?? m.p1}</option>)}</Select></Field>}
     {match ? <p style={{ margin: 0 }}><b style={{ fontWeight: 600 }}>{p1}</b> vs <b style={{ fontWeight: 600 }}>{p2 ?? "Bye"}</b> · now {match.result ? STAMP_TEXT[match.result] : "Unreported"}</p> : <p className="dd-meta" style={{ margin: 0 }}>Enter a table to load the match.</p>}
     <div role="radiogroup" aria-label="New result">
       <Radio name="cr" label={`${p1 ?? "Player 1"} Wins ( - )`} checked={result === "p1"} onChange={() => setResult("p1")} />

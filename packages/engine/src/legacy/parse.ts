@@ -201,7 +201,9 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
     const round = rounds.get(number) ?? { number, stage: playoff ? "playoff" : "swiss", seed: ctx.seed, startedAt: null, endsAt: null, matches: [], warnings: [] };
     if (playoff) round.stage = "playoff";
     const winner = byLegacyId.get(key(node.get("Winner")))?.id ?? "";
-    const table = node.has("Table") ? node.int("Table") + tableOffset : 0;
+    const relativeTable = node.int("Table");
+    const table = relativeTable !== 0 || (node.has("Table") && (p2 !== null || p1.fixedTable === tableOffset))
+      ? relativeTable + tableOffset : 0;
     round.matches.push({ id: `legacy-match-${number}-${round.matches.length + 1}`, round: number, table: p2 === null || table <= 0 ? null : table,
       ...(p2 === null && table > 0 ? { byeTable: table } : {}),
       p1: p1.id, p2: p2?.id ?? null, result: matchResult(node, p1.id, p2?.id ?? null, winner), reports: [], extensionMinutes: 0 });

@@ -65,9 +65,14 @@ it("corrects a past result and exchanges the two players' current opponents atom
   ]);
   expect(next.players.map(p => [p.status, p.droppedAfterRound])).toEqual(state.players.map(p => [p.status, p.droppedAfterRound]));
 
-  const playoff = run(event(4), { type: "CutToPlayoff", size: 4 });
-  const match = playoff.rounds[0].matches[0];
-  const scored = run(playoff, { type: "EnterResult", matchId: match.id, result: "p1" });
-  const corrected = run(scored, { type: "EnterResult", matchId: match.id, result: "p2", swapPlayers: false });
-  expect(corrected.players.map(p => p.status)).toEqual(scored.players.map(p => p.status));
+  let playoff = run(event(4), { type: "CutToPlayoff", size: 4 });
+  const [first, second] = playoff.rounds[0].matches;
+  playoff = run(playoff, { type: "EnterResult", matchId: first.id, result: "p1" });
+  playoff = run(playoff, { type: "EnterResult", matchId: second.id, result: "p1" });
+  playoff = run(playoff, { type: "PairNextRound" });
+  const corrected = run(playoff, { type: "EnterResult", matchId: first.id, result: "p2", swapPlayers: false });
+  expect(corrected.players.map(p => p.status)).toEqual(playoff.players.map(p => p.status));
+  const final = run(corrected, { type: "EnterResult", matchId: corrected.rounds[1].matches[0].id, result: "p1" });
+  expect(final.players.find(p => p.id === first.p1)?.status).toBe("active");
+  expect(final.players.find(p => p.id === first.p2)?.status).toBe("cut");
 });

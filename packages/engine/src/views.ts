@@ -1,5 +1,6 @@
 import { competitors, teamForPlayer, teamSize } from "./competitors.js";
 import { CommandError, type EventState, type Match, type PlayerView, type PublicMatchView, type PublicView } from "./types.js";
+import { bracketMatchesInOrder } from "./bracket.js";
 import { standings } from "./standings.js";
 
 function displayName(state: EventState, name: string): string {
@@ -29,9 +30,9 @@ export function publicView(state: EventState, version: number): PublicView {
     playerCount: state.players.length, playerStructure: state.settings.playerStructure ?? 1, style: state.settings.style ?? "advanced", teamCount: state.teams?.length ?? 0, version,
     teams: (state.teams ?? []).map(t => ({ id: t.id, name: t.name, status: t.status, members: t.memberIds.map(id => ({ id, name: displayName(state, state.players.find(p => p.id === id)?.name ?? "Unknown player") })) })),
     currentRound: round ? { number: round.number, stage: round.stage, startedAt: round.startedAt, endsAt: round.endsAt,
-      matches: round.matches.map(m => matchView(state, m, points)) } : null,
+      matches: (round.stage === "playoff" ? bracketMatchesInOrder(round.matches) : round.matches).map(m => matchView(state, m, points)) } : null,
     standings: rows.map(s => ({ ...s, name: teamSize(state) > 1 ? s.name : displayName(state, s.name) })),
-    bracket: state.rounds.filter(r => r.stage === "playoff").map(r => ({ round: r.number, matches: r.matches.map(m => matchView(state, m, points)) })),
+    bracket: state.rounds.filter(r => r.stage === "playoff").map(r => ({ round: r.number, matches: bracketMatchesInOrder(r.matches).map(m => matchView(state, m, points)) })),
   };
 }
 

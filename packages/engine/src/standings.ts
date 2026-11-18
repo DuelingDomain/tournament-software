@@ -73,6 +73,17 @@ export function encodedPoints(row: Pick<Standing, "matchPoints" | "omw" | "oomw"
   return row.matchPoints * 1_000_000 + Math.round(row.omw * 10) * 1_000 + Math.round(row.oomw * 10);
 }
 
+export function cutoffTies(rows: readonly Standing[], size: number): { start: number; end: number } | null {
+  const cutoff = rows[size - 1], next = rows[size];
+  if (!cutoff || !next || encodedPoints(cutoff) !== encodedPoints(next)) return null;
+  const points = encodedPoints(cutoff);
+  let start = size - 1;
+  let end = size + 1;
+  while (start > 0 && encodedPoints(rows[start - 1]) === points) start--;
+  while (end < rows.length && encodedPoints(rows[end]) === points) end++;
+  return { start, end };
+}
+
 export function playoffWins(state: EventState, throughRound: number): Map<string, number> {
   const wins = new Map<string, number>();
   if (state.settings.format === "single_elim") return wins;

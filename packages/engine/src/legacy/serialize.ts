@@ -1,5 +1,5 @@
 import { CommandError, type EventState, type Penalty, type Player } from "../types.js";
-import { FIRST_TEMPORARY_MEMBER_ID, MEMBER_ID_LIMIT, normalizeMemberId, padMemberId } from "../member-id.js";
+import { FIRST_TEMPORARY_MEMBER_ID, MEMBER_ID_LIMIT, isTeamId, normalizeMemberId, padMemberId } from "../member-id.js";
 import { teamSize } from "../competitors.js";
 import { ROLE_POSITIONS, staffPositionCode } from "../staff.js";
 import { encodedPoints, playoffWins, standings } from "../standings.js";
@@ -44,7 +44,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   const assigned = new Set<string>((state.teams ?? []).map(t => t.id));
   for (const p of state.players) {
     const normalized = p.memberId === null ? null : normalizeMemberId(p.memberId);
-    const id = normalized && normalized !== "0" && !assigned.has(normalized) ? padMemberId(normalized) : temporaryId();
+    const id = normalized && normalized !== "0" && !isTeamId(normalized) && !assigned.has(normalized) ? padMemberId(normalized) : temporaryId();
     assigned.add(normalizeMemberId(id) ?? id);
     ids.set(p.id, id);
   }
@@ -71,7 +71,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   const legacyStaff = state.legacyStaff ?? [];
   const legacyStaffIds = legacyStaff.map(s => {
     const normalized = s.memberId === null ? null : normalizeMemberId(s.memberId);
-    if (normalized && normalized !== "0" && !used.has(normalized) && !assigned.has(normalized)) {
+    if (normalized && normalized !== "0" && !isTeamId(normalized) && !used.has(normalized) && !assigned.has(normalized)) {
       used.add(normalized); return padMemberId(normalized);
     }
     return temporaryId();

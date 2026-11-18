@@ -28,6 +28,7 @@ const permissions: Record<Command["type"], readonly StaffRole[]> = {
 export function requireCommand(event: EventRecord, userId: number, command: Command) {
   const role = requireStaff(event, userId);
   if (!permissions[command.type].includes(role)) throw new HttpError(403, "forbidden_role");
+  if (command.type === "EnterResult" && command.swapPlayers && !permissions.SwapPlayers.includes(role)) throw new HttpError(403, "forbidden_role");
   if (command.type === "UpdateSettings" && command.staff) {
     if (role !== "organizer" && role !== "head_judge") throw new HttpError(403, "forbidden_role");
     const owner = command.staff.find(s => s.userId === event.ownerUserId);
