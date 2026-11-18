@@ -28,6 +28,9 @@
 .dk-tile:hover { background: var(--bg-slip-hover); }
 .dk-tile[aria-pressed="true"] { border-color: var(--violet-2); color: var(--violet-2); }
 .dk-tile[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+.dk-tile--rose[aria-disabled="true"], .dk-tile--rose-outline[aria-disabled="true"] { background: var(--bg-elevated); border-color: var(--border); color: var(--text-3); opacity: 0.55; }
+.dk-tile--rose[aria-disabled="true"]:hover { background: var(--bg-elevated); }
+.dk-tile--rose[aria-disabled="true"] .dd-keycap { background: var(--bg-surface); border-color: var(--border); color: var(--text-3); }
 .dk-tile--rose { background: var(--rose); border-color: var(--rose); color: var(--bg-deep); }
 .dk-tile--rose:hover { background: var(--rose-2); }
 .dk-tile--rose .dd-keycap { background: var(--bg-deep); border-color: var(--bg-deep); color: var(--text); box-shadow: none; }
@@ -124,6 +127,8 @@
 .dk-perf::after { right: -4px; }
 .dk-pairside { display: flex; flex-direction: column; gap: 6px; }
 .dk-pairside .dd-btn { height: 44px; }
+.dk-pairside .dd-btn--rose[disabled] { background: var(--bg-elevated); border-color: var(--border); color: var(--text-3); }
+.dk-pairside .dd-btn--rose[disabled] .dd-keycap { background: var(--bg-surface); border-color: var(--border); color: var(--text-3); }
 .dk-pairnote { text-align: center; font-size: 13px; color: var(--text-2); }
 
 /* Players panel */

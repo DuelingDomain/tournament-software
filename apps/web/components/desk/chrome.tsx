@@ -82,7 +82,7 @@ export function Tray({ actions, panel, team }: { actions: Action[]; panel: Panel
         {g.tiles.map(t => {
           const a = byId.get(t.action);
           if (!a) return null;
-          const label = team && t.action === "undrop" ? "Undrop Team" : t.label;
+          const label = team && t.action === "undrop" ? "Undrop Team" : t.action === "pair" && a.label.startsWith("Pair Next") ? a.label : t.label;
           return <button key={t.action} type="button" className={`dk-tile${t.tone ? ` dk-tile--${t.tone}` : ""}`} aria-disabled={!a.enabled || undefined}
             aria-pressed={viewOf[t.action] ? viewOf[t.action] === panel : undefined} title={!a.enabled ? a.reason : t.action === "pair" ? a.label : undefined}
             aria-keyshortcuts={t.key} onClick={() => { if (a.enabled) a.run(); }}>
