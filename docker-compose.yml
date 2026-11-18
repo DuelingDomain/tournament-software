@@ -1,9 +1,11 @@
 services:
   tournaments:
+    # Production pulls the image built in Actions; local `docker compose build` still works.
+    image: ${TOURNAMENT_IMAGE:-ghcr.io/duelingdomain/tournament-software:main}
     build: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3400:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:3400:3000"
     volumes:
       - ./data:/app/data
     environment:

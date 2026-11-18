@@ -148,10 +148,14 @@ starting it:
 mkdir -p data
 sudo chown 1000:1000 data
 chmod 700 data
-docker compose up -d --build
+docker compose pull && docker compose up -d --no-build
 ```
 
-Compose publishes only `127.0.0.1:3400:3000` and mounts `./data`. Configure the
+The Image workflow builds the ARM64 image in Actions and pushes it to GHCR, so
+the server only pulls (`TOURNAMENT_IMAGE` picks a tag; default `:main`). Compose
+publishes only `${BIND_ADDRESS:-127.0.0.1}:3400:3000` and mounts `./data`. When
+Caddy runs in Docker and reaches the host through `host.docker.internal`, set
+`BIND_ADDRESS` to the Docker bridge gateway (for example `172.17.0.1`). Configure the
 DD Caddy to proxy `ddtournaments.duelingdomain.com` to `127.0.0.1:3400`:
 
 ```caddyfile
