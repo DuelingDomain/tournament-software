@@ -85,6 +85,13 @@ export interface Match {
   extensionMinutes: number;
 }
 
+/** Participant edits, including match creation (before null) and removal (after null). */
+export interface MatchPlayerChange {
+  matchId: MatchId;
+  before: Match | null;
+  after: Match | null;
+}
+
 export interface Round {
   number: number; // 1-based across the whole event
   stage: "swiss" | "playoff";
@@ -274,6 +281,7 @@ export interface PlayerView {
 export interface ScorekeeperEngine {
   createEvent(settings: Partial<EventSettings> & { name: string }, ctx: CommandContext): EventState;
   applyCommand(state: EventState, command: Command, ctx: CommandContext): EventState; // throws CommandError; never mutates input
+  previewCommand(state: EventState, command: Command, ctx: CommandContext): MatchPlayerChange[];
   standings(state: EventState): Standing[];
   suggestRounds(playerCount: number): number;
   publicView(state: EventState, version: number): PublicView;

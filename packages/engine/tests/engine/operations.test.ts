@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { applyCommand, integrity, printData, publicView } from "../../src/index.js";
+import { applyCommand, engine, integrity, previewCommand, printData, publicView } from "../../src/index.js";
 import { context, event, fixture, run } from "./fixtures.js";
 
 it("records successful commands with actor and timestamp without mutating inputs or exposing logs publicly", () => {
@@ -26,7 +26,7 @@ it("provides staff print rows for unreported matches across rounds, pair-downs, 
   expect(data.penalties[0]).toMatchObject({ player: { name: state.players[1].name }, infraction: state.settings.infractions[0].label, judge: "Sample Judge" });
 });
 
-it("repairs an undrop with an available opponent and swaps with a former opponent", () => {
+it("repairs an undrop and swaps with a former opponent", () => {
   let state = fixture([[[0, 1, "p1"], [2, 3, "draw"]], [[1, 2, null], [3, null, "bye_win"]]], 4);
   const returning = state.players[0].id;
   state = run(state, { type: "DropPlayer", playerId: returning });
@@ -38,7 +38,8 @@ it("repairs an undrop with an available opponent and swaps with a former opponen
   expect(shifted.rounds[1].matches.at(-1)).toMatchObject({ p1: state.players[1].id, p2: null, result: "bye_win" });
   const split = run(state, { type: "SplitMatch", matchId: state.rounds[1].matches[0].id });
   const repaired = run(split, { type: "UndropPlayer", playerId: returning, option: "repair" });
-  expect(repaired.rounds[1].matches.at(-1)).toMatchObject({ p1: returning, p2: state.players[1].id, result: null });
+  expect(repaired.rounds[1].matches.at(-1)).toMatchObject({ p1: state.players[3].id, p2: returning, result: null });
+  expect(integrity(repaired).unpairedActive).toEqual(expect.arrayContaining([state.players[1].id, state.players[2].id]));
 });
 
 it("chain shifts an undrop through descending point groups using the command seed and preserving reported matches", () => {
@@ -99,6 +100,14 @@ it("chain shifts an undrop through descending point groups using the command see
       expect(integrity(next)).toMatchObject({ unpairedActive: [], pairedTwiceInRound: [] });
       expect(run(input, command, 42)).toEqual(next);
       expect(input).toEqual(before);
+      const preview = previewCommand(input, command, { ...context, seed: 42 });
+      expect(preview).toEqual([0, 1, 2, 5].map(i => ({
+        matchId: matches[i].id, before: before.rounds[2].matches[i] ?? null, after: matches[i],
+      })));
+      expect(engine.previewCommand(input, command, { ...context, seed: 42 })).toEqual(preview);
+      expect(input).toEqual(before);
+      preview[0].before!.p1 = "preview-only";
+      expect(input).toEqual(before);
       // A different seed can choose the other equal-score seat.
       const tieOpponents = new Set(Array.from({ length: 8 }, (_, seed) => {
         const m = run(input, command, seed).rounds[2].matches[2];
@@ -107,12 +116,86 @@ it("chain shifts an undrop through descending point groups using the command see
       expect(tieOpponents).toEqual(new Set([ids[1], ids[7]]));
     }
 
-    // An unreported bye ends the cascade; an already scored bye is preserved.
+    // Either fixed occupant stays at this table, even when tied or lower-scoring.
+    for (const fixedSeats of [[0], [1], [0, 1]]) {
+      const fixed = structuredClone(state);
+      const fixedField = size === 1 ? fixed.players : fixed.teams;
+      const first = fixed.rounds[2].matches[0];
+      const occupants = [first.p1, first.p2!];
+      for (const seat of fixedSeats) fixedField.find(p => p.id === occupants[seat])!.fixedTable = first.table;
+      const next = run(fixed, command, 42);
+      for (const seat of fixedSeats) {
+        expect(next.rounds[2].matches[0][seat === 0 ? "p1" : "p2"]).toBe(occupants[seat]);
+      }
+      if (fixedSeats.length === 2) expect(next.rounds[2].matches[0]).toEqual(first);
+      else expect([next.rounds[2].matches[0].p1, next.rounds[2].matches[0].p2]).toContain(ids[0]);
+      expect(integrity(next)).toMatchObject({ unpairedActive: [], pairedTwiceInRound: [] });
+    }
+    for (const seed of [0, 1, 42]) {
+      const fixed = structuredClone(state);
+      const fixedField = size === 1 ? fixed.players : fixed.teams;
+      for (const index of [1, 7]) {
+        const tied = structuredClone(fixed);
+        (size === 1 ? tied.players : tied.teams)[index].fixedTable = tied.rounds[2].matches[2].table;
+        const next = run(tied, command, seed);
+        expect([next.rounds[2].matches[2].p1, next.rounds[2].matches[2].p2]).toContain(ids[index]);
+      }
+      fixedField[0].fixedTable = 10 + 8 * size;
+      expect(run(fixed, command, seed).rounds[2].matches.slice(0, 5)).toEqual(fixed.rounds[2].matches);
+    }
+
+    // An automatic bye ends the chain without staff first clearing its result.
+    // The two former participants are now unseated: neither shortcuts the chain.
+    for (const result of [null, "bye_win"] as const) {
+      const withAutomaticBye = structuredClone(state);
+      const bye = withAutomaticBye.rounds[2].matches[3];
+      Object.assign(bye, { p2: null, table: null, result });
+      const before = structuredClone(withAutomaticBye);
+      const next = run(withAutomaticBye, command, 42);
+      const terminal = next.rounds[2].matches.find(m => m.id === bye.id)!;
+      expect(next.rounds[2].matches[0]).toMatchObject({ p2: ids[0] });
+      expect(terminal).toMatchObject({ p1: ids[3], p2: expect.any(String), result: null, reports: [], table: 10 + 3 * size });
+      expect([ids[1], ids[7]]).toContain(terminal.p2);
+      expect(next.rounds[2].matches).toHaveLength(before.rounds[2].matches.length);
+      expect(next.rounds[2].matches.filter(m => m.p2 === null)).toHaveLength(0);
+      expect(integrity(next)).toMatchObject({ unpairedActive: [ids[5]], pairedTwiceInRound: [] });
+      expect(withAutomaticBye).toEqual(before);
+      expect(previewCommand(withAutomaticBye, command, { ...context, seed: 42 })).toContainEqual({
+        matchId: bye.id, before: bye, after: terminal,
+      });
+    }
+
+    // A naturally paired odd field also loses its automatic bye on re-entry.
+    let odd = event(4 * size, { playerStructure: size, startingTable: 10 });
+    if (size > 1) odd = run(odd, { type: "AddTeams", teams: Array.from({ length: 4 }, (_, i) => ({
+      name: `Team ${i + 1}`, memberIds: odd.players.slice(i * size, (i + 1) * size).map(p => p.id),
+    })) });
+    const returning = (size === 1 ? odd.players : odd.teams)[0].id;
+    odd = run(odd, size === 1 ? { type: "DropPlayer", playerId: returning } : { type: "DropTeam", teamId: returning });
+    odd = run(odd, { type: "PairNextRound" });
+    expect(odd.rounds[0].matches.filter(m => m.p2 === null)).toHaveLength(1);
+    const even = run(odd, size === 1
+      ? { type: "UndropPlayer", playerId: returning, option: "repair" }
+      : { type: "UndropTeam", teamId: returning, option: "repair" }, 42);
+    expect(even.rounds[0].matches).toHaveLength(2);
+    expect(even.rounds[0].matches.every(m => m.p2 !== null && m.result === null)).toBe(true);
+    expect(integrity(even)).toMatchObject({ unpairedActive: [], pairedTwiceInRound: [] });
+    const evenBefore = structuredClone(even);
+    const splitCommand = { type: "SplitMatch" as const, matchId: even.rounds[0].matches[0].id };
+    expect(previewCommand(even, splitCommand, context)).toEqual([{
+      matchId: splitCommand.matchId, before: even.rounds[0].matches[0], after: null,
+    }]);
+    expect(previewCommand(even, { type: "EnterResult", matchId: splitCommand.matchId, result: "p1" }, context)).toEqual([]);
+    expect(() => previewCommand(even, { type: "UndropPlayer", playerId: even.players[0].id, option: "repair" }, context))
+      .toThrow(expect.objectContaining({ code: "PLAYER_NOT_DROPPED" }));
+    expect(even).toEqual(evenBefore);
+
+    // Skip a protected bye loss before ending the cascade at an unreported bye.
     const withBye = structuredClone(state);
     const bye = withBye.rounds[2].matches[3];
-    const protectedBye = { ...structuredClone(bye), id: "scored-bye", p1: ids[5], p2: null, table: null, result: "bye_win" as const };
+    const protectedBye = { ...structuredClone(bye), id: "loss-bye", p1: ids[5], p2: null, table: null, result: "bye_loss" as const };
     Object.assign(bye, { p2: null, table: null, result: null });
-    withBye.rounds[2].matches.push(protectedBye);
+    withBye.rounds[2].matches.splice(3, 0, protectedBye);
     const ended = run(withBye, command, 42);
     const terminal = ended.rounds[2].matches.find(m => m.id === bye.id)!;
     expect(terminal).toMatchObject({ p1: ids[3], p2: expect.any(String), result: null, table: 10 + 3 * size });
@@ -125,18 +208,18 @@ it("chain shifts an undrop through descending point groups using the command see
       const blocked = structuredClone(withBye);
       const blockedField = size === 1 ? blocked.players : blocked.teams;
       if (blockedBy === "conflicting_seats") {
-        blockedField[8].fixedTable = 10;
+        blockedField[0].fixedTable = 10 + 8 * size;
         blockedField[3].fixedTable = 10 + 7 * size;
       } else blockedField[3].fixedTable = 10;
       const preserved = structuredClone(blocked.rounds[2].matches);
       const repaired = run(blocked, command, 42);
       const repairedMatches = repaired.rounds[2].matches;
-      expect(repairedMatches.find(m => m.id === bye.id)).toEqual(preserved[3]);
+      expect(repairedMatches.find(m => m.id === bye.id)).toEqual(preserved.find(m => m.id === bye.id));
       expect(repairedMatches.find(m => m.id === protectedBye.id)).toEqual(protectedBye);
       expect(repairedMatches).toHaveLength(preserved.length + 1);
       expect(repairedMatches.at(-1)).toMatchObject({ result: "bye_win", p2: null, table: null });
       if (blockedBy === "conflicting_seats") {
-        expect(repairedMatches.at(-1)?.p1).toBe(ids[8]);
+        expect(repairedMatches.at(-1)?.p1).toBe(ids[0]);
         expect(repairedMatches[1]).toEqual(preserved[1]);
         expect(repairedMatches[2]).toEqual(preserved[2]);
       }

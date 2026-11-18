@@ -150,46 +150,45 @@ function addManualMatch(state: EventState, round: Round, match: Match, table?: n
   round.matches.push(match);
 }
 
-/** Insert an unseated returnee into the current score groups without erasing results. */
+/** Insert an unseated returnee into score groups while preserving played matches. */
 function repairUndrop(state: EventState, round: Round, returning: Player, random: () => number, ids: Set<string>): void {
   const field = competitors(state);
-  const seated = new Set(round.matches.flatMap(m => m.p2 === null ? [m.p1] : [m.p1, m.p2]));
-  const unpaired = field.find(p => p.id !== returning.id && p.status === "active" && !seated.has(p.id));
-  if (unpaired) {
-    addManualMatch(state, round, makeMatch(returning.id, unpaired.id, round.number, random, ids));
-    return;
-  }
 
   // Current results (including automatic byes) must not change the pairing groups.
   const points = new Map(standings({ ...state, rounds: state.rounds.filter(r => r.number < round.number) })
     .map(s => [s.playerId, s.matchPoints]));
   const score = (id: string) => points.get(id) ?? 0;
   const byId = new Map(field.map(p => [p.id, p]));
-  const available = round.matches.filter(m => m.result === null && m.reports.length === 0
-    && byId.get(m.p1)?.status === "active" && (m.p2 === null || byId.get(m.p2)?.status === "active"));
-  const group = (m: Match) => m.p2 === null ? score(m.p1) : Math.max(score(m.p1), score(m.p2));
+  const available = round.matches.filter(m => m.p2 !== null && m.result === null && m.reports.length === 0
+    && byId.get(m.p1)?.status === "active" && byId.get(m.p2)?.status === "active");
+  const group = (m: Match) => Math.max(score(m.p1), score(m.p2!));
   available.sort((a, b) => group(b) - group(a) || (a.table ?? Infinity) - (b.table ?? Infinity));
   let carried = returning;
   for (const match of available) {
     if (group(match) > score(carried.id)) continue;
-    if (match.p2 === null) {
-      // Only an explicitly unreported bye can be consumed. Scored byes stay intact.
-      const fixed = byId.get(match.p1)!.fixedTable;
-      if (fixed !== null && carried.fixedTable !== null && fixed !== carried.fixedTable) continue;
-      const table = fixed ?? carried.fixedTable;
-      const width = teamSize(state);
-      if (table !== null && round.matches.some(m => m.table !== null && table < m.table + width && m.table < table + width)) continue;
-      round.matches = round.matches.filter(m => m.id !== match.id);
-      addManualMatch(state, round, { ...match, p2: carried.id });
-      return;
-    }
     // Keep all existing tables, including team table blocks and fixed seats.
     if (carried.fixedTable !== null && carried.fixedTable !== match.table) continue;
-    const a = score(match.p1), b = score(match.p2);
-    const seat = a < b || (a === b && random() < 0.5) ? "p1" : "p2";
+    const fixedA = byId.get(match.p1)!.fixedTable === match.table;
+    const fixedB = byId.get(match.p2!)!.fixedTable === match.table;
+    if (fixedA && fixedB) continue;
+    const a = score(match.p1), b = score(match.p2!);
+    const seat = fixedA ? "p2" : fixedB ? "p1" : a < b || (a === b && random() < 0.5) ? "p1" : "p2";
     const displaced = byId.get(match[seat]!)!;
     match[seat] = carried.id;
     carried = displaced;
+  }
+  // End at an eligible bye recipient, including an automatically scored bye win.
+  for (const match of round.matches) {
+    if (match.p2 !== null || (match.result !== null && match.result !== "bye_win") || match.reports.length > 0
+      || byId.get(match.p1)?.status !== "active" || score(match.p1) > score(carried.id)) continue;
+    const fixed = byId.get(match.p1)!.fixedTable;
+    if (fixed !== null && carried.fixedTable !== null && fixed !== carried.fixedTable) continue;
+    const table = fixed ?? carried.fixedTable;
+    const width = teamSize(state);
+    if (table !== null && round.matches.some(m => m.table !== null && table < m.table + width && m.table < table + width)) continue;
+    round.matches = round.matches.filter(m => m.id !== match.id);
+    addManualMatch(state, round, { ...match, p2: carried.id, result: null });
+    return;
   }
   addManualMatch(state, round, makeMatch(carried.id, null, round.number, random, ids));
 }

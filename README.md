@@ -105,6 +105,25 @@ when `entered` is zero. Stale `expectedVersion` values return 409
 `{ error: "version_conflict", desk }` without a write, so normal version polling
 sees successful changes.
 
+## Undrop repair and preview
+
+Undrop repair always runs the descending points chain, without an unseated-opponent
+shortcut. Fixed occupants stay at their table; a table with both seats fixed is
+skipped. Played matches and pending reports are preserved.
+
+The reference notes leave existing-bye termination unspecified. The chosen rule
+pairs the final carried competitor against an active bye recipient in the same
+or a lower pre-round points group, clearing the automatic bye win so the new
+match can be played. This avoids two byes when an eligible bye is available.
+Bye losses, pending reports and fixed-table conflicts remain protected; if no
+eligible bye can be used, the carried competitor receives a bye win.
+
+The engine exports `previewCommand(state, command, context)`, which returns
+`{ matchId, before, after }[]` for matches whose participants change, including
+added and removed matches. Preview uses the same validation and seed as command
+execution and leaves its inputs untouched. See the [engine command notes](packages/engine/src/README.md)
+for details.
+
 ## Verification
 
 ```sh
