@@ -11,7 +11,8 @@ it("round-trips ordered teams, results, byes, settings, manual points and staff 
   state = run(state, { type: "AddStaff", userId: 12, name: "Example Staff", position: "assistant_head_judge" });
   state = scoreAll(run(state, { type: "PairNextRound" }));
   state = run(state, { type: "AdjustPoints", playerId: state.teams[0].id, delta: 7 });
-  state = run(state, { type: "AddPenalty", playerId: state.players[0].id, infractionId: state.settings.infractions[0].id });
+  state = run(state, { type: "AddPenalty", playerId: state.players[0].id, infractionId: state.settings.infractions[0].id, judge: state.staff[0].id });
+  state = run(state, { type: "UpdatePlayer", playerId: state.players[1].id, memberId: state.teams[1].id });
   const xml = serializeLegacyTournament(state);
   expect(xml).toContain("<TournamentTeam>");
   expect(xml).toContain("<XmlStaffPositionCode>03</XmlStaffPositionCode>");
@@ -23,4 +24,6 @@ it("round-trips ordered teams, results, byes, settings, manual points and staff 
   expect(restored.penalties[0].playerId).toBe(restored.players.find(p => p.memberId === "101")?.id);
   expect(serializeLegacyTournament(restored)).toContain("<XmlStaffPositionCode>03</XmlStaffPositionCode>");
   expect(restored.staff).toEqual([]);
+  expect(restored.penalties[0].judge).toBe("Example Staff");
+  expect(parseLegacyTournament(serializeLegacyTournament(restored), context).state.penalties[0].judge).toBe("Example Staff");
 });

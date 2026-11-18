@@ -214,27 +214,18 @@ describe("commands and audience views", () => {
     catch (e) { expect(e).toMatchObject({ name: "CommandError", code: "NO_ROUND" }); }
   });
 
-  it.each(["9999000000", "9988000000"])("blocks finalization with active temporary ID %s only when IDs are required", memberId => {
-    let s = fixture([[[0, 1, "p1"], [2, 3, "draw"]]]);
-    s = run(s, { type: "UpdatePlayer", playerId: s.players[0].id, memberId });
-    expect(run(s, { type: "CompleteEvent" }).phase).toBe("complete");
-    s = run(s, { type: "UpdateSettings", settings: { requireMemberId: true } });
-    const before = structuredClone(s);
-    expect(() => run(s, { type: "CompleteEvent" })).toThrow(expect.objectContaining({
-      code: "TEMPORARY_MEMBER_IDS", message: "Temporary IDs must be replaced before finalizing",
-    }));
-    expect(s).toEqual(before);
-    s = run(s, { type: "UpdatePlayer", playerId: s.players[0].id, memberId: "99991234" });
-    expect(run(s, { type: "CompleteEvent" }).completedAt).toBe(context.now);
-  });
-
-  it.each(["dropped", "cut"] as const)("allows finalization with a %s temporary entrant even when IDs are required", status => {
-    let s = fixture([[[0, 1, "p1"], [2, 3, "p1"]]]);
-    s = run(s, { type: "UpdatePlayer", playerId: s.players[1].id, memberId: "9999000000" });
-    s = status === "dropped" ? run(s, { type: "DropPlayer", playerId: s.players[1].id })
-      : run(s, { type: "SwissCut", mode: "min_points", value: 1 });
-    s = run(s, { type: "UpdateSettings", settings: { requireMemberId: true } });
-    expect(run(s, { type: "CompleteEvent" }).phase).toBe("complete");
+  it("requires temporary person IDs to be replaced before finalization, including dropped and cut entries", () => {
+    for (const status of ["active", "dropped", "cut"] as const) {
+      let s = fixture([[[0, 1, "p1"], [2, 3, "p1"]]]);
+      s = run(s, { type: "UpdatePlayer", playerId: s.players[1].id, memberId: "9999000000" });
+      if (status === "dropped") s = run(s, { type: "DropPlayer", playerId: s.players[1].id });
+      if (status === "cut") s = run(s, { type: "SwissCut", mode: "min_points", value: 1 });
+      const before = structuredClone(s);
+      expect(() => run(s, { type: "CompleteEvent" })).toThrow(expect.objectContaining({ code: "TEMPORARY_MEMBER_IDS" }));
+      expect(s).toEqual(before);
+      s = run(s, { type: "UpdatePlayer", playerId: s.players[1].id, memberId: "12345673" });
+      expect(run(s, { type: "CompleteEvent" }).completedAt).toBe(context.now);
+    }
   });
 
   it.each([false, true])("refuses finalization with unreported matches when requireMemberId is %s", requireMemberId => {

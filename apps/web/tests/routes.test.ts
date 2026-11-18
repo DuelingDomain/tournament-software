@@ -438,7 +438,7 @@ describe("dummy-data route", () => {
     const owner = await login(); const code = await create(owner);
     const missing = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 1 });
     expect(missing.status).toBe(422); expect(await missing.json()).toMatchObject({ error: "NO_ROUND" });
-    await dummyPlayers(code, owner, 1, 4);
+    await command(code, owner, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) });
     const paired = deskSchema.parse(await (await command(code, owner, 2, { type: "PairNextRound" })).json());
     await command(code, owner, 3, { type: "SplitMatch", matchId: paired.state.rounds[0]!.matches[0]!.id });
     const before = await desk(code, owner);

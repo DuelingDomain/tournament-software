@@ -187,7 +187,7 @@ export type Command =
   | { type: "EnterResult"; matchId: MatchId; result: MatchResult | null; drop?: "loser" | "both" | "none" } // null clears; works on any round (correction); playoff refuses draw/double_loss
   | { type: "ReportResult"; playerId: PlayerId; matchId: MatchId; result: MatchResult } // player self-report: applied when both agree; a disagreement stays pending for staff
   | { type: "DropPlayer"; playerId: PlayerId }
-  | { type: "UndropPlayer"; playerId: PlayerId; option: UndropOption; swapWith?: PlayerId } // legacy 5 options, current round only
+  | { type: "UndropPlayer"; playerId: PlayerId; option: UndropOption; swapWith?: PlayerId } // current-round re-entry and pairing options
   // Cut and finish
   | { type: "CutToPlayoff"; size?: number; tieOrder?: PlayerId[] } // tieOrder lets the organizer override the seeded tie-break at the cut line
   | { type: "SwissCut"; mode: "min_points" | "top"; value: number; tieOrder?: PlayerId[]; pairNext?: true } // Day-2 cut; optionally pairs the next round atomically
@@ -235,6 +235,7 @@ export interface PublicView {
   name: string; format: EventFormat; phase: EventPhase; location: string | null; startsAt: string | null;
   plannedRounds: number | null; topCut: number; tiebreak: TiebreakMode;
   playerStructure: PlayerStructure; style: EventStyle; teamCount: number;
+  teams: { id: string; name: string; status: Player["status"]; members: { id: string; name: string }[] }[];
   playerCount: number;
   currentRound: { number: number; stage: "swiss" | "playoff"; startedAt: string | null; endsAt: string | null; matches: PublicMatchView[] } | null;
   standings: Standing[]; // names already public-formatted
@@ -263,7 +264,7 @@ export interface DeskView {
 export interface PlayerView {
   event: PublicView;
   me: { id: PlayerId; name: string; status: Player["status"]; standing: Standing | null; teamId: string | null };
-  currentMatch: (PublicMatchView & { myReport: MatchResult | null; opponentReport: MatchResult | null }) | null;
+  currentMatch: (PublicMatchView & { myTable: number | null; myReport: MatchResult | null; opponentReport: MatchResult | null }) | null;
   history: { round: number; opponent: string | null; result: "win" | "loss" | "draw" | "double_loss" | "bye_win" | "bye_loss" | null }[];
 }
 

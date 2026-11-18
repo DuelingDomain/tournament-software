@@ -27,6 +27,7 @@ export function publicView(state: EventState, version: number): PublicView {
     location: state.settings.location, startsAt: state.settings.startsAt,
     plannedRounds: state.settings.plannedRounds, topCut: state.settings.topCut, tiebreak: state.settings.tiebreak,
     playerCount: state.players.length, playerStructure: state.settings.playerStructure ?? 1, style: state.settings.style ?? "advanced", teamCount: state.teams?.length ?? 0, version,
+    teams: (state.teams ?? []).map(t => ({ id: t.id, name: t.name, status: t.status, members: t.memberIds.map(id => ({ id, name: displayName(state, state.players.find(p => p.id === id)?.name ?? "Unknown player") })) })),
     currentRound: round ? { number: round.number, stage: round.stage, startedAt: round.startedAt, endsAt: round.endsAt,
       matches: round.matches.map(m => matchView(state, m, points)) } : null,
     standings: rows.map(s => ({ ...s, name: teamSize(state) > 1 ? s.name : displayName(state, s.name) })),
@@ -50,10 +51,12 @@ export function playerView(state: EventState, playerId: string, version: number)
     const opponent = competitors(state).find(p => p.id === opponentId);
     const result = m.result === "p1" ? (m.p1 === entrantId ? "win" : "loss")
       : m.result === "p2" ? (m.p2 === entrantId ? "win" : "loss") : m.result;
-    history.push({ round: round.number, opponent: opponent ? displayName(state, opponent.name) : null, result });
+    history.push({ round: round.number, opponent: opponent ? teamSize(state) > 1 ? opponent.name : displayName(state, opponent.name) : null, result });
   }
+  const position = team ? team.memberIds.indexOf(playerId) : 0;
+  const offset = team && teamSize(state) === 2 && current?.p2 === team.id ? 1 - position : position;
   return { event, me: { id: me.id, name: me.name, status: team?.status ?? me.status, standing, teamId: team?.id ?? null }, history,
-    currentMatch: current && visible ? { ...visible,
+    currentMatch: current && visible ? { ...visible, myTable: current.table === null ? null : current.table + offset,
       myReport: current.reports.find(r => r.by === entrantId)?.result ?? null,
       opponentReport: current.reports.find(r => r.by !== entrantId)?.result ?? null } : null };
 }

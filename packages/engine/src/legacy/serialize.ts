@@ -47,7 +47,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     const id = String(next++); used.add(id); return padMemberId(id);
   }
   const ids = new Map<string, string>();
-  const assigned = new Set<string>();
+  const assigned = new Set<string>((state.teams ?? []).map(t => t.id));
   for (const p of state.players) {
     const normalized = p.memberId === null ? null : normalizeMemberId(p.memberId);
     const id = normalized && normalized !== "0" && !assigned.has(normalized) ? padMemberId(normalized) : temporaryId();
@@ -73,9 +73,17 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     return lost?.number ?? Math.max(1, current);
   }
   const staffIds = new Map(state.staff.map(s => [s.id, temporaryId()]));
+  const legacyStaff = state.legacyStaff ?? [];
+  const legacyStaffIds = legacyStaff.map(s => {
+    const normalized = s.memberId === null ? null : normalizeMemberId(s.memberId);
+    if (normalized && normalized !== "0" && !used.has(normalized) && !assigned.has(normalized)) {
+      used.add(normalized); return padMemberId(normalized);
+    }
+    return temporaryId();
+  });
   const staffEntries = [
     ...state.staff.map(s => ({ Player: playerXml(staffIds.get(s.id)!, names(s.name)), XmlStaffPositionCode: staffPositionCode(s.position ?? ROLE_POSITIONS[s.role]) })),
-    ...(state.legacyStaff ?? []).map(s => ({ Player: playerXml(s.memberId && !used.has(s.memberId) ? padMemberId(s.memberId) : temporaryId(), names(s.name)), XmlStaffPositionCode: staffPositionCode(s.position) })),
+    ...legacyStaff.map((s, i) => ({ Player: playerXml(legacyStaffIds[i], names(s.name)), XmlStaffPositionCode: staffPositionCode(s.position) })),
   ];
   function rosterFields(p: Player) {
     const row = rows.get(p.id);
@@ -109,8 +117,9 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
       const label = infraction?.label ?? p.infractionId;
       const legacyName = infractionNames.includes(label) ? label : Object.hasOwn(defaultInfractionNames, p.infractionId) ? defaultInfractionNames[p.infractionId] : "None";
       const judge = state.staff.find(s => s.id === p.judge || s.name === p.judge);
+      const legacyJudge = legacyStaff.findIndex(s => s.name === p.judge || s.memberId === p.judge);
       return { Infraction: legacyName, InfractionCode: "08", PenaltyCode: penaltyCode(p.penalty), Player: idFor(p.playerId),
-        Judge: judge ? staffIds.get(judge.id) : "0000000000", Round: p.round ?? 0,
+        Judge: judge ? staffIds.get(judge.id) : legacyJudge >= 0 ? legacyStaffIds[legacyJudge] : "0000000000", Round: p.round ?? 0,
         Notes: legacyName === "None" && label !== "None" ? `[Infraction: ${label}]${p.notes ? ` ${p.notes}` : ""}` : p.notes ?? "" };
     }) },
     Location: { Id: location?.id ?? "00000000-0000-0000-0000-000000000000", Name: location?.name ?? state.settings.location ?? "", Address1: location?.address1 ?? "", Address2: location?.address2 ?? "", City: location?.city ?? "", State: location?.state ?? "", Country: location?.country ?? "", Zip: location?.postal ?? "", Phone: location?.phone ?? "", WebSite: location?.website ?? "" },
