@@ -137,7 +137,9 @@ describe("Swiss cuts and integrity", () => {
     s = run(s, { type: "SwissCut", mode: "min_points", value: 3 });
     s = run(s, { type: "UndoSwissCut" });
     expect(s.players.map(p => p.status)).toEqual(["active", "cut", "active", "active"]);
-    expect(run(s, { type: "UndoSwissCut" })).toEqual(original);
+    const initialUndo = run(s, { type: "UndoSwissCut" });
+    expect({ ...initialUndo, activityLog: original.activityLog }).toEqual(original);
+    expect(initialUndo.activityLog?.at(-1)?.action).toBe("UndoSwissCut");
     const cancelledCutRound = run(run(s, { type: "CancelRound" }), { type: "UndoSwissCut" });
     expect(cancelledCutRound.players.every(p => p.status === "active")).toBe(true);
     expect(cancelledCutRound.swissCuts).toEqual([]);
@@ -147,7 +149,9 @@ describe("Swiss cuts and integrity", () => {
     s = run(s, { type: "CancelRound" });
     expect(s.players.every(p => p.status === "active")).toBe(true);
     expect(s.swissCuts[0].roundPairedAfter).toBe(false);
-    expect(run(s, { type: "UndoSwissCut" })).toEqual(original);
+    const fullyUndone = run(s, { type: "UndoSwissCut" });
+    expect({ ...fullyUndone, activityLog: original.activityLog }).toEqual(original);
+    expect(fullyUndone.activityLog?.at(-1)?.action).toBe("UndoSwissCut");
   });
 
   it("restores cuts at the rollback boundary while retaining earlier cuts, drops and results", () => {

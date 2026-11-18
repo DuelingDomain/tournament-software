@@ -1,5 +1,5 @@
 import { timingSafeEqual, createHash } from "node:crypto";
-import { publicView } from "@dd-tournament/engine";
+import { publicView, printData } from "@dd-tournament/engine";
 import { z } from "zod";
 import { currentUser, signedIn } from "./auth";
 import { lookupAccounts, searchAccounts, setMemberId } from "./bridge";
@@ -95,6 +95,11 @@ export function handleApi(request: Request, path: string[]) {
       await lookupAccounts([...event.state.players.flatMap(p => p.userId === null ? [] : [p.userId]), ...event.state.staff.map(s => s.userId)]);
       return json(deskView(event, role));
     }
+    if (path.length === 3 && action === "activity" && method === "GET") {
+      const { event } = staff(request, code);
+      return json({ activity: [...(event.state.activityLog ?? [])].reverse(), version: event.version });
+    }
+    if (path.length === 3 && action === "print-data" && method === "GET") return json(printData(staff(request, code).event.state));
     if (path.length === 3 && action === "commands" && method === "POST") {
       const { user, event } = staff(request, code);
       const data = await body(request, z.strictObject({ expectedVersion: z.number().int().positive().safe(), command: commandSchema }));

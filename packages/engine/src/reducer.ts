@@ -6,6 +6,7 @@ import { advanceBracket, initialBracket, refreshEliminations } from "./bracket.j
 import { compareStandings, standings } from "./standings.js";
 import { isTemporaryMemberId, normalizeMemberId } from "./member-id.js";
 import { competitors, competitorId, nextTeamId, syncTeamMembers, teamSize, validateTeamMembers } from "./competitors.js";
+import { recordActivity } from "./activity.js";
 import { staffAssignment } from "./staff.js";
 import { integrity } from "./integrity.js";
 
@@ -40,7 +41,9 @@ export function createEvent(settings: Partial<EventSettings> & { name: string },
     requireMemberId: false, allowLateEntry: true, ...settings,
   });
   validateSettings(configured);
-  return { schemaVersion: 1, settings: configured, phase: "registration", players: [], teams: [], rounds: [], cut: [], swissCuts: [], penalties: [], staff: [], createdAt: ctx.now, completedAt: null };
+  const state: EventState = { schemaVersion: 1, settings: configured, phase: "registration", players: [], teams: [], rounds: [], cut: [], swissCuts: [], penalties: [], staff: [], createdAt: ctx.now, completedAt: null };
+  recordActivity(state, "CreateEvent", ctx);
+  return state;
 }
 
 function player(state: EventState, id: string): Player {
@@ -483,7 +486,22 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       if (command.option !== "next_round") {
         const round = currentRound(state);
         requireCondition(!round.matches.some(m => m.p1 === p.id || m.p2 === p.id), "PLAYER_ALREADY_PAIRED", "This player already has a current-round match. Use next round or correct that result.");
-        if (command.option === "swap_with_dropped") {
+        if (command.option === "repair") {
+          const other = competitors(state).find(q => q.id !== p.id && q.status === "active" && !round.matches.some(m => m.p1 === q.id || m.p2 === q.id));
+          addManualMatch(state, round, makeMatch(p.id, other?.id ?? null, round.number, random, ids));
+        } else if (command.option === "swap_previous_opponent") {
+          const former = [...state.rounds].reverse().filter(r => r !== round).flatMap(r => r.matches).find(m => m.p2 !== null && (m.p1 === p.id || m.p2 === p.id));
+          requireCondition(former, "NO_FORMER_OPPONENT", "The returning player has no previous opponent.");
+          const other = player(state, former.p1 === p.id ? former.p2! : former.p1);
+          requireCondition(other.status === "active", "INVALID_SWAP", "The former opponent must still be active.");
+          const match = round.matches.find(m => m.p1 === other.id || m.p2 === other.id);
+          requireCondition(match, "PLAYER_NOT_PAIRED", "The former opponent has no current-round match.");
+          editable(match);
+          drop(state, other.id);
+          if (match.p1 === other.id) match.p1 = p.id; else match.p2 = p.id;
+          match.reports = [];
+          assignTables(round.matches, competitors(state), state.settings.startingTable, true, teamSize(state));
+        } else if (command.option === "swap_with_dropped") {
           const other = player(state, command.swapWith ?? "");
           requireCondition(other.status === "dropped" && other.id !== p.id, "INVALID_SWAP", "Choose another dropped player with an unscored current-round seat.");
           const match = round.matches.find(m => m.p1 === other.id || m.p2 === other.id);
@@ -563,5 +581,6 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
     default: { const exhaustive: never = command; throw new CommandError("UNKNOWN_COMMAND", `Unknown command: ${String(exhaustive)}`); }
   }
   syncTeamMembers(state);
+  recordActivity(state, command.type, ctx, command);
   return state;
 }

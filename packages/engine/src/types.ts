@@ -71,7 +71,7 @@ export interface Player {
 /** Team IDs occupy the reserved numeric team range; member IDs remain person IDs. */
 export interface Team extends Player { memberIds: PlayerId[] }
 export interface TeamEntry { teamId?: string; name: string; memberIds: PlayerId[] }
-export type UndropOption = "bye_loss" | "bye_win" | "next_round" | "swap_with_dropped" | "take_bye";
+export type UndropOption = "bye_loss" | "bye_win" | "next_round" | "swap_with_dropped" | "take_bye" | "repair" | "swap_previous_opponent";
 
 export interface Match {
   id: MatchId;
@@ -120,6 +120,7 @@ export interface EventState {
   players: Player[];
   teams: Team[];
   playerStructureLocked?: boolean;
+  activityLog?: ActivityEntry[];
   rounds: Round[];
   /** Players who made the cut, in seed order. Empty until CutToPlayoff. */
   cut: PlayerId[];
@@ -198,6 +199,23 @@ export type Command =
   | { type: "RemovePenalty"; penaltyId: string };
 
 export type CommandType = Command["type"];
+export interface ActivityEntry { actor: string; at: string; action: CommandType | "CreateEvent" | "ImportTournament" | "ImportPlayers"; command?: Command }
+export interface PrintableCompetitor {
+  id: string; name: string; memberId: string | null;
+  members: { id: string; name: string; memberId: string | null; position: number }[];
+}
+export interface PrintMatch {
+  id: string; round: number; stage: Round["stage"]; table: number | null; tables: number[];
+  p1: PrintableCompetitor; p2: PrintableCompetitor | null; result: MatchResult | null; extensionMinutes: number;
+}
+export interface PrintData {
+  matches: PrintMatch[];
+  pairingsByTeam: { round: number; matchId: string; table: number | null; tables: number[]; team: PrintableCompetitor; opponent: PrintableCompetitor | null; result: MatchResult | null }[];
+  unreportedMatches: PrintMatch[];
+  pairedDownPlayers: { round: number; matchId: string; table: number | null; playerId: string; name: string; points: number;
+    opponentId: string | null; opponentName: string | null; opponentPoints: number | null; isBye: boolean }[];
+  penalties: (Omit<PenaltyEntry, "judge"> & { player: PrintableCompetitor; infraction: string; judge: string | null })[];
+}
 
 export class CommandError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = "CommandError"; }
@@ -234,6 +252,7 @@ export interface IntegrityReport {
 export interface DeskView {
   state: EventState; standings: Standing[]; suggestedRounds: number; version: number;
   integrity: IntegrityReport;
+  printData: PrintData;
   links: { public: string; desk: string; join: string };
   /** The signed-in viewer's role on this event. */
   viewerRole: StaffRole;

@@ -659,3 +659,28 @@ describe("team file interchange", () => {
     expect(await imported.json()).toMatchObject({ imported: 4, desk: { state: { settings: { playerStructure: 1 } } } });
   });
 });
+
+describe("staff operational data", () => {
+  it("keeps command history and print data staff-only and leaves conflicts and errors out of history", async () => {
+    const cookie = await login();
+    const outsider = await login(2);
+    const code = await create(cookie);
+    const before = await api(`events/${code}/activity`, cookie);
+    expect(before.status).toBe(200);
+    const initial = await before.json() as { activity: unknown[] };
+    const failed = await command(code, cookie, 1, { type: "CancelRound" });
+    expect(failed.status).toBe(422);
+    const added = await command(code, cookie, 1, { type: "AddPlayers", players: [{ userId: 1, name: "Account" }, { userId: 2, name: "Account" }] });
+    expect(added.status).toBe(200);
+    expect((await command(code, cookie, 1, { type: "PairNextRound" })).status).toBe(409);
+    const activity = await (await api(`events/${code}/activity`, cookie)).json() as { activity: { action: string; actor: string }[] };
+    expect(activity.activity).toHaveLength(initial.activity.length + 1);
+    expect(activity.activity[0]).toMatchObject({ action: "AddPlayers", actor: "1" });
+    expect((await api(`events/${code}/activity`, outsider)).status).toBe(403);
+    expect((await api(`events/${code}/print-data`)).status).toBe(401);
+    await command(code, cookie, 2, { type: "PairNextRound" });
+    const prints = await (await api(`events/${code}/print-data`, cookie)).json() as { unreportedMatches: unknown[] };
+    expect(prints.unreportedMatches).toHaveLength(1);
+    expect(await (await api(`events/${code}`)).json()).not.toHaveProperty("activityLog");
+  });
+});

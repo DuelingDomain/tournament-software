@@ -1,5 +1,5 @@
 import { randomBytes, randomInt } from "node:crypto";
-import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole, type StaffAssignment, competitors } from "@dd-tournament/engine";
+import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole, type StaffAssignment, competitors, printData, recordActivity } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { isTemporaryMemberId, normalizeMemberId } from "@dd-tournament/engine";
 import { lookupAccounts, searchAccounts } from "./bridge";
@@ -14,7 +14,7 @@ export function context(user: TournamentUser): CommandContext {
 }
 export function deskView(event: EventRecord, role: StaffRole): DeskView {
   return { state: event.state, standings: standings(event.state), suggestedRounds: suggestRounds(competitors(event.state).length),
-    version: event.version, integrity: integrity(event.state), viewerRole: role,
+    version: event.version, integrity: integrity(event.state), printData: printData(event.state), viewerRole: role,
     links: { public: `/e/${event.code}`, desk: `/e/${event.code}/desk`, join: `/e/${event.code}/me` },
     accounts: Object.fromEntries(event.state.players.map(player => {
       const user = player.userId === null ? null : cachedUser(player.userId);
@@ -178,6 +178,8 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
         imported++; if (!account) unmatched++;
       }
     }
+    if (parsed) state.activityLog = structuredClone(event.state.activityLog ?? []);
+    recordActivity(state, parsed ? "ImportTournament" : "ImportPlayers", context(user));
     return { desk: deskView(saveEvent(event, state), requireStaff(event, user.id)), imported, unmatched };
   }).immediate();
 }

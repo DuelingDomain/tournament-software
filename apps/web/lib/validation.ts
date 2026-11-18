@@ -32,7 +32,7 @@ export const settingsSchema = z.strictObject({
 export const partialSettings = settingsSchema.partial();
 const playerId = { playerId: id };
 const matchId = { matchId: id };
-const undropOption = z.enum(["bye_loss", "bye_win", "next_round", "swap_with_dropped", "take_bye"]);
+const undropOption = z.enum(["bye_loss", "bye_win", "next_round", "swap_with_dropped", "take_bye", "repair", "swap_previous_opponent"]);
 const teamEntry = z.strictObject({ teamId: id.optional(), name, memberIds: z.array(id).min(2).max(5) });
 export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("UpdateSettings"), settings: partialSettings, staff: z.array(staffSchema).max(100).optional() }),
