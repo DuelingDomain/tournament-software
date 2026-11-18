@@ -223,7 +223,7 @@ html { scrollbar-color: var(--border-hi) transparent; }
 .dd-dialog::backdrop { background: rgb(10 14 26 / 0.72); }
 .dd-dialog__body { padding: 24px; display: flex; flex-direction: column; gap: 12px; }
 .dd-dialog__title { margin: 0; font: 20px/1.2 var(--font-display); }
-.dd-dialog__actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.dd-dialog__actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 8px; position: sticky; bottom: -24px; padding: 12px 0 24px; margin-bottom: -24px; background: var(--bg-elevated); }
 
 /* Status dot + pip */
 .dd-pip { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); flex: 0 0 auto; }

@@ -428,3 +428,7 @@ details[open] > .dk-sum::before { transform: rotate(45deg); }
   .dk-team-member { grid-template-columns: 1fr 1fr; }
   .dk-team-x { width: 100%; } .dk-team-no { grid-column: 1 / -1; text-align: left; }
 }
+
+/* Undrop preview: Current and New side by side for each pairing that changes. */
+.dk-undrop-change { display: grid !important; grid-template-columns: 1fr auto 1fr; align-items: start !important; gap: 10px !important; }
+.dk-undrop-side { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

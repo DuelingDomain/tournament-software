@@ -156,7 +156,7 @@ export function Desk({ code }: { code: string }) {
     {palette && <Palette actions={actions} onClose={() => setPalette(false)} />}
     {dialog === "timer" && <TimerDialog desk={desk} role={role} send={send} onClose={close} />}
     {dialog === "cut" && <CutDialog desk={desk} send={send} onClose={close} onDone={t => { done(t); go("pairings"); }} />}
-    {dialog === "undrop" && <UndropDialog desk={desk} send={send} onClose={close} onDone={done} />}
+    {dialog === "undrop" && <UndropDialog code={code} desk={desk} send={send} onClose={close} onDone={done} />}
     {dialog === "change" && <ChangeResultDialog desk={desk} send={send} onClose={close} onDone={done} />}
     {dialog === "manual" && <ManualPairingsDialog desk={desk} send={send} onClose={close} />}
     {dialog === "print" && <BatchPrintDialog code={code} onClose={close} />}

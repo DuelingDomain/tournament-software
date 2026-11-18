@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { DeskView, EventState, Match, Player, StaffRole, UndropOption } from "@dd-tournament/engine";
-import { Button, ButtonLink, Dialog, Field, FilePicker, Input, Keycap, Radio, Select, Textarea, matchesAccept } from "../ui";
+import type { DeskView, EventState, Match, MatchPlayerChange, Player, StaffRole, UndropOption } from "@dd-tournament/engine";
+import { CommandError, previewCommand } from "@dd-tournament/engine";
+import { Button, ButtonLink, Checkbox, Dialog, Field, FilePicker, Input, Keycap, Radio, Select, Textarea, matchesAccept } from "../ui";
 import { STAMP_TEXT, byName, clockLabel, competitors, competitorLabel, dropCommand, formatClock, isTeamEvent, playerById, reEnrollCommand, removeCommand, roundTitle, undropCommand } from "./helpers";
 import { can } from "./roles";
 import { MESSAGES, type SendFn } from "./use-desk";
@@ -97,8 +98,10 @@ export function CutDialog({ desk, send, onClose, onDone }: Base & { onDone: (tex
 }
 
 /* ---------- Undrop wizard ---------- */
+const sideText = (m: Match, names: ReturnType<typeof playerById>) =>
+  <span>{m.table !== null ? `Table ${m.table}: ` : ""}{names.get(m.p1)?.name ?? "?"} vs {m.p2 ? names.get(m.p2)?.name ?? "?" : "Bye"}</span>;
 const UNDROP_OPTIONS: UndropOption[] = ["swap_previous_opponent", "take_bye", "bye_win", "bye_loss", "repair", "next_round"];
-export function UndropDialog({ desk, send, onClose, onDone }: Base & { onDone: (t: string) => void }) {
+export function UndropDialog({ code, desk, send, onClose, onDone }: Base & { code: string; onDone: (t: string) => void }) {
   const { state } = desk;
   const round = state.rounds.at(-1);
   const team = isTeamEvent(state);
@@ -107,6 +110,7 @@ export function UndropDialog({ desk, send, onClose, onDone }: Base & { onDone: (
   const [option, setOption] = useState<UndropOption>("bye_loss");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [printNew, setPrintNew] = useState(false);
   const names = playerById(state);
   const player = names.get(playerId);
   const paired = !!round && round.matches.some(m => m.p1 === playerId || m.p2 === playerId);
@@ -132,14 +136,27 @@ export function UndropDialog({ desk, send, onClose, onDone }: Base & { onDone: (
     bye_win: "Bye Opponent - Win", bye_loss: "Bye Opponent - Loss", repair: "Re-Pair as necessary",
     next_round: "Re-enter next round (no match this round)",
   };
+  // "Re-Pair as necessary" shifts pairings: show the matches that change before anything is written.
+  const preview = useMemo<{ changes: MatchPlayerChange[] } | { error: string } | null>(() => {
+    if (effective !== "repair" || !playerId || state.phase === "playoff") return null;
+    try { return { changes: previewCommand(state, undropCommand(team, playerId, "repair"), { now: new Date().toISOString(), seed: 1, actor: "preview" }) }; }
+    catch (e) { return { error: e instanceof CommandError ? e.message : "The new pairings could not be previewed." }; }
+  }, [effective, playerId, state, team]);
+  const changes = preview && "changes" in preview ? preview.changes : [];
+  /** Tables whose pairing is new, for the "Print new result slips" option. */
+  const newTables = [...new Set(changes.flatMap(c => (c.after && c.after.p2 !== null && c.after.table !== null ? [c.after.table] : [])))].sort((a, b) => a - b);
   async function run() {
     setBusy(true); setErr(null);
+    // Open the slips tab now (inside the click) so the browser does not block it after the command returns.
+    const slips = printNew && newTables.length ? window.open("about:blank", "_blank") : null;
+    if (slips) slips.opener = null;
     // One server command per option: it also drops the old opponent or re-pairs where the option needs it.
     const steps: Parameters<SendFn>[0][] = [undropCommand(team, playerId, effective)];
     for (const step of steps) {
       const res = await send(step);
-      if (!res.ok) { setBusy(false); setErr(res.message); return; }
+      if (!res.ok) { slips?.close(); setBusy(false); setErr(res.message); return; }
     }
+    if (slips) slips.location.href = `/e/${encodeURIComponent(code)}/print/slips?tables=${newTables.join(",")}`;
     setBusy(false);
     onDone(`${player?.name ?? competitorLabel(state)} is back in the tournament.`); onClose();
   }
@@ -159,6 +176,16 @@ export function UndropDialog({ desk, send, onClose, onDone }: Base & { onDone: (
           <Radio key={o} name="undrop" label={labels[o]} checked={effective === o} disabled={why[o] !== null} onChange={() => setOption(o)} hint={why[o] ? `(${why[o]})` : undefined} />)}
       </div>
       {effective === "swap_previous_opponent" && prevOpp && oppSeat && <p className="dd-meta" style={{ margin: 0 }}>{prevOpp.name} drops. {player?.name} takes their seat at table {oppSeat.table ?? "?"}.</p>}
+      {preview && "error" in preview && <Err text={preview.error} />}
+      {preview && "changes" in preview && <section className="dk-slip dk-sec" style={{ gap: 6 }} aria-label="Pairings that change">
+        <span className="dd-caps">Current vs New pairings</span>
+        {changes.length === 0 ? <span className="dd-meta">No other pairing changes.</span> : <ul className="dk-dlg-list">{changes.map(c => <li key={c.matchId} className="dk-undrop-change">
+          <span className="dk-undrop-side"><span className="dd-caps">Current</span>{c.before ? sideText(c.before, names) : <span className="dd-meta">No match</span>}</span>
+          <span aria-hidden="true">&rarr;</span>
+          <span className="dk-undrop-side"><span className="dd-caps">New</span>{c.after ? sideText(c.after, names) : <span className="dd-meta">Removed</span>}</span>
+        </li>)}</ul>}
+        {newTables.length > 0 && <Checkbox label="Print new result slips" checked={printNew} onChange={e => setPrintNew(e.target.checked)} hint={`Table${newTables.length > 1 ? "s" : ""} ${newTables.join(", ")}`} />}
+      </section>}
       <Err text={err} />
     </>}
   </Dialog>;
