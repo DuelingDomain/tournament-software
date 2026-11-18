@@ -171,7 +171,7 @@ export function Desk({ code }: { code: string }) {
     {dialog === "drop" && <DropPlayerDialog desk={desk} send={send} onClose={close} onDone={done} />}
     {dialog === "reenroll" && <ReEnrollDialog desk={desk} send={send} onClose={close} onDone={done} />}
     {dialog === "seats" && <SeatsDialog desk={desk} send={send} onClose={close} />}
-    {dialog === "log" && <LogDialog code={code} onClose={close} />}
+    {dialog === "log" && <LogDialog code={code} state={desk.state} onClose={close} />}
     {dialog === "history" && <HistoryDialog state={desk.state} onClose={close} />}
     {importKind && <ImportDialog code={code} kind={importKind} onClose={() => setImportKind(null)} onDone={done} replaceDesk={replaceDesk} />}
 

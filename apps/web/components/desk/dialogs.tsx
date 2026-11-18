@@ -483,7 +483,7 @@ export function AddTestPlayersDialog({ code, desk, replaceDesk, onClose, onDone 
 /* ---------- Recent log entries ---------- */
 type LogEntry = { actor: string; at: string; action: string };
 const logWords = (action: string) => action.replace(/([a-z])([A-Z])/g, "$1 $2");
-export function LogDialog({ code, onClose }: Close & { code: string }) {
+export function LogDialog({ code, state, onClose }: Close & { code: string; state: EventState }) {
   const [rows, setRows] = useState<LogEntry[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -498,6 +498,14 @@ export function LogDialog({ code, onClose }: Close & { code: string }) {
     })();
     return () => { alive = false; };
   }, [code]);
+  // The log stores the account id. Show the staff or player name when we know it.
+  const names = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of state.players) if (p.userId !== null) m.set(String(p.userId), p.name);
+    for (const t of state.staff) m.set(String(t.userId), t.name);
+    return m;
+  }, [state]);
+  const who = (actor: string) => names.get(actor) ?? (/^\d+$/.test(actor) ? `Account #${actor}` : actor);
   const when = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "medium" }); };
   return <Dialog open onClose={onClose} title="Recent Log Entries" actions={<Button onClick={onClose} autoFocus>Close</Button>}>
     <Wide />
@@ -506,7 +514,7 @@ export function LogDialog({ code, onClose }: Close & { code: string }) {
     {rows && rows.length === 0 && <p className="dd-meta" style={{ margin: 0 }}>Nothing has been logged yet.</p>}
     {rows && rows.length > 0 && <div className="dk-log" role="table" aria-label="Recent log entries">
       <div role="row" className="dk-log-row dk-log-head dd-caps"><span role="columnheader">Time</span><span role="columnheader">Who</span><span role="columnheader">Action</span></div>
-      {rows.map((r, i) => <div role="row" key={i} className="dk-log-row"><span role="cell">{when(r.at)}</span><span role="cell">{r.actor}</span><span role="cell">{logWords(r.action)}</span></div>)}
+      {rows.map((r, i) => <div role="row" key={i} className="dk-log-row"><span role="cell">{when(r.at)}</span><span role="cell">{who(r.actor)}</span><span role="cell">{logWords(r.action)}</span></div>)}
     </div>}
   </Dialog>;
 }
