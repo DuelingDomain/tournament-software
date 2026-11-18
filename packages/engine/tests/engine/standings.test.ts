@@ -65,15 +65,16 @@ describe("hand-computed Swiss standings", () => {
     expect([a.matchPoints, a.omw, a.oomw]).toEqual([4, 70.3, 24.6]);
   });
 
-  it("freezes tiebreakers through the previous round while points update", () => {
-    const s = run(twoRounds(), { type: "PairNextRound" });
-    const before = standings(s);
-    const changed = run(s, { type: "EnterResult", matchId: s.rounds[2].matches[0].id, result: "p1" });
-    for (const row of standings(changed)) {
-      const old = before.find(r => r.playerId === row.playerId)!;
-      expect([row.omw, row.oomw]).toEqual([old.omw, old.oomw]);
-    }
-    expect(standings(changed).reduce((sum, r) => sum + r.matchPoints, 0)).toBe(14);
+  it("uses the selected round for points, tiebreaks, and dropped-player visibility", () => {
+    const s = fixture([[[0, 1, "p1"], [2, 3, "p1"]], [[0, 2, "p1"], [1, 3, null]]]);
+    const a = s.players[0].id;
+    const b = s.players[1].id;
+    Object.assign(s.players[0], { status: "dropped", droppedAfterRound: 2 });
+    expect(standings(s).find(row => row.playerId === a)).toMatchObject({ matchPoints: 6, omw: 25, oomw: 50 });
+    expect(standings(s).find(row => row.playerId === b)).toMatchObject({ omw: 50, record: { wins: 0, draws: 0, losses: 1 } });
+    expect(standings(s, { throughRound: 1, includeDropped: false }).find(row => row.playerId === a))
+      .toMatchObject({ matchPoints: 3, omw: 0 });
+    expect(standings(s, { includeDropped: false })[0]).toMatchObject({ playerId: s.players[2].id, rank: 1 });
   });
 
   it("assigns competition ranks 1,2,2,4 using the published truncated keys", () => {

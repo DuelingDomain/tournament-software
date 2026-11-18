@@ -239,10 +239,9 @@ function swapCurrentOpponents(round: Round, a: string, b: string): void {
 function orderAtCut(state: EventState, size: number, tieOrder: string[] | undefined, random: () => number) {
   const rows = standings(state).filter(s => s.status === "active");
   let start = size - 1, end = size;
-  const cutSet = new Set<string>();
-  if (size > 0 && rows[size] && compareStandings(rows[size - 1], rows[size], cutSet) === 0) {
-    while (start > 0 && compareStandings(rows[start - 1], rows[size - 1], cutSet) === 0) start--;
-    while (end < rows.length && compareStandings(rows[end], rows[size - 1], cutSet) === 0) end++;
+  if (size > 0 && rows[size] && compareStandings(rows[size - 1], rows[size]) === 0) {
+    while (start > 0 && compareStandings(rows[start - 1], rows[size - 1]) === 0) start--;
+    while (end < rows.length && compareStandings(rows[end], rows[size - 1]) === 0) end++;
     const tied = rows.slice(start, end);
     const order = tieOrder ?? shuffle(tied.map(s => s.playerId), random);
     requireCondition(order.length === tied.length && new Set(order).size === tied.length && order.every(id => tied.some(s => s.playerId === id)), "INVALID_TIE_ORDER", "Tie order must list every player tied across the cut line exactly once.");

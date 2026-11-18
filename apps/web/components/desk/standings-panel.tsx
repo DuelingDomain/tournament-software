@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { standings as computeStandings, type DeskView, type StaffRole } from "@dd-tournament/engine";
 import { Checkbox, Field, Select } from "../ui";
-import { competitorLabel, isTeamEvent, membersOf, playerById, roundTitle, standingsThrough, statusText } from "./helpers";
+import { competitorLabel, isTeamEvent, membersOf, playerById, roundTitle, statusText } from "./helpers";
 import { PointsControl } from "./points-control";
 import { can } from "./roles";
 import type { SendFn } from "./use-desk";
@@ -21,10 +21,8 @@ export function StandingsPanel({ desk, role, send, notify, includeDropped, setIn
   const last = state.rounds.at(-1)?.number ?? 0;
   const [picked, setPicked] = useState<number | null>(null);
   const through = picked !== null && picked <= last ? picked : last;
-  const rows = useMemo(() => {
-    const list = through === last ? desk.standings : standingsThrough(state, computeStandings, through);
-    return includeDropped ? list : list.filter(s => s.status === "active");
-  }, [desk.standings, state, through, last, includeDropped]);
+  const rows = useMemo(() => through === last && includeDropped ? desk.standings
+    : computeStandings(state, { throughRound: through, includeDropped }), [desk.standings, state, through, last, includeDropped]);
   const cut = state.settings.format === "swiss" && state.phase !== "playoff" && state.settings.topCut > 0 ? state.settings.topCut : 0;
   const playoffs = state.rounds.some(r => r.stage === "playoff");
   const selectedRound = state.rounds.find(r => r.number === through);
@@ -39,7 +37,7 @@ export function StandingsPanel({ desk, role, send, notify, includeDropped, setIn
         </Select>
       </Field>
       <Checkbox label={team ? "Include Dropped Teams" : "Include Dropped Players"} checked={includeDropped} onChange={e => setIncludeDropped(e.target.checked)} />
-      <span className="dd-meta" style={{ marginLeft: "auto" }}>{partial ? "Round in progress: standings include only reported matches." : state.settings.tiebreak === "floor33" ? "Tiebreaks: opponent win % floored at 33.3%." : "Tiebreaks: legacy opponent win %."}</span>
+      <span className="dd-meta" style={{ marginLeft: "auto" }}>{partial ? "Round in progress. Tiebreaks include all pairings." : state.settings.tiebreak === "floor33" ? "Tiebreaks: opponent win % floored at 33.3%." : "Tiebreaks: legacy opponent win %."}</span>
     </div>
     <div className="dd-scroll-x"><div className="dk-table" style={{ "--w": open ? "760px" : "640px" } as React.CSSProperties}>
       <div aria-hidden="true" className="dk-sh dd-caps" data-pts={open}><span>Rank</span><span>{who}</span><span className="dk-num">Points</span><span className="dk-num">W-L-D</span><span className="dk-num">OMW%</span><span className="dk-num">OOMW%</span>{open && <span className="dk-num">Open points</span>}</div>

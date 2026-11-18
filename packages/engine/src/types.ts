@@ -287,7 +287,7 @@ export interface ScorekeeperEngine {
   createEvent(settings: Partial<EventSettings> & { name: string }, ctx: CommandContext): EventState;
   applyCommand(state: EventState, command: Command, ctx: CommandContext): EventState; // throws CommandError; never mutates input
   previewCommand(state: EventState, command: Command, ctx: CommandContext): MatchPlayerChange[];
-  standings(state: EventState): Standing[];
+  standings(state: EventState, options?: import("./standings.js").StandingsOptions): Standing[];
   suggestRounds(playerCount: number): number;
   publicView(state: EventState, version: number): PublicView;
   integrity(state: EventState): IntegrityReport;

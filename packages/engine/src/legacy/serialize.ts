@@ -2,7 +2,7 @@ import { CommandError, type EventState, type Penalty, type Player } from "../typ
 import { normalizeMemberId, padMemberId } from "../member-id.js";
 import { teamSize } from "../competitors.js";
 import { ROLE_POSITIONS, staffPositionCode } from "../staff.js";
-import { standings } from "../standings.js";
+import { encodedPoints, playoffWins, standings } from "../standings.js";
 import { LEGACY_SOFTWARE_VERSION, type LegacyPlayer } from "./parse.js";
 import { buildXml } from "./xml.js";
 import { defaultInfractionNames, infractionNames } from "./infractions.js";
@@ -56,6 +56,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   }
   const rows = new Map(standings({ ...state, settings: { ...state.settings, tiebreak: "legacy" } }).map(s => [s.playerId, s]));
   const current = state.rounds.at(-1)?.number ?? 0;
+  const wins = playoffWins(state, current);
   const firstPlayoff = state.rounds.find(r => r.stage === "playoff");
   function dropRound(p: Player): number {
     if (p.status === "active") return 0;
@@ -82,8 +83,8 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   function rosterFields(p: Player) {
     const row = rows.get(p.id);
     return { DropRound: dropRound(p), Rank: row?.rank ?? 0,
-      PlayoffPoints: state.rounds.filter(r => r.stage === "playoff").flatMap(r => r.matches).filter(m => (m.p1 === p.id && (m.result === "p1" || m.result === "bye_win")) || (m.p2 === p.id && m.result === "p2")).length,
-      Wins: row?.matchPoints ?? 0, Points: row ? row.matchPoints * 1000000 + Math.round(row.omw * 10) * 1000 + Math.round(row.oomw * 10) : 0, OpenDueling: p.openDuelingPoints ?? 0,
+      PlayoffPoints: wins.get(p.id) ?? 0,
+      Wins: row?.matchPoints ?? 0, Points: row ? encodedPoints(row) : 0, OpenDueling: p.openDuelingPoints ?? 0,
       DropReason: p.status === "active" ? "Active" : p.status === "dropped" ? "Drop" : state.cut.includes(p.id) ? "PlayoffCut" : "Cut",
       AssignedSeat: p.fixedTable ?? -1, Notes: p.notes ?? "" };
   }
@@ -105,7 +106,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     Name: state.settings.name, ID: opts.eventId ?? state.legacyEventId ?? "X99-000000", TournamentStyleCode: ({ advanced: "01", traditional: "02", sealed: "03", open_dueling: "04" } as const)[state.settings.style ?? "advanced"],
     StructureCode: state.settings.format === "single_elim" ? "02" : state.settings.format === "open_dueling" ? "03" : "01", EventTypeCode: "01", PlayerStructure: String(teamSize(state)).padStart(2, "0"),
     ReferenceDateTime: "2003-01-02", Date: date.slice(0, 10), Time: date.slice(11, 16), CurrentRound: current,
-    TableOffset: tableOffset, PlayoffRound: firstPlayoff?.number ?? 0, SoftwareVersion: LEGACY_SOFTWARE_VERSION, Finalized: state.phase === "complete" ? "True" : "False",
+    TableOffset: tableOffset, PlayoffRound: state.settings.format === "single_elim" ? 0 : firstPlayoff?.number ?? 0, SoftwareVersion: LEGACY_SOFTWARE_VERSION, Finalized: state.phase === "complete" ? "True" : "False",
     Staff: { XmlStaffArray: { XmlStaff: staffEntries } },
     PenaltyList: { PlayerPenalty: state.penalties.map(p => {
       const infraction = state.settings.infractions.find(i => i.id === p.infractionId);

@@ -94,7 +94,7 @@ describe("bracket golden fixtures", () => {
     expect(s.cut).not.toEqual(source.players.map(p => p.id));
     expect(s.rounds[0].matches.filter(m => m.p2 === null).map(m => m.p1)).toEqual([s.cut[0], s.cut[1]]);
     expect(s.rounds[0].matches.filter(m => m.p2 !== null).map(m => m.table)).toEqual([11, 13]);
-    expect(standings(s).every(r => r.matchPoints === 0)).toBe(true);
+    expect(standings(s).map(r => r.matchPoints)).toEqual([3, 3, 0, 0, 0, 0]);
     expect(run(s, { type: "CancelRound" }).phase).toBe("registration");
   });
 

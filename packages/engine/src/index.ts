@@ -6,6 +6,7 @@ import { integrity } from "./integrity.js";
 import { previewCommand } from "./preview.js";
 
 export { applyCommand, previewCommand, createEvent, standings, suggestRounds, playerView, publicView, integrity };
+export type { StandingsOptions } from "./standings.js";
 export * from "./member-id.js";
 export { DEFAULT_INFRACTIONS } from "./defaults.js";
 export * from "./types.js";
