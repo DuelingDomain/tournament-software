@@ -2,7 +2,7 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import { competitors, publicView, printData, suggestRounds } from "@dd-tournament/engine";
 import { z } from "zod";
 import { currentUser, signedIn } from "./auth";
-import { lookupAccounts, searchAccounts, setMemberId } from "./bridge";
+import { lookupAccounts, searchOrganizerAccounts, setMemberId } from "./bridge";
 import { cachedUser, database, eventRecord, eventRecords } from "./db";
 import { deskView, importEvent, joinEvent, newEvent, openTournamentAsNewEvent, playerCommand, playerResponse, resolveCommand, runCommand, runDummyData } from "./events";
 import { csvDownload, exportEvent } from "./exports";
@@ -121,18 +121,13 @@ export function handleApi(request: Request, path: string[]) {
     }
     if (path[0] === "accounts") {
       // Searching while creating a tournament has no event yet; any signed-in organizer may look accounts up then.
-      if (path.length === 2 && path[1] === "search" && method === "GET" && !url.searchParams.has("event")) {
-        signedIn(request);
+      if (path.length === 2 && path[1] === "search" && method === "GET") {
+        const ownerId = url.searchParams.has("event") ? codeForAccounts(request).event.ownerUserId : signedIn(request).id;
         const query = z.string().max(200).parse(url.searchParams.get("q") ?? "");
-        const users = await searchAccounts(query);
+        const users = await searchOrganizerAccounts(ownerId, query);
         return json({ users: users.map(({ id, ...user }) => ({ userId: id, ...user })) });
       }
       const access = codeForAccounts(request);
-      if (path.length === 2 && path[1] === "search" && method === "GET") {
-        const query = z.string().max(200).parse(url.searchParams.get("q") ?? "");
-        const users = await searchAccounts(query);
-        return json({ users: users.map(({ id, ...user }) => ({ userId: id, ...user })) });
-      }
       if (path.length === 3 && path[2] === "member-id" && method === "PUT") {
         // Editing the global account profile follows the event's player-edit permission.
         requireCommand(access.event, access.user.id, { type: "UpdatePlayer", playerId: "profile" });

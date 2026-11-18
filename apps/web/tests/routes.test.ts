@@ -621,6 +621,33 @@ describe("legacy files and service bridge", () => {
     expect(received).toContain('POST /api/tournament-bridge/users/lookup {"ids":[1]}');
     expect(received).toContain('PUT /api/tournament-bridge/users/1/member-id {"memberId":"101"}');
   });
+  it("lists a bounded set of the organizer's known accounts for an empty search", async () => {
+    const owner = await login(); const staff = await login(2); const other = await login(3);
+    const code = await create(owner);
+    expect((await (await api(`accounts/search?event=${code}&q=`, owner)).json()).users).toHaveLength(names.length);
+    const previous = await create(owner);
+    expect((await command(previous, owner, 1, { type: "AddPlayers", players: [{ userId: 4, name: "Player" }] })).status).toBe(200);
+    expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Scorekeeper", role: "scorekeeper" })).status).toBe(200);
+
+    process.env.DD_APP_URL = "https://service.example.test";
+    const matches = Array.from({ length: 100 }, (_, i) => ({ ...user(), id: i + 10, displayName: `Search Result ${i}` }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ users: matches }));
+    const ids = async (cookie: string, path = "accounts/search?q=") => {
+      const response = await api(path, cookie);
+      expect(response.status).toBe(200);
+      return z.object({ users: z.array(z.object({ userId: z.number() })) }).parse(await response.json()).users.map(u => u.userId);
+    };
+    const path = `accounts/search?event=${code}&q=`;
+    expect(await ids(staff, path)).toEqual([1, 2, 4]);
+    expect((await api(path, other)).status).toBe(403);
+    expect((await ids(staff, `${path}search`))).toHaveLength(matches.length);
+    const listed = await ids(owner, path);
+    expect(listed).toHaveLength(100);
+    expect(listed.slice(0, 3)).toEqual([1, 2, 4]);
+    expect(await ids(staff)).toEqual([2]);
+    expect(await ids(other)).toEqual([3]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
 });
 
 

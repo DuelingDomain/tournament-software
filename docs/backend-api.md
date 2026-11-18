@@ -60,6 +60,10 @@ A `Location` has `{ id, name, address1, address2, city, state, postal, country, 
 
 Only the location owner can edit/delete; another user's ID returns 404. Setting `settings.locationId` selects a saved location owned by the event organizer and copies its name/details into the event. Null clears the selection and snapshot. Editing the saved list preserves existing event snapshots; select the same ID again to refresh a snapshot. Legacy imports retain embedded snapshots without granting ownership of a saved location.
 
+## Account lookup
+
+`GET /api/accounts/search` uses the signed-in organizer's account. With `event=:code`, event staff can search on behalf of its organizer. A blank `q` lists up to 100 known accounts by display name, including the organizer, linked players and staff from the organizer's events, and prior search results. Nonempty queries search the account service and add the results to the organizer's known accounts.
+
 ## Team commands
 
 Enroll people through the existing account-based `AddPlayers` command, self-join, practice data or player-file import, then enroll teams using the resulting player IDs. In team events these people do not receive individual match backfills. `teams` holds competitors; `players` continues to hold people with their account links.

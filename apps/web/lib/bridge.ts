@@ -2,7 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { normalizeMemberId, memberIdCheckDigitOk } from "@dd-tournament/engine";
 import { appUrl, mockEnabled, secret } from "./config";
-import { cacheUser } from "./db";
+import { cacheUser, knownAccounts, rememberAccounts } from "./db";
 import { HttpError } from "./http";
 import { tournamentUserSchema, type TournamentUser } from "./validation";
 
@@ -72,6 +72,17 @@ export async function searchAccounts(query: string) {
     .some(value => value?.toLowerCase().includes(query.trim().toLowerCase()))).slice(0, 20)
     : parseBridge(z.object({ users: z.array(tournamentUserSchema) }), await bridgeRequest("GET", `/api/tournament-bridge/users/search?${new URLSearchParams({ q: query })}`)).users;
   users.forEach(cacheUser);
+  return users;
+}
+const KNOWN_ACCOUNT_LIMIT = 100;
+export async function searchOrganizerAccounts(ownerId: number, query: string) {
+  if (!query.trim()) {
+    return mockEnabled()
+      ? [...fakeUsers].sort((a, b) => a.displayName.localeCompare(b.displayName) || a.id - b.id).slice(0, KNOWN_ACCOUNT_LIMIT)
+      : knownAccounts(ownerId, KNOWN_ACCOUNT_LIMIT);
+  }
+  const users = await searchAccounts(query);
+  rememberAccounts(ownerId, users);
   return users;
 }
 export async function lookupAccounts(ids: number[]) {
