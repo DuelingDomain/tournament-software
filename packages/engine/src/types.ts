@@ -62,7 +62,7 @@ export interface Player {
   status: "active" | "dropped" | "cut";
   droppedAfterRound: number | null;
   enteredRound: number; // 1 for normal entry; >1 for late entry
-  fixedTable: number | null; // accessibility seat; honoured in Swiss
+  fixedTable: number | null; // accessibility seat, required in Swiss and preferred in playoffs
   openDuelingPoints?: number;
   checkedIn: boolean;
   notes: string | null;
@@ -86,7 +86,7 @@ export interface Match {
   extensionMinutes: number;
 }
 
-/** Participant edits, including match creation (before null) and removal (after null). */
+/** Participant edits and cleared results. Creation has before null and removal has after null. */
 export interface MatchPlayerChange {
   matchId: MatchId;
   before: Match | null;

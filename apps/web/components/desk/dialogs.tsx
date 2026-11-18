@@ -187,7 +187,11 @@ export function UndropDialog({ code, desk, send, onClose, onDone }: Base & { cod
       {preview && "changes" in preview && <section className="dk-slip dk-sec" style={{ gap: 6 }} aria-label="Pairings that change">
         <span className="dd-caps">Current vs New pairings</span>
         {changes.length === 0 ? <span className="dd-meta">No other pairing changes.</span> : <ul className="dk-dlg-list">{changes.map(c => <li key={c.matchId} className="dk-undrop-change">
-          <span className="dk-undrop-side"><span className="dd-caps">Current</span>{c.before ? sideText(c.before, names) : <span className="dd-meta">No match</span>}</span>
+          <span className="dk-undrop-side">
+            <span className="dd-caps">Current</span>
+            {c.before ? sideText(c.before, names) : <span className="dd-meta">No match</span>}
+            {c.before?.result && c.after?.result == null && <span className="dd-meta">{c.before.result === "bye_win" ? "Bye win" : STAMP_TEXT[c.before.result]} will be cleared</span>}
+          </span>
           <span aria-hidden="true">&rarr;</span>
           <span className="dk-undrop-side"><span className="dd-caps">New</span>{c.after ? sideText(c.after, names) : <span className="dd-meta">Removed</span>}</span>
         </li>)}</ul>}
