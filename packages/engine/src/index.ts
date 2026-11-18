@@ -15,5 +15,6 @@ export * from "./staff.js";
 export * from "./competitors.js";
 export { printData } from "./print.js";
 export { recordActivity } from "./activity.js";
+export { isIanaTimeZone } from "./time-zone.js";
 
 export const engine: ScorekeeperEngine = { createEvent, applyCommand, previewCommand, standings, suggestRounds, publicView, playerView, integrity };

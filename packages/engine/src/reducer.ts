@@ -9,6 +9,7 @@ import { competitors, competitorId, nextTeamId, syncTeamMembers, teamForPlayer, 
 import { recordActivity } from "./activity.js";
 import { staffAssignment } from "./staff.js";
 import { integrity } from "./integrity.js";
+import { isIanaTimeZone } from "./time-zone.js";
 
 function requireCondition(condition: unknown, code: string, message: string): asserts condition {
   if (!condition) throw new CommandError(code, message);
@@ -24,6 +25,7 @@ function validateSettings(settings: EventSettings): void {
   requireCondition(["advanced", "traditional", "sealed", "open_dueling"].includes(settings.style), "INVALID_STYLE", "Choose a tournament style.");
   requireCondition([1, 2, 3, 4, 5].includes(settings.playerStructure), "INVALID_PLAYER_STRUCTURE", "Choose a player structure from one through five.");
   requireCondition(settings.startsAt === null || Number.isFinite(Date.parse(settings.startsAt)), "INVALID_TIME", "Choose a valid event date and time.");
+  requireCondition(settings.timeZone === undefined || isIanaTimeZone(settings.timeZone), "INVALID_TIME_ZONE", "Choose a valid IANA time zone.");
   requireCondition(settings.name.trim(), "INVALID_NAME", "Give the event a name.");
   requireCondition(Number.isInteger(settings.startingTable) && settings.startingTable >= 1, "INVALID_TABLE", "Starting table must be a positive integer.");
   requireCondition(Number.isFinite(settings.roundMinutes) && settings.roundMinutes > 0, "INVALID_MINUTES", "Round length must be positive.");

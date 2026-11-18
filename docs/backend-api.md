@@ -25,6 +25,7 @@ format: "swiss" | "single_elim" | "open_dueling"; // pairing structure
 playerStructure: 1 | 2 | 3 | 4 | 5;
 locationId: string | null;
 locationDetails: Location | null;
+timeZone?: string;
 ```
 
 Defaults are advanced, Swiss, individual and no saved location. `startsAt` is the combined date/time in ISO format with an offset. Player structure locks as soon as anyone enrolls, including after roster removal. Existing stored documents receive missing defaults when loaded. Pairing structure remains editable after rounds begin; existing round stages and any ongoing playoff bracket are preserved.
@@ -111,7 +112,7 @@ Organizers, head judges and scorekeepers can correct a player's ID in every phas
 
 Round-trip limits of Save Tournament then Open Tournament: the activity log and account links of staff are not stored; the opened event gets a new code. The event number (`<ID>`, letter, two digits, dash, six digits) is kept inside the event, upper-cased, and written back on save; it is not shown or edited in the app. New events get a random `X99-nnnnnn`. A built-in infraction that shares its legacy name with others is written with that name and its own label in the notes as `[Infraction: label]`, and reads back as itself; a custom infraction is written as `None` with the same tag.
 
-Legacy files do not encode account IDs or timezone offsets. Dates use the existing UTC interpretation and minute precision. Automated synthetic round-trips establish representable data behavior; compatibility with an original desktop installation has not been executed.
+Tournament files store local date and time to the minute and carry no time zone or account IDs. Export formats `startsAt`, or the creation time for unscheduled events, in `settings.timeZone`. The create dialog captures the organizer's IANA time zone, and export uses UTC when the zone is missing. Import interprets dates as UTC.
 
 Tournament XML stores match tables relative to `TableOffset`. Add the offset to a stored match table to get its displayed number. An offset of 6 makes table 1 display as table 7. Fixed seats are stored as displayed numbers. If a match has a table below the configured offset, export lowers the file's offset so the displayed tables survive reopening and all stored match tables are nonnegative.
 

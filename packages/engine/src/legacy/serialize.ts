@@ -3,6 +3,7 @@ import { FIRST_TEMPORARY_MEMBER_ID, MEMBER_ID_LIMIT, isTeamId, normalizeMemberId
 import { teamSize } from "../competitors.js";
 import { ROLE_POSITIONS, staffPositionCode } from "../staff.js";
 import { encodedPoints, playoffWins, standings } from "../standings.js";
+import { isIanaTimeZone } from "../time-zone.js";
 import { LEGACY_SOFTWARE_VERSION, type LegacyPlayer } from "./parse.js";
 import { buildXml } from "./xml.js";
 import { defaultInfractionNames, infractionNames } from "./infractions.js";
@@ -30,6 +31,21 @@ function penaltyCode(penalty: Penalty): string {
     case "match_loss": return "03";
     case "disqualification": return "05";
   }
+}
+
+function localDateAndTime(state: EventState) {
+  const { startsAt, timeZone } = state.settings;
+  const instant = new Date(startsAt && Number.isFinite(Date.parse(startsAt)) ? startsAt : state.createdAt);
+  if (!timeZone || !isIanaTimeZone(timeZone)) {
+    const iso = instant.toISOString();
+    return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+  }
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone, calendar: "iso8601", numberingSystem: "latn", hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(instant);
+  const { year, month, day, hour, minute } = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return { date: `${year.padStart(4, "0")}-${month}-${day}`, time: `${hour}:${minute}` };
 }
 
 export function serializeLegacyTournament(state: EventState, opts: LegacyExportOptions = {}): string {
@@ -107,7 +123,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     Object.assign(roster, { TournPlayer: state.players.filter(p => !enrolled.has(p.id)).map(p => ({ Player: playerXml(idFor(p.id), opts.playerNames?.[p.id] ?? names(p.name)), ...rosterFields(p) })) });
   }
   const location = state.settings.locationDetails;
-  const date = state.settings.startsAt && Number.isFinite(Date.parse(state.settings.startsAt)) ? new Date(state.settings.startsAt).toISOString() : state.createdAt;
+  const { date, time } = localDateAndTime(state);
   const startingOffset = state.settings.startingTable - 1;
   let lowestTable = Infinity;
   for (const round of state.rounds) for (const match of round.matches) {
@@ -117,7 +133,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   return buildXml("Tournament", {
     Name: state.settings.name, ID: opts.eventId ?? state.legacyEventId ?? "X99-000000", TournamentStyleCode: ({ advanced: "01", traditional: "02", sealed: "03", open_dueling: "04" } as const)[state.settings.style ?? "advanced"],
     StructureCode: state.settings.format === "single_elim" ? "02" : state.settings.format === "open_dueling" ? "03" : "01", EventTypeCode: "01", PlayerStructure: String(teamSize(state)).padStart(2, "0"),
-    ReferenceDateTime: "2003-01-02", Date: date.slice(0, 10), Time: date.slice(11, 16), CurrentRound: current,
+    ReferenceDateTime: "2003-01-02", Date: date, Time: time, CurrentRound: current,
     TableOffset: tableOffset, PlayoffRound: state.settings.format === "single_elim" ? 0 : firstPlayoff?.number ?? 0, SoftwareVersion: LEGACY_SOFTWARE_VERSION, Finalized: state.phase === "complete" ? "True" : "False",
     Staff: { XmlStaffArray: { XmlStaff: staffEntries } },
     PenaltyList: { PlayerPenalty: state.penalties.map(p => {

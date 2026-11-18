@@ -78,6 +78,7 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
     set(out, "name", name.trim(), was?.name);
     const startsAt = joinIso(date, time);
     set(out, "startsAt", startsAt, was?.startsAt ?? null);
+    if (!update) out.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (locationEdited) out.locationId = locationId; else set(out, "locationId", locationId, was?.locationId ?? null);
     set(out, "style", style, was?.style);
     set(out, "format", format, was?.format);

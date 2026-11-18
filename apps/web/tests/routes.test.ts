@@ -652,6 +652,17 @@ describe("legacy files and service bridge", () => {
 
 
 describe("tournament configuration", () => {
+  it("exports the scheduled date and time in the event's IANA zone or UTC by default", async () => {
+    const owner = await login(); const startsAt = "2026-07-12T04:15:00Z";
+    const local = await create(owner, { startsAt, timeZone: "America/Los_Angeles" });
+    const utc = await create(owner, { startsAt });
+    const xml = async (code: string) => (await api(`events/${code}/export/tournament`, owner)).text();
+    expect(await xml(local)).toMatch(/<Date>2026-07-11<\/Date>\s*<Time>21:15<\/Time>/);
+    expect(await xml(utc)).toMatch(/<Date>2026-07-12<\/Date>\s*<Time>04:15<\/Time>/);
+    for (const timeZone of ["Invalid/Zone", "+04:00"]) {
+      expect((await api("events", owner, "POST", { name: "Invalid zone", createCode: "", settings: { timeZone } })).status).toBe(400);
+    }
+  });
   it("creates and edits full settings and staff, and protects organizer locations in use", async () => {
     const cookie = await login();
     const other = await login(2);

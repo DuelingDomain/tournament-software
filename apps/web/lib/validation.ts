@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Command, EventSettings } from "@dd-tournament/engine";
+import { isIanaTimeZone, type Command, type EventSettings } from "@dd-tournament/engine";
 
 export const userId = z.number().int().positive().safe();
 const id = z.string().min(1).max(128);
@@ -26,6 +26,7 @@ export const settingsSchema = z.strictObject({
   topCut: z.union([z.literal(0), z.literal(2), z.literal(4), z.literal(8), z.literal(16), z.literal(32), z.literal(64)]),
   tiebreak: z.enum(["floor33", "legacy"]), startingTable: z.number().int().min(1).max(100000),
   roundMinutes: z.number().positive().max(1440), location: z.string().max(500).nullable(), startsAt: z.iso.datetime({ offset: true }).nullable(),
+  timeZone: z.string().refine(isIanaTimeZone).optional(),
   infractions: z.array(z.strictObject({ id, label: name, defaultPenalty: penalty })).max(100),
   publicNames: z.enum(["full", "initials"]), registrationOpen: z.boolean(), requireMemberId: z.boolean(), allowLateEntry: z.boolean(),
 }) satisfies z.ZodType<EventSettings>;
