@@ -45,7 +45,7 @@ export function handleApi(request: Request, path: string[]) {
       if (path.length === 1 && method === "GET") {
         const eventCode = url.searchParams.get("event");
         const ownerId = eventCode ? staff(request, eventCode).event.ownerUserId : user.id;
-        return json({ locations: locations(ownerId) });
+        return json({ locations: locations(ownerId), canEdit: ownerId === user.id });
       }
       if (path.length === 1 && method === "POST") return json(createLocation(user, await body(request, locationFields)), 201);
       if (path.length === 2 && path[1] && method === "PUT") return json(changeLocation(user.id, path[1], await body(request, locationFields)));

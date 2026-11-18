@@ -4,7 +4,7 @@ import { z } from "zod";
 import { Button, ButtonLink, LogoMark, Perforation, Sheet, Slip, Wordmark } from "./ui";
 import { TournamentDialog } from "./desk/tournament-dialog";
 
-const meSchema = z.object({ user: z.object({ displayName: z.string(), username: z.string().optional() }).nullable(), canCreate: z.boolean(), createCodeRequired: z.boolean().default(false) });
+const meSchema = z.object({ user: z.object({ id: z.number(), displayName: z.string(), username: z.string().optional() }).nullable(), canCreate: z.boolean(), createCodeRequired: z.boolean().default(false) });
 const eventsSchema = z.object({ events: z.array(z.object({
   code: z.string(), name: z.string(), phase: z.string(), role: z.string().nullable().optional(), joined: z.boolean().optional(), startsAt: z.string().nullable().optional(),
 })) });
@@ -99,7 +99,7 @@ export function Landing() {
       </Sheet>}
     </div>
     {message && <p role="alert" className="dd-error">{message}</p>}
-    {creating && <TournamentDialog mode="create" createCodeRequired={me.createCodeRequired} onClose={() => setCreating(false)} onCreated={created} />}
+    {creating && <TournamentDialog mode="create" creator={{ userId: me.user.id, name: me.user.displayName }} createCodeRequired={me.createCodeRequired} onClose={() => setCreating(false)} onCreated={created} />}
   </div></div>;
 }
 

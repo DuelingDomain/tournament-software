@@ -257,6 +257,8 @@ export interface DeskView {
   links: { public: string; desk: string; join: string };
   /** The signed-in viewer's role on this event. */
   viewerRole: StaffRole;
+  /** Account id of the event owner (set by the service). */
+  ownerUserId?: number;
   /** Staff-only account details per player (from the service, not the engine). */
   accounts: Record<PlayerId, { userId: number | null; username: string | null; discordUserId: string | null; discordUsername: string | null }>;
 }

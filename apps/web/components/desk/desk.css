@@ -266,7 +266,11 @@
 .dk-tdlg-staff li:only-child:not(:has(button)), .dk-tdlg-find li:not(:has(button)) { padding: 8px 10px; }
 .dk-tdlg-staff button, .dk-tdlg-find button { flex: 1; display: flex; justify-content: space-between; gap: 12px; padding: 6px 10px; min-height: 32px; background: none; border: 0; color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
 .dk-tdlg-staff button[data-selected="true"], .dk-tdlg-find button[data-selected="true"] { background: var(--violet-soft, rgb(139 92 246 / 0.22)); }
-.dk-tdlg-more > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; font-weight: 600; }
+.dk-sum { cursor: pointer; min-height: 32px; display: flex; align-items: center; gap: 8px; font-weight: 600; list-style: none; }
+.dk-sum::-webkit-details-marker { display: none; }
+.dk-sum::before { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform 0.12s; flex: none; margin: 0 3px; }
+details[open] > .dk-sum::before { transform: rotate(45deg); }
+.dk-tdlg-sub { display: flex; flex-direction: column; gap: 10px; min-width: min(420px, 80vw); }
 .dk-tdlg-checks { display: flex; flex-wrap: wrap; gap: 2px 24px; margin-top: 6px; }
 @media (max-width: 560px) { .dk-tdlg-row, .dk-tdlg-row--3 { grid-template-columns: minmax(0, 1fr); } }
 .dd-dialog:has(.dk-tdlg) { max-height: calc(100vh - 24px); overflow-y: auto; }

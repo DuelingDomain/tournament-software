@@ -14,7 +14,7 @@ export function context(user: TournamentUser): CommandContext {
 }
 export function deskView(event: EventRecord, role: StaffRole): DeskView {
   return { state: event.state, standings: standings(event.state), suggestedRounds: suggestRounds(competitors(event.state).length),
-    version: event.version, integrity: integrity(event.state), printData: printData(event.state), viewerRole: role,
+    version: event.version, integrity: integrity(event.state), printData: printData(event.state), viewerRole: role, ownerUserId: event.ownerUserId,
     links: { public: `/e/${event.code}`, desk: `/e/${event.code}/desk`, join: `/e/${event.code}/me` },
     accounts: Object.fromEntries(event.state.players.map(player => {
       const user = player.userId === null ? null : cachedUser(player.userId);
