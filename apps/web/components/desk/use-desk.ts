@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Command, DeskView } from "@dd-tournament/engine";
 import type { DeskCommandResult } from "./helpers";
-import { cacheDesk, cachedDesk } from "./desk-tabs";
+import { cacheDesk, cachedDesk, saveEnded, saveStarted } from "./desk-tabs";
 
 export type LoadState = "loading" | "ready" | "signed_out" | "forbidden" | "missing" | "error";
 export type SendInput = Command | ((desk: DeskView) => Command | null);
@@ -119,7 +119,8 @@ export function useDesk(code: string) {
         return { ok: false, code: "version_conflict", message: MESSAGES.version_conflict! };
       } finally { setSaving(n => n - 1); }
     };
-    const next = queue.current.then(run, run);
+    saveStarted();
+    const next = queue.current.then(run, run).then(r => { saveEnded(r.ok); return r; }, e => { saveEnded(false); throw e; });
     queue.current = next.catch(() => undefined);
     return next;
   }, [base, adopt, code]);
