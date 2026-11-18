@@ -443,7 +443,7 @@ const KEYREF: [string, string][] = [
   ["F1  F2  F3", "Players, Pairings, Standings"], ["F4", "Print player list"], ["F5", "Print pairings (by player)"], ["F6", "Print brackets"],
   ["F7  F8", "Print result slips, standings"], ["F9", "Pair next round"], ["F10", "Re-pair this round"], ["F11", "Cut to playoffs"], ["F12", "Cancel the current round"],
   ["Ctrl + F", "Find a player"], ["Ctrl + K", "Player notes and penalties"], ["Ctrl + M", "Player match history"],
-  ["Ctrl + P", "Batch printing"], ["Ctrl + S", "Save the .Tournament file"], ["Ctrl + O", "Open a .Tournament file"], ["Ctrl + F4", "Close this tournament tab"],
+  ["Ctrl + P", "Batch printing"], ["Ctrl + S", "Save the .Tournament file"], ["Ctrl + O", "Open a .Tournament file"],
   ["Ctrl + .  (Cmd + . on Mac)", "Command palette"],
 ];
 export function KeyboardDialog({ onClose }: Close) {

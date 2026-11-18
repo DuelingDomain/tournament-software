@@ -72,9 +72,9 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
   const noCompetitors = all.length === 0 ? (team ? "No teams yet." : "No players yet.") : undefined;
   const list: Action[] = [
     // File
-    a("new", "New Tournament…", "File", h.newTournament, { keys: "Ctrl+N" }),
+    a("new", "New Tournament…", "File", h.newTournament),
     a("open", "Open Tournament…", "File", () => h.open("open-tournament"), { keys: "Ctrl+O" }),
-    a("close", "Close Tournament", "File", h.closeTab, { keys: "Ctrl+F4" }),
+    a("close", "Close Tournament", "File", h.closeTab),
     a("log", "Show Recent Log Entries…", "File", () => h.open("log")),
     a("save", "Save Tournament", "File", () => h.download("tournament"), { keys: "Ctrl+S", separatorBefore: true }),
     ...(finished ? [a("save-finalized", "Save Finalized Tournament", "File", () => h.download("finalized"))] : []),
@@ -154,7 +154,6 @@ export function actionForKey(e: KeyboardEvent): string | null {
   }
   if (ctrl && !e.altKey && !e.shiftKey) {
     switch (e.key.toLowerCase()) {
-      case "f4": return "close";
       case "f": return "find"; case "k": return "notes"; case "m": return "history";
       case "p": return "print-batch"; case "s": return "save"; case "o": return "open"; case ".": return "palette";
     }
