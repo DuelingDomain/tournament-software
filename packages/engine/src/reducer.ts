@@ -3,7 +3,7 @@ import { DEFAULT_INFRACTIONS } from "./defaults.js";
 import { createRng, randomId, shuffle } from "./rng.js";
 import { assignTables, makeMatch, pairSwiss } from "./pairing.js";
 import { advanceBracket, initialBracket, refreshEliminations } from "./bracket.js";
-import { compareStandings, standings } from "./standings.js";
+import { compareStandings, standings, winner } from "./standings.js";
 import { isTemporaryMemberId, normalizeMemberId } from "./member-id.js";
 import { competitors, competitorId, nextTeamId, syncTeamMembers, teamForPlayer, teamSize, validateTeamMembers } from "./competitors.js";
 import { recordActivity } from "./activity.js";
@@ -209,6 +209,21 @@ function repairUndrop(state: EventState, round: Round, returning: Player, random
     carried = displaced;
   }
   if (carried !== null) round.matches.push(makeMatch(carried, null, round.number, random, ids));
+}
+
+function swapCurrentOpponents(round: Round, a: string, b: string): void {
+  const first = round.matches.find(m => m.p1 === a || m.p2 === a);
+  const second = round.matches.find(m => m.p1 === b || m.p2 === b);
+  requireCondition(first && second, "PLAYER_NOT_PAIRED", "Both players need current-round matches to exchange opponents.");
+  if (first === second) return;
+
+  for (const [match, outgoing, incoming] of [[first, a, b], [second, b, a]] as const) {
+    const winningPlayer = winner(match);
+    if (match.p1 === outgoing) match.p1 = incoming;
+    else match.p2 = incoming;
+    if (winningPlayer === outgoing) match.result = null;
+    match.reports = [];
+  }
 }
 
 function orderAtCut(state: EventState, size: number, tieOrder: string[] | undefined, random: () => number) {
@@ -520,7 +535,11 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       const { round, match } = findMatch(state, command.matchId);
       validateResult(round, match, command.result);
       match.result = command.result; match.reports = [];
-      if (round.stage === "playoff") refreshEliminations(state);
+      if (command.swapPlayers) {
+        requireCondition(match.p2, "INVALID_SWAP", "Choose a match with two competitors to exchange their current opponents.");
+        swapCurrentOpponents(currentRound(state), match.p1, match.p2);
+      }
+      if (round.stage === "playoff" && round === currentRound(state) && command.swapPlayers === undefined) refreshEliminations(state);
       if (command.result !== null && command.drop && command.drop !== "none") {
         if (command.drop === "both" || command.result === "draw" || command.result === "double_loss") {
           drop(state, match.p1); if (match.p2) drop(state, match.p2);

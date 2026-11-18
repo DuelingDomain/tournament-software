@@ -195,7 +195,7 @@ export type Command =
   | { type: "ExtendMatch"; matchId: MatchId; minutes: number }
   | { type: "AdjustPoints"; playerId: PlayerId; delta: number }
   // Results
-  | { type: "EnterResult"; matchId: MatchId; result: MatchResult | null; drop?: "loser" | "both" | "none" } // null clears; works on any round (correction); playoff refuses draw/double_loss
+  | { type: "EnterResult"; matchId: MatchId; result: MatchResult | null; drop?: "loser" | "both" | "none"; swapPlayers?: boolean } // set swapPlayers for a result correction
   | { type: "ReportResult"; playerId: PlayerId; matchId: MatchId; result: MatchResult } // player self-report: applied when both agree; a disagreement stays pending for staff
   | { type: "DropPlayer"; playerId: PlayerId }
   | { type: "UndropPlayer"; playerId: PlayerId; option: UndropOption; swapWith?: PlayerId } // current-round re-entry and pairing options

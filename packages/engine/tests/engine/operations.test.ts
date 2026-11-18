@@ -52,3 +52,22 @@ it("repairs an undrop through the selected score groups, including an existing b
   expect(ended).toHaveLength(2);
   expect(ended[1]).toMatchObject({ p1: ids[7], p2: ids[2], result: null });
 });
+
+it("corrects a past result and exchanges the two players' current opponents atomically", () => {
+  const state = fixture([[[0, 1, "p1"], [2, 3, "draw"]], [[0, 2, "p2"], [1, 3, "p1"]]]);
+  const [a, b, c, d] = state.players.map(p => p.id);
+  Object.assign(state.players[1], { status: "dropped", droppedAfterRound: 2 });
+  const next = run(state, { type: "EnterResult", matchId: "r1m1", result: "p2", swapPlayers: true });
+  expect(next.rounds[0].matches[0]).toMatchObject({ p1: a, p2: b, result: "p2" });
+  expect(next.rounds[1].matches).toMatchObject([
+    { id: "r2m1", p1: b, p2: c, table: 1, result: "p2" },
+    { id: "r2m2", p1: a, p2: d, table: 2, result: null },
+  ]);
+  expect(next.players.map(p => [p.status, p.droppedAfterRound])).toEqual(state.players.map(p => [p.status, p.droppedAfterRound]));
+
+  const playoff = run(event(4), { type: "CutToPlayoff", size: 4 });
+  const match = playoff.rounds[0].matches[0];
+  const scored = run(playoff, { type: "EnterResult", matchId: match.id, result: "p1" });
+  const corrected = run(scored, { type: "EnterResult", matchId: match.id, result: "p2", swapPlayers: false });
+  expect(corrected.players.map(p => p.status)).toEqual(scored.players.map(p => p.status));
+});

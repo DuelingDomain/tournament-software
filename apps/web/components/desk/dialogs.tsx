@@ -270,13 +270,18 @@ export function ChangeResultDialog({ desk, send, onClose, onDone }: Base & { onD
   const [table, setTable] = useState("");
   const [result, setResult] = useState<"p1" | "p2" | "draw" | "double_loss" | "clear">("p1");
   const [drop, setDrop] = useState<"none" | "loser" | "both">("none");
+  const [swapPlayers, setSwapPlayers] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const names = playerById(state);
   const match = state.rounds.find(r => r.number === round)?.matches.find(m => m.table === Number(table));
   const p1 = match && names.get(match.p1)?.name, p2 = match?.p2 ? names.get(match.p2)?.name : null;
+  const currentMatches = state.rounds.at(-1)?.matches ?? [];
+  const first = currentMatches.find(m => match && (m.p1 === match.p1 || m.p2 === match.p1));
+  const second = currentMatches.find(m => match?.p2 && (m.p1 === match.p2 || m.p2 === match.p2));
+  const canSwap = !!first && !!second && first !== second;
   async function run() {
     if (!match) { setErr(`No table ${table || "?"} in round ${round}.`); return; }
-    const res = await send({ type: "EnterResult", matchId: match.id, result: result === "clear" ? null : result, drop: result === "clear" ? "none" : drop });
+    const res = await send({ type: "EnterResult", matchId: match.id, result: result === "clear" ? null : result, drop: result === "clear" ? "none" : drop, swapPlayers: canSwap && swapPlayers });
     if (!res.ok) { setErr(res.message); return; }
     onDone(`Round ${round}, table ${match.table} updated.`); onClose();
   }
@@ -293,6 +298,7 @@ export function ChangeResultDialog({ desk, send, onClose, onDone }: Base & { onD
       <Radio name="cr" label="Double Loss ( / )" checked={result === "double_loss"} onChange={() => setResult("double_loss")} />
       <Radio name="cr" label="Unreported ( $ )" checked={result === "clear"} onChange={() => setResult("clear")} />
     </div>
+    {canSwap && <Checkbox checked={swapPlayers} onChange={e => setSwapPlayers(e.target.checked)} label="Swap players’ current opponents" />}
     <Field label="Also drop"><Select value={drop} onChange={e => setDrop(e.target.value as typeof drop)} disabled={result === "clear"}><option value="none">Nobody</option><option value="loser">The loser</option><option value="both">Both players</option></Select></Field>
     <Err text={err} />
   </Dialog>;

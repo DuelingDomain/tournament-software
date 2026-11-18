@@ -64,7 +64,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("AdjustTimer"), deltaMinutes: z.number().min(-1440).max(1440) }),
   z.strictObject({ type: z.literal("ExtendMatch"), ...matchId, minutes: z.number().min(0).max(1440) }),
   z.strictObject({ type: z.literal("AdjustPoints"), ...playerId, delta: z.number().int().safe() }),
-  z.strictObject({ type: z.literal("EnterResult"), ...matchId, result: result.nullable(), drop: z.enum(["loser", "both", "none"]).optional() }),
+  z.strictObject({ type: z.literal("EnterResult"), ...matchId, result: result.nullable(), drop: z.enum(["loser", "both", "none"]).optional(), swapPlayers: z.boolean().optional() }),
   z.strictObject({ type: z.literal("ReportResult"), ...playerId, ...matchId, result }),
   z.strictObject({ type: z.literal("DropPlayer"), ...playerId }),
   z.strictObject({ type: z.literal("UndropPlayer"), ...playerId, option: undropOption, swapWith: id.optional() }),
