@@ -69,10 +69,23 @@ describe("legacy tournament files", () => {
     expect(xml).toContain("<ID>0012345673</ID>");
     expect(xml).toContain("<Name>Evening &amp; Friends</Name>");
     expect(xml).toContain("<TableOffset>6</TableOffset>");
-    expect(xml).toContain("<Table>1</Table>");
+    expect(Array.from(xml.matchAll(/<Table>(\d+)<\/Table>/g), m => Number(m[1]))).toEqual([1, 2, 1, 2, 3]);
+    expect(parsed.state.rounds.map(r => r.matches.map(m => m.table ?? m.byeTable))).toEqual([[7, 8], [7, 8, 9]]);
     const restored = parseLegacyTournament(xml, context).state;
     expect(observable(restored)).toEqual(observable(parsed.state));
     expect(restored.players.map(p => p.memberId).sort()).toEqual(["12345673", "2", "42", "9999000000"].sort());
+  });
+
+  it("preserves display tables without exporting negative relative tables", () => {
+    let s = event(3, { startingTable: 7 });
+    s = run(s, { type: "UpdatePlayer", playerId: s.players[0].id, fixedTable: 4 });
+    s = run(s, { type: "PairNextRound" });
+    expect(s.rounds[0].matches.map(m => m.table ?? m.byeTable)).toContain(4);
+    const xml = serializeLegacyTournament(s);
+    expect(xml).not.toMatch(/<Table>-/);
+    const restored = parseLegacyTournament(xml, context).state;
+    expect(restored.rounds[0].matches.map(m => m.table ?? m.byeTable))
+      .toEqual(s.rounds[0].matches.map(m => m.table ?? m.byeTable));
   });
 
   it("round-trips an engine playoff with every two-player result and both bye outcomes", () => {

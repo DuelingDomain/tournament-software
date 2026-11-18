@@ -218,7 +218,7 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
   state.rounds = [...rounds.values()].sort((a, b) => a.number - b.number);
   const firstPlayoff = state.rounds.find(r => r.stage === "playoff");
   if (firstPlayoff) {
-    // Bracket table order is preserved; seed order cannot be recovered from the file.
+    // The file supplies match order but does not carry a separate seed list.
     state.cut = [...new Set(firstPlayoff.matches.flatMap(m => m.p2 === null ? [m.p1] : [m.p1, m.p2]))];
     state.settings.topCut = [2, 4, 8, 16, 32, 64].includes(state.cut.length) ? state.cut.length : 0;
   }

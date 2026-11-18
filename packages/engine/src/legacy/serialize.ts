@@ -108,7 +108,12 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   }
   const location = state.settings.locationDetails;
   const date = state.settings.startsAt && Number.isFinite(Date.parse(state.settings.startsAt)) ? new Date(state.settings.startsAt).toISOString() : state.createdAt;
-  const tableOffset = state.settings.startingTable - 1;
+  const startingOffset = state.settings.startingTable - 1;
+  let lowestTable = Infinity;
+  for (const round of state.rounds) for (const match of round.matches) {
+    lowestTable = Math.min(lowestTable, match.table ?? match.byeTable ?? Infinity);
+  }
+  const tableOffset = lowestTable < startingOffset ? lowestTable - 1 : startingOffset;
   return buildXml("Tournament", {
     Name: state.settings.name, ID: opts.eventId ?? state.legacyEventId ?? "X99-000000", TournamentStyleCode: ({ advanced: "01", traditional: "02", sealed: "03", open_dueling: "04" } as const)[state.settings.style ?? "advanced"],
     StructureCode: state.settings.format === "single_elim" ? "02" : state.settings.format === "open_dueling" ? "03" : "01", EventTypeCode: "01", PlayerStructure: String(teamSize(state)).padStart(2, "0"),
