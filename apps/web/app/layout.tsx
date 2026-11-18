@@ -10,5 +10,5 @@ export const metadata = { title: "DD Tournaments", robots: { index: false, follo
 export const dynamic = "force-dynamic";
 
 export default function Layout({ children }: { children: ReactNode }) {
-  return <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}><body>{children}</body></html>;
+  return <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}><body suppressHydrationWarning>{children}</body></html>;
 }
