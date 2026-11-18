@@ -68,7 +68,7 @@ describe("re-entry and manual seats", () => {
     s = run(s, { type: "ReEnroll", playerId: p.id });
     expect(s.players[0]).toMatchObject({ status: "active", droppedAfterRound: null });
     expect(s.rounds.map(r => r.matches.find(m => m.p1 === p.id || m.p2 === p.id)?.result)).toEqual(["p1", "bye_loss", "bye_loss"]);
-    expect(standings(s).find(r => r.playerId === p.id)?.record).toEqual({ wins: 1, losses: 2, draws: 0 });
+    expect(standings(s, { throughRound: 3 }).find(r => r.playerId === p.id)?.record).toEqual({ wins: 1, losses: 2, draws: 0 });
   });
 
   it("swaps into an unscored dropped player's seat and leaves that player unseated", () => {
@@ -126,7 +126,7 @@ describe("re-entry and manual seats", () => {
     s = run(s, { type: "AddByeMatch", playerId: m.p1, result: "bye_loss" });
     s = run(s, { type: "CreateMatch", p1: m.p2!, p2: null });
     expect(s.rounds[0].matches.slice(1).map(m => [m.table, m.result])).toEqual([[null, "bye_loss"], [null, "bye_win"]]);
-    expect(standings(s).find(r => r.playerId === m.p2)?.matchPoints).toBe(3);
+    expect(standings(s, { throughRound: 1 }).find(r => r.playerId === m.p2)?.matchPoints).toBe(3);
   });
 });
 

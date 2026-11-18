@@ -12,7 +12,7 @@ describe("commands and audience views", () => {
     expect(s.rounds.map(r => r.matches.find(m => m.p1 === p.id))).toEqual([
       expect.objectContaining({ result: "bye_loss", p2: null, table: null }), expect.objectContaining({ result: "bye_loss", p2: null, table: null }),
     ]);
-    expect(standings(s).find(r => r.playerId === p.id)?.record).toEqual({ wins: 0, losses: 2, draws: 0 });
+    expect(standings(s, { throughRound: 2 }).find(r => r.playerId === p.id)?.record).toEqual({ wins: 0, losses: 2, draws: 0 });
     s = run(s, { type: "RepairRound" }, 190);
     expect(s.rounds[1].matches.filter(m => m.p1 === p.id || m.p2 === p.id)).toHaveLength(1);
     expect(s.rounds[1].matches.find(m => m.p1 === p.id)?.result).toBe("bye_loss");
@@ -59,7 +59,7 @@ describe("commands and audience views", () => {
     expect(again.rounds).toHaveLength(1);
     expect(again.rounds[0].matches.filter(m => m.p2 !== null).every(m => m.result === null && m.reports.length === 0)).toBe(true);
     expect(again.rounds[0].matches.filter(m => m.p2 === null)).toEqual([expect.objectContaining({ result: "bye_win" })]);
-    expect(standings(again).map(r => r.matchPoints).sort()).toEqual([0, 0, 0, 0, 3]);
+    expect(standings(again, { throughRound: 1 }).map(r => r.matchPoints).sort()).toEqual([0, 0, 0, 0, 3]);
     expect(again.rounds[0].matches.every(m => !entered.rounds[0].matches.some(old => old.id === m.id))).toBe(true);
     expect(entered).toEqual(before);
   });
