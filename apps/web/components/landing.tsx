@@ -4,6 +4,7 @@ import { z } from "zod";
 import { Button, ButtonLink, LogoMark, Perforation, Wordmark } from "./ui";
 import { EventList, eventsSchema, type EventRow } from "./event-list";
 import { TournamentDialog } from "./desk/tournament-dialog";
+import { OpenTournamentDialog } from "./open-tournament";
 
 const meSchema = z.object({ user: z.object({ id: z.number(), displayName: z.string(), username: z.string().optional() }).nullable(), canCreate: z.boolean(), createCodeRequired: z.boolean().default(false) });
 export function Landing() {
@@ -12,6 +13,7 @@ export function Landing() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [message, setMessage] = useState("");
   const [creating, setCreating] = useState(false);
+  const [opening, setOpening] = useState(false);
 
   const [signinError, setSigninError] = useState("");
 
@@ -62,8 +64,9 @@ export function Landing() {
         <Button size="sm" variant="ghost" onClick={signOut}>Sign out</Button>
       </span>
     </header>
-    <EventList events={events} canCreate={me.canCreate} onCreate={() => setCreating(true)} />
+    <EventList events={events} canCreate={me.canCreate} onCreate={() => setCreating(true)} onOpenFile={() => setOpening(true)} />
     {message && <p role="alert" className="dd-error">{message}</p>}
+    {opening && <OpenTournamentDialog createCodeRequired={me.createCodeRequired} onClose={() => setOpening(false)} />}
     {creating && <TournamentDialog mode="create" creator={{ userId: me.user.id, name: me.user.displayName }} createCodeRequired={me.createCodeRequired} onClose={() => setCreating(false)} onCreated={created} />}
   </div>;
 }

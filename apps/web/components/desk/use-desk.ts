@@ -18,6 +18,13 @@ export const MESSAGES: Record<string, string> = {
   internal_error: "Something went wrong on the server.",
   invalid_body: "The server could not read that request.",
   forbidden_origin: "The request was blocked. Reload the page and try again.",
+  legacy_version_too_new: "This file was saved by a newer version of the program. Update the program and try again.",
+  invalid_legacy_xml: "That file is not a tournament file this program can read.",
+  unsupported_legacy_event: "That tournament uses a player structure this program does not support.",
+  invalid_create_code: "The creation code is not correct.",
+  invalid_player_file: "That file is not a player list. Use a .csv, a player list .xml or a .Tournament file.",
+  invalid_file: "Choose a file first.",
+  NOT_FINALIZED: "Finalize the tournament first.",
 };
 
 /** Loads the desk, keeps it fresh (poll every 3s), and serialises every command so

@@ -88,7 +88,7 @@ const EMPTY: Record<Group, string> = {
   all: "You are not part of any event yet. Open an event link from your organizer to join, or create your own.",
 };
 
-export function EventList({ events, canCreate, onCreate }: { events: EventRow[]; canCreate: boolean; onCreate: () => void }) {
+export function EventList({ events, canCreate, onCreate, onOpenFile }: { events: EventRow[]; canCreate: boolean; onCreate: () => void; onOpenFile?: () => void }) {
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Group | null>(null);
   const [page, setPage] = useState(0);
@@ -137,6 +137,7 @@ export function EventList({ events, canCreate, onCreate }: { events: EventRow[];
     <div className="ev-head">
       <h1 id="my-events-h" className="dd-display ev-title">My events</h1>
       <Input type="search" className="dd-input--sm ev-search" placeholder="Search by name" aria-label="Search events by name" value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} />
+      {canCreate && onOpenFile && <Button className="ev-create" onClick={onOpenFile}>Open Tournament file…</Button>}
       {canCreate && <Button variant="rose" className="ev-create" onClick={onCreate}>Create event</Button>}
     </div>
     <Tabs variant="index" label="Event groups" value={group} onChange={id => { setPicked(id as Group); setPage(0); }}

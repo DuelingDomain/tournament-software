@@ -4,12 +4,12 @@ import type { PairInfo } from "./pairings-panel";
 import { can } from "./roles";
 
 export type Panel = "players" | "pairings" | "standings";
-export type DialogKind = "timer" | "cut" | "undrop" | "change" | "manual" | "print" | "keys" | "integrity" | "history" | "notes" | "dummy-players" | "settings" | "judging" | "drop" | "reenroll" | "seats" | "log";
+export type DialogKind = "timer" | "cut" | "undrop" | "change" | "manual" | "print" | "keys" | "integrity" | "history" | "notes" | "dummy-players" | "settings" | "judging" | "drop" | "reenroll" | "seats" | "log" | "open-tournament" | "import-global" | "finalized";
 export type ConfirmKind = "repair" | "cancel" | "finish" | "reopen";
 export type MenuName = "File" | "Tournament" | "Players" | "Pairings" | "Standings" | "Help";
 export const MENUS: MenuName[] = ["File", "Tournament", "Players", "Pairings", "Standings", "Help"];
 export type PrintKind = "pairings" | "pairings-by-player" | "pairings-by-team" | "slips" | "standings" | "players" | "brackets" | "unreported" | "paired-down" | "penalties";
-export type ExportKind = "tournament" | "players-xml" | "players.csv" | "standings.csv" | "matches.csv";
+export type ExportKind = "tournament" | "players-xml" | "players.csv" | "standings.csv" | "matches.csv" | "finalized" | "global-players";
 
 export interface Action {
   id: string; label: string; menu: MenuName; keys?: string; enabled: boolean; reason?: string; run: () => void; separatorBefore?: boolean;
@@ -18,7 +18,7 @@ export interface Action {
 }
 export interface Handlers {
   go: (panel: Panel) => void; open: (dialog: DialogKind) => void; confirm: (kind: ConfirmKind) => void;
-  print: (kind: PrintKind) => void; download: (kind: ExportKind) => void; importFile: (kind: "tournament" | "players" | "team-players") => void;
+  print: (kind: PrintKind) => void; download: (kind: ExportKind) => void; importFile: (kind: "players" | "team-players") => void;
   pair: () => void; palette: () => void; home: () => void; newTournament: () => void; dummyResults: () => void;
 }
 
@@ -73,16 +73,19 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
   const list: Action[] = [
     // File
     a("new", "New Tournament…", "File", h.newTournament, { keys: "Ctrl+N" }),
-    a("open", "Open Tournament…", "File", () => h.importFile("tournament"), { keys: "Ctrl+O", reason: reason("UpdateSettings") }),
+    a("open", "Open Tournament…", "File", () => h.open("open-tournament"), { keys: "Ctrl+O" }),
     a("home", "Close Tournament", "File", h.home),
     a("log", "Show Recent Log Entries…", "File", () => h.open("log")),
     a("save", "Save Tournament", "File", () => h.download("tournament"), { keys: "Ctrl+S", separatorBefore: true }),
+    ...(finished ? [a("save-finalized", "Save Finalized Tournament", "File", () => h.download("finalized"))] : []),
     a("import-players", "Import Players (AllPlayers XML)…", "File", () => h.importFile("players"), { reason: reason("AddPlayers", state.phase !== "registration" && "Players import during registration only.") }),
     a("import-team-players", "Enroll Team Player List into Player Event", "File", () => h.importFile("team-players"), { reason: reason("AddPlayers", team ? "Team player lists import into a tournament with individual players." : state.phase !== "registration" && "Players import during registration only.") }),
+    a("import-global", "Import Player List into Global Player List…", "File", () => h.open("import-global")),
     a("export-players", "Export Players (XML)", "File", () => h.download("players-xml"), { separatorBefore: true }),
     a("export-players-csv", "Export Players (CSV)", "File", () => h.download("players.csv")),
     a("export-standings-csv", "Export Standings (CSV)", "File", () => h.download("standings.csv")),
     a("export-matches-csv", "Export Matches (CSV)", "File", () => h.download("matches.csv")),
+    a("export-global", "Export Global Player List to CSV", "File", () => h.download("global-players")),
 
     // Tournament
     a("settings", "Update Settings…", "Tournament", () => h.open("settings")),

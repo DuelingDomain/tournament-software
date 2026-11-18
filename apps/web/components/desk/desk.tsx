@@ -1,12 +1,13 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { OpenTournamentDialog } from "../open-tournament";
 import { Button, ButtonLink, ConfirmDialog, Dialog, Tabs, type TabItem } from "../ui";
 import "./desk.css";
 import { actionForKey, buildActions, pairInfo, type ConfirmKind, type DialogKind, type ExportKind, type Panel, type PrintKind } from "./actions";
 import { AllPlayersPanel } from "./all-players-panel";
 import { Binder, MenuBar, StatusBar, Tray } from "./chrome";
 import {
-  AddTestPlayersDialog, BatchPrintDialog, ChangeResultDialog, CutDialog, DropPlayerDialog, ReEnrollDialog, SeatsDialog, HistoryDialog, ImportDialog, IntegrityDialog, KeyboardDialog, LogDialog, ManualPairingsDialog, PlayerNotesDialog, TimerDialog, UndropDialog,
+  AddTestPlayersDialog, BatchPrintDialog, ChangeResultDialog, CutDialog, DropPlayerDialog, ReEnrollDialog, SeatsDialog, HistoryDialog, FinalizedDialog, ImportDialog, ImportGlobalDialog, IntegrityDialog, KeyboardDialog, LogDialog, ManualPairingsDialog, PlayerNotesDialog, TimerDialog, UndropDialog,
 } from "./dialogs";
 import { postDummy } from "./dummy";
 import { isTemporaryMemberId } from "@dd-tournament/engine";
@@ -25,9 +26,12 @@ import { useDesk } from "./use-desk";
 /** Fetch the file first, so a failed export shows an error here and never saves the error text as a file. */
 async function downloadExport(code: string, kind: ExportKind, notify: (text: string, bad?: boolean) => void) {
   try {
-    const res = await fetch(`/api/events/${encodeURIComponent(code)}/export/${kind}`, { cache: "no-store" });
+    const res = await fetch(kind === "global-players" ? "/api/players/export" : `/api/events/${encodeURIComponent(code)}/export/${kind}`, { cache: "no-store" });
     if (!res.ok) { notify(res.status === 403 || res.status === 401 ? "You do not have access to this export." : "The export failed. Nothing was saved. Try again.", true); return; }
-    const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? `${code}-${kind}`;
+    const disposition = res.headers.get("Content-Disposition") ?? "";
+    const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+    let name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `${code}-${kind}`;
+    if (encoded) { try { name = decodeURIComponent(encoded); } catch { /* keep the plain name */ } }
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");
     a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
@@ -46,7 +50,7 @@ export function Desk({ code }: { code: string }) {
   const [view, setView] = useState<"all" | "event">("event");
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
-  const [importKind, setImportKind] = useState<"tournament" | "players" | "team-players" | null>(null);
+  const [importKind, setImportKind] = useState<"players" | "team-players" | null>(null);
   const [palette, setPalette] = useState(false);
   const [includeDropped, setIncludeDropped] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -119,6 +123,7 @@ export function Desk({ code }: { code: string }) {
   const sendCmd = async (cmd: Parameters<typeof send>[0], ok: string) => {
     setBusy(true); const r = await send(cmd); setBusy(false); setConfirm(null);
     notify(r.ok ? ok : r.message, !r.ok);
+    return r.ok;
   };
   const close = () => setDialog(null);
   const done = (t: string) => notify(t);
@@ -143,7 +148,7 @@ export function Desk({ code }: { code: string }) {
         {view === "event" && <Tabs className="dk-panel-tabs" variant="index" label="Desk sections" items={tabs} value={active} onChange={id => go(id as Panel)} />}
         {flash?.bad && <p role="alert" className="dk-note dk-note--bad">{flash.text}</p>}
         <div id="dk-panel" role="tabpanel" aria-label={view === "all" ? "All Players" : tabs.find(t => t.id === active)?.label as string} className="dk-sec">
-          {view === "all" ? <AllPlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />
+          {view === "all" ? <AllPlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} onExport={() => void downloadExport(code, "global-players", notify)} onImport={() => setDialog("import-global")} />
             : active === "players" ? (isTeamEvent(desk.state) ? <TeamsPanel code={code} desk={desk} role={role} send={send} notify={notify} /> : <PlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />)
             : active === "pairings" ? <PairingsPanel desk={desk} role={role} send={send} pair={pair} onRepair={() => setConfirm("repair")} onTimer={() => setDialog("timer")} onManual={() => setDialog("manual")} notify={notify} />
             : active === "standings" ? <StandingsPanel desk={desk} role={role} send={send} notify={notify} includeDropped={includeDropped} setIncludeDropped={setIncludeDropped} />
@@ -173,6 +178,9 @@ export function Desk({ code }: { code: string }) {
     {dialog === "seats" && <SeatsDialog desk={desk} send={send} onClose={close} />}
     {dialog === "log" && <LogDialog code={code} state={desk.state} onClose={close} />}
     {dialog === "history" && <HistoryDialog state={desk.state} onClose={close} />}
+    {dialog === "open-tournament" && <OpenTournamentDialog onClose={close} />}
+    {dialog === "import-global" && <ImportGlobalDialog onClose={close} onDone={done} />}
+    {dialog === "finalized" && <FinalizedDialog onClose={close} onSave={() => void downloadExport(code, "finalized", notify)} />}
     {importKind && <ImportDialog code={code} kind={importKind} onClose={() => setImportKind(null)} onDone={done} replaceDesk={replaceDesk} />}
 
     <ConfirmDialog open={confirm === "repair"} title="Re-pair this round?" confirmLabel="Re-pair round" busy={busy} onCancel={() => setConfirm(null)}
@@ -183,7 +191,7 @@ export function Desk({ code }: { code: string }) {
       onConfirm={() => void sendCmd({ type: "CancelRound" }, "Round cancelled.")} />
     <ConfirmDialog open={confirm === "finish"} title="Finalize the tournament?" confirmLabel="Finalize tournament" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
       message={<>{tempIds > 0 ? <b style={{ color: "var(--rose-2)", fontWeight: 600 }}>{tempIds} {tempIds === 1 ? "player has" : "players have"} a temporary ID. </b> : null}Standings lock and players see the final results. You can reopen the tournament afterwards.</>}
-      onConfirm={() => void sendCmd({ type: "CompleteEvent" }, "Tournament finalized.")} />
+      onConfirm={() => void (async () => { const r = await sendCmd({ type: "CompleteEvent" }, "Tournament finalized."); if (r) setDialog("finalized"); })()} />
     <ConfirmDialog open={confirm === "reopen"} title="Reopen the tournament?" confirmLabel="Reopen tournament" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
       message="Staff can enter results and pair rounds again."
       onConfirm={() => void sendCmd({ type: "ReopenEvent" }, "Tournament reopened.")} />

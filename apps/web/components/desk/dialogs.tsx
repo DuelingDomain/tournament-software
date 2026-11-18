@@ -346,7 +346,7 @@ export function ManualPairingsDialog({ desk, send, onClose }: Base) {
 }
 
 /* ---------- Import ---------- */
-const IMPORT_ACCEPT = { players: ".xml,text/xml,application/xml", tournament: ".Tournament,.tournament", "team-players": ".Tournament,.tournament" } as const;
+const IMPORT_ACCEPT = { players: ".xml,text/xml,application/xml", "team-players": ".Tournament,.tournament" } as const;
 type ImportKind = keyof typeof IMPORT_ACCEPT;
 export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk }: Close & { code: string; kind: ImportKind; onDone: (t: string) => void; replaceDesk: (d: DeskView) => void }) {
   const [kind, setKindRaw] = useState(initial);
@@ -364,7 +364,7 @@ export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk
       const body = (await res.json().catch(() => ({}))) as { desk?: DeskView; imported?: number; unmatched?: number; error?: string; message?: string };
       if (!res.ok || !body.desk) { setErr(MESSAGES[body.error ?? ""] ?? (body.error === "REGISTRATION_ONLY" ? "Player lists import during registration only." : body.error === "INVALID_PLAYER_STRUCTURE" ? "That file is not a team tournament, or this tournament is a team event. Team player lists import into a tournament with individual players." : body.message ?? "That file could not be imported.")); setBusy(false); return; }
       replaceDesk(body.desk);
-      onDone(`Imported ${body.imported ?? 0} players${body.unmatched ? `, ${body.unmatched} without a matching account (they can join later with their COSSY ID)` : ""}.`);
+      onDone(`Imported ${body.imported ?? 0} players${body.unmatched ? `, ${body.unmatched} without a matching account (they can join later with their player ID)` : ""}.`);
       onClose();
     } catch { setErr("Could not reach the server."); setBusy(false); }
   }
@@ -372,13 +372,46 @@ export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk
     <div role="radiogroup" aria-label="What to import">
       <Radio name="imp" label="Player list (AllPlayers XML), adds players during registration" checked={kind === "players"} onChange={() => setKind("players")} />
       <Radio name="imp" label="Team player list (team .Tournament file), adds its players during registration" checked={kind === "team-players"} onChange={() => setKind("team-players")} />
-      <Radio name="imp" label="Tournament file (.Tournament), replaces players and rounds" checked={kind === "tournament"} onChange={() => setKind("tournament")} />
     </div>
-    {kind === "tournament" && <p className="dd-meta" style={{ margin: 0 }}>This replaces the players and rounds in this tournament. Staff stay as they are.</p>}
     <FilePicker label="File" accept={IMPORT_ACCEPT[kind]} file={file} onChange={f => { setFile(f); setErr(null); }}
       onReject={name => setErr(`${name} is not ${kind === "players" ? "an .xml player list" : "a .Tournament file"}.`)}
       hint={kind === "players" ? "An .xml player list." : "A .Tournament file."} />
     <Err text={err} />
+  </Dialog>;
+}
+
+/* ---------- Global player list ---------- */
+const GLOBAL_ACCEPT = ".csv,.xml,.Tournament,.tournament";
+export function ImportGlobalDialog({ onClose, onDone }: Close & { onDone: (t: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  async function run() {
+    if (!file) { setErr("Choose a file."); return; }
+    setBusy(true); setErr(null);
+    const form = new FormData(); form.set("file", file);
+    try {
+      const res = await fetch("/api/players/import", { method: "POST", body: form });
+      const body = (await res.json().catch(() => ({}))) as { added?: number; skipped?: number; invalid?: number; total?: number; error?: string; message?: string };
+      if (!res.ok) { setErr(MESSAGES[body.error ?? ""] ?? body.message ?? "That file could not be imported."); setBusy(false); return; }
+      onDone(`Added ${body.added ?? 0} to the global player list. ${body.skipped ?? 0} already listed${body.invalid ? `, ${body.invalid} skipped as not valid` : ""}. ${body.total ?? 0} in total.`);
+      window.dispatchEvent(new Event("dk:global-players"));
+      onClose();
+    } catch { setErr("Could not reach the server."); setBusy(false); }
+  }
+  return <Dialog open onClose={onClose} title="Import Player List" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={busy || !file} onClick={() => void run()}>Import</Button></>}>
+    <p className="dd-meta" style={{ margin: 0 }}>Adds players to your global player list. A player ID that is already listed is not changed.</p>
+    <FilePicker label="File" accept={GLOBAL_ACCEPT} file={file} onChange={f => { setFile(f); setErr(null); }}
+      onReject={name => setErr(`${name} is not a .csv, .xml or .Tournament file.`)}
+      hint="A .csv with the columns ID, First Name, Last Name; a player list .xml; or a .Tournament file." />
+    <Err text={err} />
+  </Dialog>;
+}
+
+/** Shown after Finalize succeeds: the original also wrote a finalized copy of the file. */
+export function FinalizedDialog({ onClose, onSave }: Close & { onSave: () => void }) {
+  return <Dialog open onClose={onClose} title="Tournament finalized" actions={<><Button onClick={onClose}>Close</Button><Button variant="violet" autoFocus onClick={() => { onSave(); onClose(); }}>Save Finalized Tournament</Button></>}>
+    <p style={{ margin: 0 }}>The results are locked. Save the finalized tournament file now, or later from File, Save Finalized Tournament.</p>
   </Dialog>;
 }
 

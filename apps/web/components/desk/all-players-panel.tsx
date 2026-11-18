@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { DeskView, StaffRole } from "@dd-tournament/engine";
 import { isTemporaryMemberId, memberIdCheckDigitOk, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
 import { Button, Field, Input } from "../ui";
@@ -11,11 +11,19 @@ import type { SendFn } from "./use-desk";
 const pad = (id: string | null) => (id ? (normalizeMemberId(id) ? padMemberId(id) : id) : "");
 
 /** The "All Players" tab: every Dueling Domain account staff can look up, with COSSY ID editing. */
-export function AllPlayersPanel({ code, desk, role, send, notify }: { code: string; desk: DeskView; role: StaffRole; send: SendFn; notify: (m: string) => void }) {
+export function AllPlayersPanel({ code, desk, role, send, notify, onExport, onImport }: { code: string; desk: DeskView; role: StaffRole; send: SendFn; notify: (m: string) => void; onExport: () => void; onImport: () => void }) {
   const search = useAccountSearch(code);
   const [edits, setEdits] = useState<Record<number, string>>({});
   const [overrides, setOverrides] = useState<Record<number, string | null>>({});
   const [msg, setMsg] = useState<{ bad: boolean; text: string } | null>(null);
+  const [listed, setListed] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => { void fetch("/api/players", { cache: "no-store" }).then(r => r.json()).then((b: { players?: unknown[] }) => { if (alive) setListed(b.players?.length ?? 0); }).catch(() => undefined); };
+    load();
+    window.addEventListener("dk:global-players", load);
+    return () => { alive = false; window.removeEventListener("dk:global-players", load); };
+  }, []);
   const enrolled = new Set(desk.state.players.flatMap(p => (p.userId === null ? [] : [p.userId])));
   const canEditId = can(role, "UpdatePlayer");
   const canAdd = can(role, "AddPlayers") && desk.state.phase !== "playoff" && desk.state.phase !== "complete";
@@ -39,6 +47,10 @@ export function AllPlayersPanel({ code, desk, role, send, notify }: { code: stri
   return <div className="dk-sec">
     <h2 className="dk-h2">All Players</h2>
     <p className="dd-meta" style={{ margin: 0 }}>Every Dueling Domain account you can look up. Edit a COSSY ID here and it saves to the account.</p>
+    <div className="dk-field-row" aria-label="Global player list">
+      <span className="dd-meta" style={{ alignSelf: "center" }}>Your global player list: {listed === null ? "loading" : `${listed} ${listed === 1 ? "player" : "players"}`}. Players from tournaments you open or import are added.</span>
+      <div className="dk-btn-row"><Button onClick={onImport}>Import Player List…</Button><Button onClick={onExport} disabled={listed === 0}>Export to CSV</Button></div>
+    </div>
     <form role="search" className="dk-field-row" onSubmit={e => { e.preventDefault(); void search.run(search.query.trim()); }}>
       <Field label="Account search"><Input type="search" value={search.query} onChange={e => search.setQuery(e.target.value)} autoComplete="off" placeholder="Name, username, Discord or COSSY ID" /></Field>
       <div className="dk-btn-row"><Button type="submit" variant="violet">Search</Button><Button onClick={() => { search.setQuery(""); void search.run(""); }}>Show All</Button></div>
