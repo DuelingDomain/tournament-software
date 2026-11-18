@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DeskView, Player, StaffRole, Team } from "@dd-tournament/engine";
+import type { DeskView, StaffRole, Team } from "@dd-tournament/engine";
 import { isTemporaryMemberId, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
 import { Button, ConfirmDialog, Field, Input, Select } from "../ui";
-import { findAccounts, useAccountSearch, type Account } from "./accounts";
+import { findAccounts, saveMemberId, useAccountSearch, type Account } from "./accounts";
 import { CheckIcon, DashIcon, RingIcon, WarnIcon } from "./icons";
 import { byName, membersOf, nextTempId } from "./helpers";
 import { AccountList } from "./players-panel";
@@ -108,6 +108,14 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
     const ids: string[] = [];
     const fresh = slots.flatMap((s, i) => (s.playerId === null && s.account ? [{ i, account: s.account }] : []));
     if (fresh.length) {
+      // A COSSY ID typed on a row for an account without one is saved to the account first, like single-player enroll.
+      for (const f of fresh) {
+        const typed = drafts[f.i]?.id.trim() ? normalizeMemberId(drafts[f.i]!.id) : null;
+        if (typed && !isTemporaryMemberId(typed) && normalizeMemberId(f.account.memberId ?? "") !== typed) {
+          const saved = await saveMemberId(code, f.account.userId, typed);
+          if (!saved.ok) { setBusy(false); setMessage({ bad: true, text: saved.message }); return; }
+        }
+      }
       const added = await send({ type: "AddPlayers", players: fresh.map(f => ({ userId: f.account.userId, name: f.account.displayName })) });
       if (!added.ok) { setBusy(false); setMessage({ bad: true, text: added.code === "member_id_required" ? "This tournament requires a COSSY ID for every member. Add it to their account first." : added.message }); return; }
       current = added.desk;
@@ -136,18 +144,12 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
     clear(); nameRef.current?.focus();
   }
 
-  async function tempIds() {
-    const targets = slots.flatMap(s => { const p = s.playerId ? peopleById.get(s.playerId) : null; return p && p.memberId === null ? [p] : []; });
-    if (targets.length === 0) { setMessage({ bad: false, text: "Enroll gives every new member without a COSSY ID a temp ID. Enrolled members already have one." }); return; }
-    setBusy(true);
-    let list: Player[] = [...state.players];
-    for (const p of targets) {
-      const id = nextTempId(list);
-      const r = await send({ type: "UpdatePlayer", playerId: p.id, memberId: id });
-      if (!r.ok) { setBusy(false); setMessage({ bad: true, text: r.message }); return; }
-      list = r.desk.state.players;
-    }
-    setBusy(false); setMessage({ bad: false, text: `Temp ID added for ${targets.length} member${targets.length === 1 ? "" : "s"}.` });
+  /** Temp ID on one row: the next temp ID that no enrolled person or other row holds. */
+  function tempFor(i: number) {
+    const held = new Set<string>([...state.players.map(p => p.memberId), ...drafts.map(d => (d.id.trim() ? normalizeMemberId(d.id) : null))].filter((v): v is string => v !== null));
+    let n = 9999000000;
+    while (held.has(String(n))) n++;
+    setDraft(i, { id: pad(String(n)) }); setMessage({ bad: false, text: `Member ${i + 1} gets temp ID ${pad(String(n))} when you press ${selected ? "Update" : "Enroll"}.` });
   }
 
   async function dropOrReenroll(team: Team) {
@@ -188,10 +190,12 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
           const d = drafts[i] ?? NO_DRAFT;
           const onEnter = (e: React.KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); void lookup(i); } };
           const filledRow = taken(s) !== null;
+          const hasId = filledRow && (s.playerId ? mine?.memberId : s.account?.memberId) != null;
+          const empty = !filledRow && !d.id && !d.first && !d.last;
           return <fieldset key={i} className="dk-team-member">
             <legend className="dk-vh">Member {i + 1}</legend>
             <span className="dk-team-no dd-caps" aria-hidden="true">Member {i + 1}</span>
-            <Field label="COSSY ID"><Input aria-label={`Member ${i + 1} COSSY ID`} inputMode="numeric" autoComplete="off" value={d.id} readOnly={filledRow} onKeyDown={onEnter} onChange={e => setDraft(i, { id: e.target.value })} /></Field>
+            <Field label="COSSY ID"><Input mono aria-label={`Member ${i + 1} COSSY ID`} inputMode="numeric" autoComplete="off" value={d.id} readOnly={hasId} onKeyDown={onEnter} onChange={e => setDraft(i, { id: e.target.value })} /></Field>
             <Field label="First & middle"><Input aria-label={`Member ${i + 1} first name`} autoComplete="off" value={d.first} readOnly={filledRow} onKeyDown={onEnter} onChange={e => setDraft(i, { first: e.target.value })} /></Field>
             <Field label="Last"><Input aria-label={`Member ${i + 1} last name`} autoComplete="off" value={d.last} readOnly={filledRow} onKeyDown={onEnter} onChange={e => setDraft(i, { last: e.target.value })} /></Field>
             <Field label="Or choose">
@@ -207,7 +211,8 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
                 {free.filter(p => !used.has(p.id) || p.id === s.playerId).map(p => <option key={p.id} value={p.id}>{p.name}{p.memberId ? ` · ${pad(p.memberId)}` : ""}</option>)}
               </Select>
             </Field>
-            <Button size="sm" aria-label={`Clear member ${i + 1}`} disabled={!filledRow && !d.id && !d.first && !d.last} onClick={() => setSlot(i, EMPTY)}>Clear</Button>
+            <Button size="sm" className="dk-team-temp" aria-label={`Temp ID for member ${i + 1}`} disabled={busy || !filledRow || hasId || (selected ? !canEdit : !canAdd)} onClick={() => tempFor(i)}>Temp ID</Button>
+            <Button size="sm" className="dk-team-x" aria-label={`Clear member ${i + 1}`} disabled={empty} onClick={() => setSlot(i, EMPTY)}><span aria-hidden="true">&times;</span></Button>
           </fieldset>;
         })}
       </div>
@@ -216,7 +221,6 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
         <Button onClick={clear}>Clear</Button>
         <Button variant="rose-outline" disabled={dropDisabled} onClick={() => selected && (selected.status === "dropped" ? void dropOrReenroll(selected) : setConfirmDrop(true))}
           aria-label={selected ? `${dropLabel} ${selected.name}` : "Drop (select a team first)"}>{dropLabel}</Button>
-        <Button disabled={busy || !canEdit} onClick={() => void tempIds()}>Temp ID</Button>
       </div>
       <p id="team-note" className={`dk-note${message?.bad ? " dk-note--bad" : ""}`} role="status">
         {message && <span>{message.text}</span>}
