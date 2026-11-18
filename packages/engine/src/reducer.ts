@@ -142,24 +142,33 @@ function addManualMatch(state: EventState, round: Round, match: Match, table?: n
     requireCondition(fixed === null || table == null || table === fixed, "FIXED_TABLE_CONFLICT", "The pairing must use the player's fixed table.");
     let assigned = table ?? fixed ?? state.settings.startingTable;
     const width = teamSize(state);
-    const used = new Set(round.matches.flatMap(m => m.table === null ? [] : Array.from({ length: width }, (_, i) => m.table! + i)));
+    const used = new Set(round.matches.flatMap(m => {
+      const table = m.table ?? m.byeTable;
+      return table === undefined ? [] : Array.from({ length: width }, (_, i) => table + i);
+    }));
     const overlaps = () => Array.from({ length: width }, (_, i) => assigned + i).some(t => used.has(t));
     if (table == null && fixed === null) while (overlaps()) assigned++;
     requireCondition(!overlaps(), "TABLE_IN_USE", "That table already has a match.");
     match.table = assigned;
-  } else requireCondition(table == null, "INVALID_TABLE", "A bye has no table.");
+  } else {
+    requireCondition(table == null, "INVALID_TABLE", "A bye does not take a live table assignment.");
+    const occupied = round.matches.map(m => m.table ?? m.byeTable ?? state.settings.startingTable - teamSize(state));
+    match.byeTable = Math.max(state.settings.startingTable - teamSize(state), ...occupied) + teamSize(state);
+  }
   round.matches.push(match);
 }
 
 function convertBye(state: EventState, round: Round, match: Match, opponent: string): void {
   const index = round.matches.indexOf(match);
-  const paired = { ...match, p2: opponent, result: null, reports: [] };
-  if (match.table === null) {
+  const table = match.byeTable ?? match.table;
+  const paired = { ...match, table, p2: opponent, result: null, reports: [] };
+  delete paired.byeTable;
+  if (table === null) {
     round.matches.splice(index, 1);
     addManualMatch(state, round, paired);
     round.matches.pop();
   }
-  round.matches.splice(index, match.table === null ? 0 : 1, paired);
+  round.matches.splice(index, table === null ? 0 : 1, paired);
 }
 
 function repairUndrop(state: EventState, round: Round, returning: Player, random: () => number, ids: Set<string>): void {
@@ -201,6 +210,7 @@ function repairUndrop(state: EventState, round: Round, returning: Player, random
     if (carried === null) {
       match.p1 = replaceFirst ? match.p2 : match.p1;
       match.p2 = null;
+      if (match.table !== null) match.byeTable = match.table;
       match.table = null;
     } else if (replaceFirst) match.p1 = carried;
     else match.p2 = carried;
@@ -208,7 +218,7 @@ function repairUndrop(state: EventState, round: Round, returning: Player, random
     match.reports = [];
     carried = displaced;
   }
-  if (carried !== null) round.matches.push(makeMatch(carried, null, round.number, random, ids));
+  if (carried !== null) addManualMatch(state, round, makeMatch(carried, null, round.number, random, ids));
 }
 
 function swapCurrentOpponents(round: Round, a: string, b: string): void {
@@ -607,7 +617,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
           const bye = round.matches.find(m => m.p2 === null && m.result === "bye_win");
           requireCondition(bye, "NO_BYE", "There is no awarded bye to take in the current round.");
           convertBye(state, round, bye, p.id);
-        } else if (!alreadyPaired) round.matches.push(makeMatch(p.id, null, round.number, random, ids, command.option));
+        } else if (!alreadyPaired) addManualMatch(state, round, makeMatch(p.id, null, round.number, random, ids, command.option));
       }
       p.status = "active"; p.droppedAfterRound = null;
       break;

@@ -76,39 +76,68 @@ function orderedPairs(mates: number[]): Pair[] {
   return mates.flatMap((m, i): Pair[] => m > i ? [[i, m]] : []);
 }
 
-/** Search the points-ordered list with the unconstrained adjacent-pair cost as an
- * admissible lower bound. Usually the very first solution attains that bound.
- * Cap optimization work on large fields; exact blossom feasibility is never capped. */
-function minimizeGaps(graph: number[][], points: number[], initial: Pair[]): Pair[] {
-  const n = points.length;
-  const available = Array<boolean>(n).fill(true);
-  const gap = (a: number, b: number) => Math.abs(points[a] - points[b]);
-  let best = initial, cost = initial.reduce((sum, [a, b]) => sum + gap(a, b), 0);
-  let budget = n <= 18 ? Infinity : 6000;
-  const path: Pair[] = [];
-  function search(spent: number) {
-    if (--budget < 0) return;
-    let first = -1, previous = -1, bound = 0;
-    for (let i = 0; i < n; i++) {
-      if (!available[i]) continue;
-      if (first === -1) first = i;
-      if (previous === -1) previous = i;
-      else { bound += gap(previous, i); previous = -1; }
+function adjacentPairs(count: number): Pair[] {
+  return Array.from({ length: Math.floor(count / 2) }, (_, i) => [2 * i, 2 * i + 1]);
+}
+
+function repairRematches(order: Player[], score: (p: Player) => number, met: Map<string, Set<string>>, round: number): Player[] | null {
+  const original = [...order];
+  const firstRepeat = () => {
+    for (let i = 0; i + 1 < order.length; i += 2) {
+      if (met.get(order[i].id)?.has(order[i + 1].id)) return i;
     }
-    if (spent + bound >= cost) return;
-    if (first === -1) { best = [...path]; cost = spent; return; }
-    available[first] = false;
-    for (const other of graph[first]) {
-      if (!available[other]) continue;
-      available[other] = false; path.push([first, other]);
-      search(spent + gap(first, other));
-      path.pop(); available[other] = true;
-      if (budget < 0 || spent + bound >= cost) break;
+    return -1;
+  };
+  let repeat = firstRepeat();
+  let budget = 30_000;
+  while (repeat !== -1) {
+    const target = repeat;
+    const points = score(order[target]);
+    const visited = new Set([target]);
+    const rotate = (eligible: number[], remaining: number): boolean => {
+      if (remaining === 0) {
+        repeat = firstRepeat();
+        return repeat === -1 || repeat > target;
+      }
+      for (const i of eligible) {
+        if (--budget < 0) return false;
+        if (visited.has(i)) continue;
+        visited.add(i);
+        [order[target], order[i]] = [order[i], order[target]];
+        if (rotate(eligible, remaining - 1)) return true;
+        [order[target], order[i]] = [order[i], order[target]];
+        visited.delete(i);
+      }
+      return false;
+    };
+    let repaired = false;
+    for (let spread = 0; spread < round * 6 && !repaired; spread++) {
+      const min = points - Math.floor(spread / 2);
+      const max = points + Math.ceil(spread / 2);
+      const eligible = order.flatMap((p, i) => i !== target && score(p) >= min && score(p) <= max ? [i] : []);
+      for (let length = 1; length <= eligible.length && !repaired; length++) {
+        if (length > 8 || budget < 0) return null;
+        repaired = rotate(eligible, length);
+      }
     }
-    available[first] = true;
+    if (!repaired) return original;
   }
-  search(0);
-  return best.sort((a, b) => a[0] - b[0]);
+  return order;
+}
+
+function fixedSeatsFit(order: Player[], width: number): boolean {
+  const reserved = new Set<number>();
+  for (let i = 0; i < order.length; i += 2) {
+    const a = order[i].fixedTable, b = order[i + 1]?.fixedTable ?? null;
+    if (a !== null && b !== null && a !== b) return false;
+    const table = a ?? b;
+    if (table === null) continue;
+    for (let seat = table; seat < table + width; seat++) {
+      if (reserved.has(seat)) return false;
+      reserved.add(seat);
+    }
+  }
+  return true;
 }
 
 export function assignTables(matches: Match[], players: Player[], startingTable: number, fixed = true, width = 1): void {
@@ -116,21 +145,24 @@ export function assignTables(matches: Match[], players: Player[], startingTable:
   const reserved = new Set<number>();
   for (const m of matches) {
     m.table = null;
-    if (m.p2 === null) continue;
+    delete m.byeTable;
     const a = fixed ? byId.get(m.p1)?.fixedTable : null;
-    const b = fixed ? byId.get(m.p2)?.fixedTable : null;
+    const b = fixed && m.p2 !== null ? byId.get(m.p2)?.fixedTable : null;
     if (a != null && b != null && a !== b) throw new CommandError("FIXED_TABLE_CONFLICT", "These players require different fixed tables and cannot play each other.");
     const table = a ?? b;
     if (table != null) {
       if (Array.from({ length: width }, (_, i) => table + i).some(t => reserved.has(t))) throw new CommandError("FIXED_TABLE_CONFLICT", `More than one match requires table ${table}.`);
-      for (let i = 0; i < width; i++) reserved.add(table + i); m.table = table;
+      for (let i = 0; i < width; i++) reserved.add(table + i);
+      if (m.p2 === null) m.byeTable = table;
+      else m.table = table;
     }
   }
   let table = startingTable;
   for (const m of matches) {
-    if (m.p2 === null || m.table !== null) continue;
+    if (m.byeTable !== undefined || m.table !== null) continue;
     while (Array.from({ length: width }, (_, i) => table + i).some(t => reserved.has(t))) table++;
-    m.table = table;
+    if (m.p2 === null) m.byeTable = table;
+    else m.table = table;
     for (let i = 0; i < width; i++) reserved.add(table + i);
     table += width;
   }
@@ -142,29 +174,55 @@ export function makeMatch(p1: string, p2: string | null, number: number, random:
 }
 
 export function pairSwiss(state: EventState, number: number, seed: number, random: () => number, ids: Set<string>): Round {
-  const rows = standings(state);
+  const field = competitors(state);
+  const byId = new Map(field.map(p => [p.id, p]));
+  const rows = standings(state).filter(row => row.status === "active");
   const scores = new Map(rows.map(s => [s.playerId, s.matchPoints]));
-  const active = competitors(state).filter(p => p.status === "active");
-  const groups = new Map<number, Player[]>();
-  for (const p of active) {
-    const points = scores.get(p.id) ?? 0;
-    groups.set(points, [...(groups.get(points) ?? []), p]);
-  }
-  const ordered = [...groups.entries()].sort(([a], [b]) => b - a).flatMap(([, ps]) => shuffle(ps, random));
-  const met = new Map(competitors(state).map(p => [p.id, new Set<string>()]));
+  const score = (p: Player) => scores.get(p.id) ?? 0;
+  const met = new Map(field.map(p => [p.id, new Set<string>()]));
   const byes = new Set<string>();
-  for (const r of state.rounds.filter(r => r.stage === "swiss")) for (const m of r.matches) {
-    if (m.p2 !== null) { met.get(m.p1)?.add(m.p2); met.get(m.p2)?.add(m.p1); }
-    else if (m.result === "bye_win") byes.add(m.p1);
+  for (const r of state.rounds.filter(r => r.number < number)) for (const m of r.matches) {
+    if (m.p2 !== null) {
+      met.get(m.p1)?.add(m.p2);
+      met.get(m.p2)?.add(m.p1);
+    } else byes.add(m.p1);
   }
+  const groups = new Map<number, Player[]>();
+  for (const row of rows) {
+    const group = groups.get(row.matchPoints) ?? [];
+    group.push(byId.get(row.playerId)!);
+    groups.set(row.matchPoints, group);
+  }
+  const ordered = [...groups].sort(([a], [b]) => b - a).flatMap(([, players]) => {
+    const group = shuffle(players, random);
+    let destination = group.length - 3;
+    for (let i = destination - 1; i >= 0 && destination < group.length; i--) {
+      if (byes.has(group[i].id)) continue;
+      [group[destination], group[i]] = [group[i], group[destination]];
+      destination++;
+    }
+    return group;
+  });
+  const width = teamSize(state);
+  const finalOrder = repairRematches([...ordered], score, met, number);
   const warnings: string[] = [];
-  let byeOptions: (Player | null)[] = [null];
-  if (ordered.length % 2) {
-    const eligible = ordered.filter(p => !byes.has(p.id));
-    const pool = eligible.length ? eligible : ordered;
-    const lowest = Math.min(...pool.map(p => scores.get(p.id) ?? 0));
-    byeOptions = pool.filter(p => scores.get(p.id) === lowest).reverse();
+  const finish = (players: Player[], pairs: Pair[], bye: Player | null) => {
+    if (pairs.some(([a, b]) => met.get(players[a].id)?.has(players[b].id))) {
+      warnings.push("A rematch occurred in the generated pairings.");
+    }
+    if (bye && byes.has(bye.id)) warnings.push("A player has received a repeat bye.");
+    const matches = pairs.map(([a, b]) => makeMatch(players[a].id, players[b].id, number, random, ids));
+    if (bye) matches.push(makeMatch(bye.id, null, number, random, ids));
+    assignTables(matches, field, state.settings.startingTable, true, width);
+    return { number, stage: "swiss" as const, seed, startedAt: null, endsAt: null, matches, warnings };
+  };
+  if (finalOrder && fixedSeatsFit(finalOrder, width)) {
+    return finish(finalOrder, adjacentPairs(finalOrder.length), finalOrder.length % 2 ? finalOrder.at(-1)! : null);
   }
+
+  // Use polynomial matching when the rotation search hits its work limit or
+  // the proposed pairs cannot share tables without conflicting reservations.
+  const byeOptions = ordered.length % 2 ? [...ordered].reverse() : [null];
   let selected: { players: Player[]; pairs: Pair[]; bye: Player | null; rematches: number } | undefined;
   for (const bye of byeOptions) {
     const players = ordered.filter(p => p.id !== bye?.id);
@@ -182,8 +240,7 @@ export function pairSwiss(state: EventState, number: number, seed: number, rando
       .sort((b, c) => Math.abs(points[a] - points[b]) - Math.abs(points[a] - points[c]) || b - c));
     let pairs = orderedPairs(maximumMatching(graph));
     let rematches = players.length / 2 - pairs.length;
-    if (rematches === 0) pairs = minimizeGaps(graph, points, pairs);
-    else {
+    if (rematches !== 0) {
       const all = players.map((_, a) => players.flatMap((__, b) => a !== b && compatible(a, b) ? [b] : [])
         .sort((b, c) => Number(met.get(players[a].id)?.has(players[b].id)) - Number(met.get(players[a].id)?.has(players[c].id)) || Math.abs(points[a] - points[b]) - Math.abs(points[a] - points[c]) || b - c));
       // Keep the maximum rematch-free matching when its leftovers are compatible.
@@ -195,14 +252,10 @@ export function pairSwiss(state: EventState, number: number, seed: number, rando
       if (pairs.length * 2 !== players.length) continue;
       rematches = pairs.filter(([a, b]) => met.get(players[a].id)?.has(players[b].id)).length;
     }
+    if (!fixedSeatsFit([...pairs.flat().map(i => players[i]), ...(bye ? [bye] : [])], width)) continue;
     if (!selected || rematches < selected.rematches) selected = { players, pairs, bye, rematches };
     if (rematches === 0) break;
   }
   if (!selected) throw new CommandError("FIXED_TABLE_CONFLICT", "The active players cannot be paired while honoring their fixed tables.");
-  if (selected.rematches) warnings.push("A rematch could not be avoided among the eligible players and fixed tables.");
-  if (selected.bye && byes.has(selected.bye.id)) warnings.push("Every active player has already received a bye; a repeat bye was necessary.");
-  const matches = selected.pairs.sort((a, b) => a[0] - b[0]).map(([a, b]) => makeMatch(selected.players[a].id, selected.players[b].id, number, random, ids));
-  if (selected.bye) matches.push(makeMatch(selected.bye.id, null, number, random, ids));
-  assignTables(matches, competitors(state), state.settings.startingTable, true, teamSize(state));
-  return { number, stage: "swiss", seed, startedAt: null, endsAt: null, matches, warnings };
+  return finish(selected.players, selected.pairs.sort((a, b) => a[0] - b[0]), selected.bye);
 }

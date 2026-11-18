@@ -51,16 +51,17 @@ describe("Swiss pairing properties", () => {
     expect(() => run(s, { type: "PairNextRound" })).toThrow(/fixed tables/);
   });
 
-  it("gives the bye to a never-bye player even when previous recipients have fewer points", () => {
-    const s = fixture([[[0, null, "bye_win"], [1, 2, "p1"], [3, 4, "p1"]], [[0, 2, "double_loss"], [1, 3, "p1"], [4, null, "bye_win"]]], 5);
+  it("gives the bye to the final player in score order even after a previous bye", () => {
+    const s = fixture([[[0, null, "bye_loss"], [1, null, "bye_win"], [2, null, "bye_win"], [3, null, "bye_win"], [4, null, "bye_win"]]], 5);
     const next = run(s, { type: "PairNextRound" });
-    const bye = next.rounds[2].matches.find(m => m.p2 === null)!;
-    expect(bye.p1).toBe(s.players[2].id);
+    const bye = next.rounds[1].matches.find(m => m.p2 === null)!;
+    expect(bye.p1).toBe(s.players[0].id);
     expect(bye.result).toBe("bye_win");
     expect(bye.table).toBeNull();
+    expect(bye.byeTable).toBe(3);
   });
 
-  it("warns only after exhausting rematch-free pairings or unused byes", () => {
+  it("warns when the resulting round has a rematch or a repeat bye", () => {
     const s = fixture([[[0, 1, "draw"], [2, null, "bye_win"]], [[0, 2, "draw"], [1, null, "bye_win"]], [[1, 2, "draw"], [0, null, "bye_win"]]], 3);
     const next = run(s, { type: "PairNextRound" });
     expect(next.rounds[3].warnings).toEqual([expect.stringContaining("rematch"), expect.stringContaining("repeat bye")]);
@@ -79,45 +80,12 @@ describe("Swiss pairing properties", () => {
       });
       const s = fixture(rounds, n);
       const met = opponents(s);
-      const rows = standings(s);
-      const points = new Map(rows.map(r => [r.playerId, r.matchPoints]));
-      const byeHistory = new Set(s.rounds.flatMap(r => r.matches.filter(m => m.result === "bye_win").map(m => m.p1)));
       const ids = s.players.map(p => p.id);
-      const eligible = ids.filter(id => !byeHistory.has(id));
-      const pool = eligible.length ? eligible : ids;
-      const low = Math.min(...pool.map(id => points.get(id)!));
-      const permittedByes = pool.filter(id => points.get(id) === low);
-      const exists = n % 2 ? permittedByes.some(bye => possible(ids.filter(id => id !== bye), met)) : possible(ids, met);
+      const exists = n % 2 ? ids.some(bye => possible(ids.filter(id => id !== bye), met)) : possible(ids, met);
       const paired = run(s, { type: "PairNextRound" }, seed).rounds.at(-1)!;
       const repeated = paired.matches.filter(m => m.p2 !== null && met.has(key(m.p1, m.p2)));
       if (exists) expect(repeated, `seed ${seed}`).toHaveLength(0);
       else expect(paired.warnings.some(w => w.includes("rematch")), `seed ${seed}`).toBe(true);
-      const bye = paired.matches.find(m => m.p2 === null);
-      if (bye) expect(permittedByes).toContain(bye.p1);
-    }
-  });
-
-  it("minimizes total points gaps against an exhaustive oracle for small fields", () => {
-    function best(ids: string[], points: Map<string, number>, met: Set<string>): number {
-      if (!ids.length) return 0;
-      let cost = Infinity;
-      for (let i = 1; i < ids.length; i++) if (!met.has(key(ids[0], ids[i]))) {
-        cost = Math.min(cost, Math.abs(points.get(ids[0])! - points.get(ids[i])!) + best(ids.slice(1).filter((_, j) => j !== i - 1), points, met));
-      }
-      return cost;
-    }
-    for (let seed = 1; seed <= 30; seed++) {
-      const random = generator(seed);
-      let s = event(8);
-      for (let r = 0; r < 3; r++) {
-        const met = opponents(s), points = new Map(standings(s).map(row => [row.playerId, row.matchPoints]));
-        const minimum = best(s.players.map(p => p.id), points, met);
-        s = run(s, { type: "PairNextRound" }, seed * 10 + r);
-        const matches = s.rounds.at(-1)!.matches;
-        const cost = matches.reduce((sum, m) => sum + Math.abs(points.get(m.p1)! - points.get(m.p2!)!), 0);
-        if (minimum !== Infinity) expect(cost).toBe(minimum);
-        for (const m of matches) m.result = random() < 0.25 ? "draw" : random() < 0.5 ? "p1" : "p2";
-      }
     }
   });
 
@@ -134,7 +102,6 @@ describe("Swiss pairing properties", () => {
           s = run(s, { type: "DropPlayer", playerId: pool[Math.floor(random() * pool.length)].id });
         }
         const active = s.players.filter(p => p.status === "active");
-        const byeHistory = new Set(s.rounds.flatMap(r => r.matches.filter(m => m.result === "bye_win").map(m => m.p1)));
         const old = structuredClone(s);
         const paired = run(deepFreeze(s), { type: "PairNextRound" }, n * 100 + round);
         expect(s).toEqual(old);
@@ -149,8 +116,6 @@ describe("Swiss pairing properties", () => {
           const m = current.matches.find(m => m.p1 === p.id || m.p2 === p.id)!;
           if (m.p2 !== null) expect(m.table).toBe(p.fixedTable);
         }
-        const bye = current.matches.find(m => m.p2 === null);
-        if (bye && active.some(p => !byeHistory.has(p.id))) expect(byeHistory.has(bye.p1)).toBe(false);
         s = paired;
         for (const m of current.matches) if (m.result === null) m.result = random() < 0.15 ? "double_loss" : random() < 0.25 ? "draw" : random() < 0.5 ? "p1" : "p2";
       }

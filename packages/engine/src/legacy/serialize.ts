@@ -85,7 +85,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
       PlayoffPoints: state.rounds.filter(r => r.stage === "playoff").flatMap(r => r.matches).filter(m => (m.p1 === p.id && (m.result === "p1" || m.result === "bye_win")) || (m.p2 === p.id && m.result === "p2")).length,
       Wins: row?.matchPoints ?? 0, Points: row ? row.matchPoints * 1000000 + Math.round(row.omw * 10) * 1000 + Math.round(row.oomw * 10) : 0, OpenDueling: p.openDuelingPoints ?? 0,
       DropReason: p.status === "active" ? "Active" : p.status === "dropped" ? "Drop" : state.cut.includes(p.id) ? "PlayoffCut" : "Cut",
-      AssignedSeat: p.fixedTable ?? 0, Notes: p.notes ?? "" };
+      AssignedSeat: p.fixedTable ?? -1, Notes: p.notes ?? "" };
   }
   const roster = teamSize(state) === 1 ? { TournPlayer: [...state.players].sort((a, b) => idFor(a.id).localeCompare(idFor(b.id))).map(p => ({
     Player: playerXml(idFor(p.id), opts.playerNames?.[p.id] ?? names(p.name)), ...rosterFields(p),
@@ -100,11 +100,12 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   }
   const location = state.settings.locationDetails;
   const date = state.settings.startsAt && Number.isFinite(Date.parse(state.settings.startsAt)) ? new Date(state.settings.startsAt).toISOString() : state.createdAt;
+  const tableOffset = state.settings.startingTable - 1;
   return buildXml("Tournament", {
     Name: state.settings.name, ID: opts.eventId ?? state.legacyEventId ?? "X99-000000", TournamentStyleCode: ({ advanced: "01", traditional: "02", sealed: "03", open_dueling: "04" } as const)[state.settings.style ?? "advanced"],
     StructureCode: state.settings.format === "single_elim" ? "02" : state.settings.format === "open_dueling" ? "03" : "01", EventTypeCode: "01", PlayerStructure: String(teamSize(state)).padStart(2, "0"),
     ReferenceDateTime: "2003-01-02", Date: date.slice(0, 10), Time: date.slice(11, 16), CurrentRound: current,
-    TableOffset: state.settings.startingTable, PlayoffRound: firstPlayoff?.number ?? 0, SoftwareVersion: LEGACY_SOFTWARE_VERSION, Finalized: state.phase === "complete" ? "True" : "False",
+    TableOffset: tableOffset, PlayoffRound: firstPlayoff?.number ?? 0, SoftwareVersion: LEGACY_SOFTWARE_VERSION, Finalized: state.phase === "complete" ? "True" : "False",
     Staff: { XmlStaffArray: { XmlStaff: staffEntries } },
     PenaltyList: { PlayerPenalty: state.penalties.map(p => {
       const infraction = state.settings.infractions.find(i => i.id === p.infractionId);
@@ -120,7 +121,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     TournamentPlayers: roster,
     Matches: { TournMatch: state.rounds.flatMap(r => r.matches.map(m => ({ Player: [idFor(m.p1), m.p2 === null ? "0000000000" : idFor(m.p2)], Round: r.number,
       Status: m.result === null ? "Incomplete" : m.result === "draw" ? "Draw" : m.result === "double_loss" ? "DoubleLoss" : "Winner",
-      Table: m.table ?? 0, Winner: m.result === "p1" || m.result === "bye_win" ? idFor(m.p1) : m.result === "p2" && m.p2 !== null ? idFor(m.p2) : "0000000000",
+      Table: (m.table ?? m.byeTable ?? tableOffset) - tableOffset, Winner: m.result === "p1" || m.result === "bye_win" ? idFor(m.p1) : m.result === "p2" && m.p2 !== null ? idFor(m.p2) : "0000000000",
       PlayoffMatch: r.stage === "playoff" ? "True" : "False" }))) },
   });
 }

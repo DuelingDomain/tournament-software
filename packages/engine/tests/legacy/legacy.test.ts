@@ -17,6 +17,7 @@ describe("legacy tournament files", () => {
     const { state, players, warnings } = parseLegacyTournament(tournamentXml, context);
     expect(state.settings).toMatchObject({ name: "Evening & Friends", location: "Community Hall", startsAt: "2026-11-16T18:30:00.000Z", startingTable: 7 });
     expect(state.phase).toBe("swiss");
+    expect(state.rounds[0].matches[0].table).toBe(7);
     expect(state.players.map(p => [p.name, p.memberId, p.userId, p.status, p.droppedAfterRound])).toEqual([
       ["Ada Stone", "12345673", null, "active", null], ["Bea Reed", "2", null, "dropped", 1],
       ["Cal Vale", "9999000000", null, "active", null], ["(n/a)", "42", null, "dropped", 2],
@@ -67,6 +68,8 @@ describe("legacy tournament files", () => {
     const xml = serializeLegacyTournament(parsed.state, { eventId: "X99-004213", playerNames: Object.fromEntries(parsed.players.map(p => [p.playerId, p])) });
     expect(xml).toContain("<ID>0012345673</ID>");
     expect(xml).toContain("<Name>Evening &amp; Friends</Name>");
+    expect(xml).toContain("<TableOffset>6</TableOffset>");
+    expect(xml).toContain("<Table>1</Table>");
     const restored = parseLegacyTournament(xml, context).state;
     expect(observable(restored)).toEqual(observable(parsed.state));
     expect(restored.players.map(p => p.memberId).sort()).toEqual(["12345673", "2", "42", "9999000000"].sort());

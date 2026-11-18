@@ -77,6 +77,7 @@ export interface Match {
   id: MatchId;
   round: number;
   table: number | null; // null for byes
+  byeTable?: number; // reserved table number for file exchange and bracket order
   p1: PlayerId;
   p2: PlayerId | null;
   result: MatchResult | null; // null = unreported
