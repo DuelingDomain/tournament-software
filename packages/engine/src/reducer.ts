@@ -293,7 +293,9 @@ function shiftTime(time: string, minutes: number): string {
 
 export function applyCommand(input: EventState, command: Command, ctx: CommandContext): EventState {
   validateContext(ctx);
-  requireCondition(input.phase !== "complete" || command.type === "ReopenEvent", "EVENT_COMPLETE", "Reopen the event before making changes.");
+  const memberIdOnly = command.type === "UpdatePlayer" && command.memberId !== undefined &&
+    command.name === undefined && command.fixedTable === undefined && command.notes === undefined;
+  requireCondition(input.phase !== "complete" || command.type === "ReopenEvent" || memberIdOnly, "EVENT_COMPLETE", "Reopen the event before making changes.");
   const state = structuredClone(input);
   state.teams ??= [];
   if ("teamId" in command) requireCondition(state.teams.some(t => t.id === command.teamId), "TEAM_NOT_FOUND", "That team is not enrolled.");
@@ -683,7 +685,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
     }
     case "CompleteEvent":
       allResults(state);
-      requireCondition(!state.players.some(p => p.memberId !== null && isTemporaryMemberId(p.memberId)),
+      requireCondition(!state.settings.requireMemberId || !state.players.some(p => p.memberId !== null && isTemporaryMemberId(p.memberId)),
         "TEMPORARY_MEMBER_IDS", "Temporary IDs must be replaced before finalizing");
       state.phase = "complete"; state.completedAt = ctx.now;
       break;

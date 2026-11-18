@@ -91,7 +91,9 @@ Public views add playerStructure, style, teamCount and a teams array with public
 - `GET /api/events/:code/print-data` returns `PrintData`, staff only. The same data is at `DeskView.printData`.
 - `PrintData` contains `matches`, `pairingsByTeam`, `unreportedMatches` (all rounds), `pairedDownPlayers` (pre-round point gaps and byes), and `penalties` with player/infraction/judge labels. Match rows carry round, table block, ordered team members, result and extension. Staff print names are full names. The engine exports `printData(state)` for other renderers.
 
-Finalization requires every result and active pairing, and replacement of temporary person IDs across the entire roster, including dropped/cut people. Reserved team competitor IDs do not prevent finalization.
+Finalization requires every match result and active pairing. When `requireMemberId` is enabled, temporary person IDs must be replaced across the entire roster, including dropped and cut players. With the setting off, the desk warns about temporary IDs and permits finalization.
+
+Organizers, head judges and scorekeepers can correct a player's ID in every phase, including for players who missed the cut. In a finalized event, send only `{ type: "UpdatePlayer", playerId, memberId }` to correct the ID while keeping the event finalized.
 
 ## File interchange
 
