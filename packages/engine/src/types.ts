@@ -139,6 +139,8 @@ export interface EventState {
     roundPairedAfter?: boolean }[];
   penalties: PenaltyEntry[];
   staff: StaffMember[];
+  /** Event number from a tournament file (letter, two digits, dash, six digits); kept only so the file can be written back. */
+  legacyEventId?: string;
   legacyStaff?: { memberId: string | null; name: string; position: StaffPosition }[];
   createdAt: string;
   completedAt: string | null;

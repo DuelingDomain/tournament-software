@@ -101,7 +101,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
   const location = state.settings.locationDetails;
   const date = state.settings.startsAt && Number.isFinite(Date.parse(state.settings.startsAt)) ? new Date(state.settings.startsAt).toISOString() : state.createdAt;
   return buildXml("Tournament", {
-    Name: state.settings.name, ID: opts.eventId ?? "X99-000000", TournamentStyleCode: ({ advanced: "01", traditional: "02", sealed: "03", open_dueling: "04" } as const)[state.settings.style ?? "advanced"],
+    Name: state.settings.name, ID: opts.eventId ?? state.legacyEventId ?? "X99-000000", TournamentStyleCode: ({ advanced: "01", traditional: "02", sealed: "03", open_dueling: "04" } as const)[state.settings.style ?? "advanced"],
     StructureCode: state.settings.format === "single_elim" ? "02" : state.settings.format === "open_dueling" ? "03" : "01", EventTypeCode: "01", PlayerStructure: String(teamSize(state)).padStart(2, "0"),
     ReferenceDateTime: "2003-01-02", Date: date.slice(0, 10), Time: date.slice(11, 16), CurrentRound: current,
     TableOffset: state.settings.startingTable, PlayoffRound: firstPlayoff?.number ?? 0, SoftwareVersion: LEGACY_SOFTWARE_VERSION, Finalized: state.phase === "complete" ? "True" : "False",
@@ -114,7 +114,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
       const legacyJudge = legacyStaff.findIndex(s => s.name === p.judge || s.memberId === p.judge);
       return { Infraction: legacyName, InfractionCode: "08", PenaltyCode: penaltyCode(p.penalty), Player: idFor(p.playerId),
         Judge: judge ? staffIds.get(judge.id) : legacyJudge >= 0 ? legacyStaffIds[legacyJudge] : "0000000000", Round: p.round ?? 0,
-        Notes: legacyName === "None" && label !== "None" ? `[Infraction: ${label}]${p.notes ? ` ${p.notes}` : ""}` : p.notes ?? "" };
+        Notes: legacyName !== label ? `[Infraction: ${label}]${p.notes ? ` ${p.notes}` : ""}` : p.notes ?? "" };
     }) },
     Location: { Id: location?.id ?? "00000000-0000-0000-0000-000000000000", Name: location?.name ?? state.settings.location ?? "", Address1: location?.address1 ?? "", Address2: location?.address2 ?? "", City: location?.city ?? "", State: location?.state ?? "", Country: location?.country ?? "", Zip: location?.postal ?? "", Phone: location?.phone ?? "", WebSite: location?.website ?? "" },
     TournamentPlayers: roster,

@@ -24,10 +24,14 @@ export class Element {
 }
 
 export function parseXml(xml: string, root: string): Element {
-  if (/<!\s*(DOCTYPE|ENTITY)\b/i.test(xml) || XMLValidator.validate(xml) !== true) {
-    throw new CommandError("invalid_legacy_xml", "The legacy file is not supported, well-formed XML.");
-  }
-  const parsed: unknown = new XMLParser({ ignoreAttributes: true, parseTagValue: false, trimValues: false }).parse(xml);
+  const invalid = () => new CommandError("invalid_legacy_xml", "The legacy file is not supported, well-formed XML.");
+  if (/<!\s*(DOCTYPE|ENTITY)\b/i.test(xml)) throw invalid();
+  let parsed: unknown;
+  // The parser throws on forbidden tag names and on nesting that is too deep.
+  try {
+    if (XMLValidator.validate(xml) !== true) throw invalid();
+    parsed = new XMLParser({ ignoreAttributes: true, parseTagValue: false, trimValues: false }).parse(xml);
+  } catch { throw invalid(); }
   const document = new Element(parsed);
   const roots = typeof parsed === "object" && parsed !== null ? Object.keys(parsed).filter(key => !key.startsWith("?")) : [];
   if (roots.length !== 1 || roots[0] !== root || document.all(root).length !== 1) throw new CommandError("invalid_legacy_xml", `The legacy file must have a single ${root} root element.`);

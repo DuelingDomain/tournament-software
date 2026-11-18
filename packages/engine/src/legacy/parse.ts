@@ -74,6 +74,8 @@ function key(id: string): string { return normalizeMemberId(id) ?? id; }
 function isBye(id: string): boolean { return id === "" || normalizeMemberId(id) === "0"; }
 
 /** Same as the original: a file written by a newer program version is refused. */
+/** Longest event name read from a file. */
+const MAX_EVENT_NAME = 200;
 export const LEGACY_SOFTWARE_VERSION = "3.0.0.0";
 function newerThanSupported(version: string): boolean {
   if (!/^\d+(\.\d+){0,3}$/.test(version)) return false;
@@ -104,10 +106,12 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
   const locationDetails = location.has("Name") ? { id: location.get("Id") || "imported-location", name: location.get("Name"),
     address1: location.get("Address1"), address2: location.get("Address2"), city: location.get("City"), state: location.get("State"),
     postal: location.get("Zip"), country: location.get("Country"), phone: location.get("Phone"), website: location.get("WebSite") } : null;
-  const state = createEvent({ name: root.get("Name") || "Imported event", format: /^(singleelimination|0?2)$/i.test(structure) ? "single_elim" : /^(opendueling|0?3)$/i.test(structure) ? "open_dueling" : "swiss",
+  const state = createEvent({ name: root.get("Name").slice(0, MAX_EVENT_NAME) || "Imported event", format: /^(singleelimination|0?2)$/i.test(structure) ? "single_elim" : /^(opendueling|0?3)$/i.test(structure) ? "open_dueling" : "swiss",
     style, playerStructure: size as PlayerStructure, locationDetails,
     startsAt: timestamp(root, warnings), location: location.get("Name") || null,
     startingTable: Math.max(1, root.int("TableOffset", 1)) }, ctx);
+  const eventId = /^[A-Za-z]\d{2}-\d{6}$/.test(root.get("ID")) ? root.get("ID").toUpperCase() : null;
+  if (eventId) state.legacyEventId = eventId;
   const imported: LegacyTournamentImport["players"] = [];
   const byLegacyId = new Map<string, Player>();
   const staffNames = new Map<string, string>();
@@ -219,10 +223,10 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
     const penalty = readPenalty(node);
     let label = node.get("Infraction") || "Unknown legacy infraction";
     let notes = node.get("Notes") || null;
-    // A custom infraction is written as "None" with its label at the start of the notes; take it back out.
-    const tagged = label === "None" && notes ? /^\[Infraction: (.+?)\](?: ([\s\S]*))?$/.exec(notes) : null;
+    // The engine label is written at the start of the notes when it differs from the legacy name; take it back out.
+    const tagged = notes ? /^\[Infraction: (.+?)\](?: ([\s\S]*))?$/.exec(notes) : null;
     if (tagged) { label = tagged[1]!; notes = tagged[2] || null; }
-    const builtIn = builtInInfractionId(label);
+    const builtIn = tagged ? null : builtInInfractionId(label);
     let infraction = state.settings.infractions.find(i => i.label === label) ?? (builtIn ? state.settings.infractions.find(i => i.id === builtIn) : undefined);
     if (!infraction) {
       infraction = { id: `legacy-infraction-${state.settings.infractions.length + 1}`, label, defaultPenalty: penalty };
