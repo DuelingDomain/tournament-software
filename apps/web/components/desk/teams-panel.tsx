@@ -17,10 +17,12 @@ const SIZE_NAME = ["", "", "Tag Dueling", "Three-Player Team", "Four-Player Team
 type Slot = { playerId: string | null; account: Account | null };
 const EMPTY: Slot = { playerId: null, account: null };
 
-interface Props { code: string; desk: DeskView; role: StaffRole; send: SendFn; notify: (m: string) => void }
+interface Props { code: string; desk: DeskView; role: StaffRole; send: SendFn; notify: (m: string, bad?: boolean) => void }
 
 /** Team events: enroll form with ordered member positions, the team list, and the account lookup beside it. */
 export function TeamsPanel({ code, desk, role, send, notify }: Props) {
+  // Quick controls (check-in, points) retry once and tell the user when they still fail.
+  const quick = async (input: Parameters<SendFn>[0]) => { const r = await send(input, { retry: true }); if (!r.ok) notify(r.message, true); };
   const { state } = desk;
   const size = state.settings.playerStructure;
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -35,7 +37,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
   const nameRef = useRef<HTMLInputElement>(null);
 
   const selected = state.teams.find(t => t.id === selectedId) ?? null;
-  const canAdd = can(role, "AddTeams"), canEdit = can(role, "UpdateTeam"), canDrop = can(role, "DropTeam") && can(role, "RemoveTeam");
+  const canAdd = can(role, "AddTeams"), canEdit = can(role, "UpdateTeam"), canDropTeam = can(role, "DropTeam"), canRemoveTeam = can(role, "RemoveTeam");
   const registration = state.phase === "registration";
   const closed = state.phase === "playoff" || state.phase === "complete";
   const lateBlocked = !registration && !state.settings.allowLateEntry;
@@ -126,7 +128,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
   }
 
   async function toggleCheckIn(team: Team, to: boolean) {
-    for (const m of membersOf(state, team)) { if (m.checkedIn !== to) { const r = await send({ type: "SetCheckedIn", playerId: m.id, checkedIn: to }); if (!r.ok) return; } }
+    for (const m of membersOf(state, team)) { if (m.checkedIn !== to) { const r = await send({ type: "SetCheckedIn", playerId: m.id, checkedIn: to }, { retry: true }); if (!r.ok) { notify(r.message, true); return; } } }
   }
 
   const stats = useMemo(() => ({
@@ -140,6 +142,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
     return list.filter(t => t.name.toLowerCase().includes(q) || membersOf(state, t).some(m => m.name.toLowerCase().includes(q) || (m.memberId && pad(m.memberId).includes(q.replace(/\D/g, "") || "\u0000"))));
   }, [state, filter]);
   const dropLabel = selected?.status === "dropped" ? "Re-enroll" : "Drop";
+  const canDrop = registration ? canRemoveTeam : canDropTeam;
   const dropDisabled = busy || !selected || !canDrop || selected.status === "cut" || state.phase === "complete";
   const label = SIZE_NAME[size] ?? "Team";
   const open = state.settings.format === "open_dueling" || state.settings.style === "open_dueling";
@@ -211,7 +214,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
                 ? <button type="button" className="dk-status" data-state={allIn ? "in" : "idle"} role="switch" aria-checked={allIn} disabled={!can(role, "SetCheckedIn") || state.phase === "complete"} aria-label={`${t.name}: ${allIn ? "all members checked in" : "not checked in"}`}
                   onClick={() => void toggleCheckIn(t, !allIn)}>{allIn ? <CheckIcon size={12} /> : <RingIcon />}{allIn ? "Checked in" : "Not checked in"}</button>
                 : <span className="dk-status" data-state="out"><DashIcon />{t.status === "cut" ? "Cut" : `Dropped R${t.droppedAfterRound ?? 0}`}</span>}
-              {open && <PointsControl name={t.name} points={t.openDuelingPoints ?? 0} disabled={!can(role, "AdjustPoints") || state.phase === "complete"} onAdjust={d => void send({ type: "AdjustPoints", playerId: t.id, delta: d })} />}
+              {open && <PointsControl name={t.name} points={t.openDuelingPoints ?? 0} disabled={!can(role, "AdjustPoints") || state.phase === "complete"} onAdjust={d => void quick({ type: "AdjustPoints", playerId: t.id, delta: d })} />}
             </li>;
           })}</ul>
         </div></div>

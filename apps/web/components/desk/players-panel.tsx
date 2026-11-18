@@ -44,8 +44,10 @@ export function AccountList({ accounts, state, error, query, enrolled, canEnroll
   </>;
 }
 
-interface Props { code: string; desk: DeskView; role: StaffRole; send: SendFn; notify: (m: string) => void }
+interface Props { code: string; desk: DeskView; role: StaffRole; send: SendFn; notify: (m: string, bad?: boolean) => void }
 export function PlayersPanel({ code, desk, role, send, notify }: Props) {
+  // Quick controls (check-in, points) retry once and tell the user when they still fail.
+  const quick = async (input: Parameters<SendFn>[0]) => { const r = await send(input, { retry: true }); if (!r.ok) notify(r.message, true); };
   const { state } = desk;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [idText, setIdText] = useState("");
@@ -210,9 +212,9 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
               </button>
               {p.status === "active"
                 ? <button type="button" className="dk-status" data-state={p.checkedIn ? "in" : "idle"} role="switch" aria-checked={p.checkedIn} disabled={!can(role, "SetCheckedIn") || state.phase === "complete"} aria-label={`${p.name}: ${p.checkedIn ? "checked in" : "not checked in"}`}
-                  onClick={() => void send({ type: "SetCheckedIn", playerId: p.id, checkedIn: !p.checkedIn })}>{p.checkedIn ? <CheckIcon size={12} /> : <RingIcon />}{statusText(p)}</button>
+                  onClick={() => void quick({ type: "SetCheckedIn", playerId: p.id, checkedIn: !p.checkedIn })}>{p.checkedIn ? <CheckIcon size={12} /> : <RingIcon />}{statusText(p)}</button>
                 : <span className="dk-status" data-state="out"><DashIcon />{statusText(p)}</span>}
-              {open && <PointsControl name={p.name} points={p.openDuelingPoints ?? 0} disabled={!can(role, "AdjustPoints") || state.phase === "complete"} onAdjust={d => void send({ type: "AdjustPoints", playerId: p.id, delta: d })} />}
+              {open && <PointsControl name={p.name} points={p.openDuelingPoints ?? 0} disabled={!can(role, "AdjustPoints") || state.phase === "complete"} onAdjust={d => void quick({ type: "AdjustPoints", playerId: p.id, delta: d })} />}
             </li>;
           })}</ul>
         </div></div>

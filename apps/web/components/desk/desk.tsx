@@ -146,7 +146,7 @@ export function Desk({ code }: { code: string }) {
           {view === "all" ? <AllPlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />
             : active === "players" ? (isTeamEvent(desk.state) ? <TeamsPanel code={code} desk={desk} role={role} send={send} notify={notify} /> : <PlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />)
             : active === "pairings" ? <PairingsPanel desk={desk} role={role} send={send} pair={pair} onRepair={() => setConfirm("repair")} onTimer={() => setDialog("timer")} onManual={() => setDialog("manual")} notify={notify} />
-            : active === "standings" ? <StandingsPanel desk={desk} role={role} send={send} includeDropped={includeDropped} setIncludeDropped={setIncludeDropped} />
+            : active === "standings" ? <StandingsPanel desk={desk} role={role} send={send} notify={notify} includeDropped={includeDropped} setIncludeDropped={setIncludeDropped} />
             : null}
         </div>
       </div>

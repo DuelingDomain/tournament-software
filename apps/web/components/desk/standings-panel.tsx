@@ -9,7 +9,10 @@ import type { SendFn } from "./use-desk";
 
 const pct = (n: number) => `${n.toFixed(1)}%`;
 
-export function StandingsPanel({ desk, role, send, includeDropped, setIncludeDropped }: { desk: DeskView; role: StaffRole; send: SendFn; includeDropped: boolean; setIncludeDropped: (v: boolean) => void }) {
+export function StandingsPanel({ desk, role, send, notify, includeDropped, setIncludeDropped }: { desk: DeskView; role: StaffRole; send: SendFn; notify: (m: string, bad?: boolean) => void; includeDropped: boolean; setIncludeDropped: (v: boolean) => void }) {
+  // Quick controls (check-in, points) retry once and tell the user when they still fail.
+  const quick = async (input: Parameters<SendFn>[0]) => { const r = await send(input, { retry: true }); if (!r.ok) notify(r.message, true); };
+
   const { state } = desk;
   const team = isTeamEvent(state);
   const who = competitorLabel(state);
@@ -57,7 +60,7 @@ export function StandingsPanel({ desk, role, send, includeDropped, setIncludeDro
             <span className="dk-num">{s.record.wins}-{s.record.losses}-{s.record.draws}</span>
             <span className="dk-num">{pct(s.omw)}</span>
             <span className="dk-num">{pct(s.oomw)}</span>
-            {open && <PointsControl name={s.name} points={s.openDuelingPoints ?? 0} disabled={!can(role, "AdjustPoints") || state.phase === "complete"} onAdjust={d => void send({ type: "AdjustPoints", playerId: s.playerId, delta: d })} />}
+            {open && <PointsControl name={s.name} points={s.openDuelingPoints ?? 0} disabled={!can(role, "AdjustPoints") || state.phase === "complete"} onAdjust={d => void quick({ type: "AdjustPoints", playerId: s.playerId, delta: d })} />}
           </div>
           {cut > 0 && i + 1 === cut && rows[i + 1] && <div className="dk-cutline" role="separator" aria-label={`Top ${cut} cut`}><span /><span>Top {cut} cut{rows[i + 1]!.rank === s.rank ? " · tied at the cut" : ""}</span><span /></div>}
         </li>)}
