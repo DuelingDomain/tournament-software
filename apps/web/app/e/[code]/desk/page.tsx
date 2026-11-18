@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { Desk } from "@/components/desk/desk";
+import { DeskShell } from "@/components/desk/desk-shell";
 
 export const metadata: Metadata = { title: "Desk" };
 
 export default async function Page({ params }: { params: Promise<{ code: string }> }) {
-  return <Desk code={(await params).code} />;
+  return <DeskShell initialCode={(await params).code} />;
 }

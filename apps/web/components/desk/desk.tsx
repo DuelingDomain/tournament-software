@@ -5,7 +5,8 @@ import { Button, ButtonLink, ConfirmDialog, Dialog, Tabs, type TabItem } from ".
 import "./desk.css";
 import { actionForKey, buildActions, pairInfo, type ConfirmKind, type DialogKind, type ExportKind, type Panel, type PrintKind } from "./actions";
 import { AllPlayersPanel } from "./all-players-panel";
-import { Binder, MenuBar, StatusBar, Tray } from "./chrome";
+import { Binder, MenuBar, StatusBar, Tray, type DeskNav } from "./chrome";
+import { rememberSide, sideOf } from "./desk-tabs";
 import {
   AddTestPlayersDialog, BatchPrintDialog, ChangeResultDialog, CutDialog, DropPlayerDialog, ReEnrollDialog, SeatsDialog, HistoryDialog, FinalizedDialog, ImportDialog, ImportGlobalDialog, IntegrityDialog, KeyboardDialog, LogDialog, ManualPairingsDialog, PlayerNotesDialog, TimerDialog, UndropDialog,
 } from "./dialogs";
@@ -44,10 +45,13 @@ function Centered({ title, children }: { title: string; children?: React.ReactNo
   return <main className="dk dk-center"><h1 className="dk-h2">{title}</h1>{children}</main>;
 }
 
-export function Desk({ code }: { code: string }) {
+export function Desk({ code, nav }: { code: string; nav: DeskNav }) {
   const { desk, state, saving, note, send, replaceDesk, dismissNote } = useDesk(code);
-  const [panel, setPanel] = useState<Panel | null>(null);
-  const [view, setView] = useState<"all" | "event">("event");
+  const panelKey = `dk:panel:${code}`;
+  // Each tournament remembers its last panel, so a tab opens on the panel it was left on.
+  const [panel, setPanel] = useState<Panel | null>(() => { try { const v = localStorage.getItem(panelKey); return v === "players" || v === "pairings" || v === "standings" ? v : null; } catch { return null; } });
+  const [view, setViewState] = useState<"all" | "event">(() => sideOf(code));
+  const setView = useCallback((v: "all" | "event") => { rememberSide(code, v); setViewState(v); }, [code]);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
   const [importKind, setImportKind] = useState<"players" | "team-players" | null>(null);
@@ -66,9 +70,7 @@ export function Desk({ code }: { code: string }) {
 
   const role = desk?.viewerRole ?? "staff";
   const active: Panel = panel ?? (desk && (role === "staff" || desk.state.rounds.length === 0) ? "players" : "pairings");
-  const panelKey = `dk:panel:${code}`;
-  useEffect(() => { try { const v = localStorage.getItem(panelKey); if (v === "players" || v === "pairings" || v === "standings") setPanel(v); } catch { /* storage unavailable */ } }, [panelKey]);
-  const go = useCallback((p: Panel) => { setPanel(p); setView("event"); try { localStorage.setItem(panelKey, p); } catch { /* storage unavailable */ } }, [panelKey]);
+  const go = useCallback((p: Panel) => { setPanel(p); setView("event"); try { localStorage.setItem(panelKey, p); } catch { /* storage unavailable */ } }, [panelKey, setView]);
 
   const doPair = useCallback(async () => {
     const r = await send({ type: "PairNextRound" });
@@ -83,13 +85,13 @@ export function Desk({ code }: { code: string }) {
     go, open: setDialog, confirm: setConfirm,
     print: (k: PrintKind) => { window.open(`/e/${encodeURIComponent(code)}/print/${k === "pairings-by-player" ? "pairings?by=player" : k}`, "_blank", "noopener"); },
     download: (k: ExportKind) => { void downloadExport(code, k, notify); },
-    importFile: setImportKind, pair: () => void doPair(), palette: () => setPalette(true), home: () => { window.location.assign("/"); }, newTournament: () => { window.location.assign("/?new=1"); },
+    importFile: setImportKind, pair: () => void doPair(), palette: () => setPalette(true), closeTab: () => nav.close(code), newTournament: () => { window.location.assign("/?new=1"); },
     dummyResults: () => { void (async () => {
       const r = await postDummy(code, desk, { action: "results" });
       if (!r.ok) { if (r.desk) replaceDesk(r.desk); notify(r.message, true); return; }
       replaceDesk(r.desk); notify(`Random results entered for ${r.count} ${r.count === 1 ? "match" : "matches"}.`);
     })(); },
-  }) : [], [desk, role, code, go, doPair, replaceDesk, notify]);
+  }) : [], [desk, role, code, go, doPair, replaceDesk, notify, nav]);
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
 
@@ -115,8 +117,8 @@ export function Desk({ code }: { code: string }) {
   if (state === "signed_out") return <Centered title="Sign in to open the desk"><p className="dd-meta">The desk is for the people running this tournament.</p>
     <ButtonLink variant="rose" size="lg" href={`/auth/start?return=${encodeURIComponent(`/e/${code}/desk`)}`}>Sign in with Dueling Domain</ButtonLink></Centered>;
   if (state === "forbidden") return <Centered title="You are not staff for this tournament"><p className="dd-meta">Ask the organizer to add you under Settings, Staff and roles.</p>
-    <ButtonLink href={`/e/${encodeURIComponent(code)}/me`}>Open my player page</ButtonLink></Centered>;
-  if (state === "missing") return <Centered title="No tournament with that code"><ButtonLink href="/">My tournaments</ButtonLink></Centered>;
+    <ButtonLink href={`/e/${encodeURIComponent(code)}/me`}>Open my player page</ButtonLink><Button onClick={() => nav.close(code)}>Close this tab</Button></Centered>;
+  if (state === "missing") return <Centered title="No tournament with that code"><ButtonLink href="/">My tournaments</ButtonLink><Button onClick={() => nav.close(code)}>Close this tab</Button></Centered>;
   if (state === "error" || !desk) return <Centered title="The desk could not load"><p className="dd-meta">Check your connection, then try again.</p><Button variant="violet" onClick={() => window.location.reload()}>Reload</Button></Centered>;
 
   const pair = pairInfo(desk, role, () => void doPair());
@@ -142,7 +144,7 @@ export function Desk({ code }: { code: string }) {
   return <div className="dk">
     <MenuBar actions={actions} onPalette={() => setPalette(true)} brandHref="/" />
     <Tray actions={actions} panel={active} team={isTeamEvent(desk.state)} />
-    <Binder code={code} desk={desk} view={view} setView={setView} />
+    <Binder code={code} view={view} setView={setView} nav={nav} />
     <main className="dk-main" id="main">
       <div className="dk-sheet">
         {view === "event" && <Tabs className="dk-panel-tabs" variant="index" label="Desk sections" items={tabs} value={active} onChange={id => go(id as Panel)} />}

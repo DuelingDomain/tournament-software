@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { DeskView } from "@dd-tournament/engine";
+import { useTabs } from "./desk-tabs";
 import { Keycap, LogoMark } from "../ui";
 import { MENUS, type Action, type MenuName, type Panel } from "./actions";
 import { CheckIcon } from "./icons";
@@ -93,27 +94,37 @@ export function Tray({ actions, panel, team }: { actions: Action[]; panel: Panel
   </div>;
 }
 
-/* ---------- Binder tabs: All Players + events I staff ---------- */
-interface EventRow { code: string; name: string; phase: string; role: string | null }
-export function Binder({ code, desk, view, setView }: { code: string; desk: DeskView; view: "all" | "event"; setView: (v: "all" | "event") => void }) {
-  const [others, setOthers] = useState<EventRow[]>([]);
+/* ---------- Binder tabs: All Players, then every tournament opened here, in the order opened ---------- */
+export interface DeskNav { select: (code: string) => void; close: (code: string) => void; pending: string | null }
+export function Binder({ code, view, setView, nav }: { code: string; view: "all" | "event"; setView: (v: "all" | "event") => void; nav: DeskNav }) {
+  const tabs = useTabs();
+  const strip = useRef<HTMLElement>(null);
+  // Keep the chosen tab inside the strip when many tournaments are open.
   useEffect(() => {
-    let off = false;
-    fetch("/api/events", { cache: "no-store" }).then(r => (r.ok ? r.json() : null)).then((b: { events?: EventRow[] } | null) => {
-      if (!off && b?.events) setOthers(b.events.filter(e => e.role && e.code !== code && e.phase !== "complete").slice(0, 6));
-    }).catch(() => undefined);
-    return () => { off = true; };
-  }, [code]);
-  const round = desk.state.rounds.at(-1);
-  const live = desk.state.phase === "swiss" || desk.state.phase === "playoff";
-  return <nav className="dk-binder dd-tabs" aria-label="Tournaments">
+    const el = strip.current, cur = el?.querySelector<HTMLElement>('[aria-current="page"]')?.closest<HTMLElement>(".dk-tab");
+    if (!el || !cur) return;
+    if (cur.offsetLeft < el.scrollLeft) el.scrollLeft = cur.offsetLeft - 8;
+    else if (cur.offsetLeft + cur.offsetWidth > el.scrollLeft + el.clientWidth) el.scrollLeft = cur.offsetLeft + cur.offsetWidth - el.clientWidth + 8;
+  }, [code, view, tabs.length]);
+  return <nav className="dk-binder dd-tabs" aria-label="Tournaments" ref={strip}>
     <button type="button" className="dd-tab dd-tab--narrow" aria-current={view === "all" ? "page" : undefined} onClick={() => setView("all")}>All Players</button>
-    <button type="button" className="dd-tab" aria-current={view === "event" ? "page" : undefined} onClick={() => setView("event")}>
-      {live && <span className="dd-pip" aria-hidden="true" />}
-      <span style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>{desk.state.settings.name}</span>
-      {round && <span className="dd-chip dd-chip--muted">{round.stage === "playoff" ? `P${round.number}` : `R${round.number}`}<span className="dk-visually-hidden">{live ? ", running" : ""}</span></span>}
-    </button>
-    {others.map(e => <a key={e.code} className="dd-tab" href={`/e/${encodeURIComponent(e.code)}/desk`}>{e.name}</a>)}
+    {tabs.map(t => {
+      const here = t.code === code;
+      return <div key={t.code} className="dd-tab dk-tab" data-code={t.code} data-current={here && view === "event" ? "" : undefined}
+        onAuxClick={e => { if (e.button === 1) { e.preventDefault(); nav.close(t.code); } }}>
+        <a className="dk-tab-link" href={`/e/${encodeURIComponent(t.code)}/desk`} aria-current={here && view === "event" ? "page" : undefined} aria-busy={nav.pending === t.code || undefined}
+          onClick={e => {
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            if (here) setView("event"); else nav.select(t.code);
+          }}>
+          {t.live && <span className="dd-pip" aria-hidden="true" />}
+          <span className="dk-tab-name">{t.name}</span>
+          {t.round && <span className="dd-chip dd-chip--muted">{t.round}<span className="dk-visually-hidden">{t.live ? ", running" : ""}</span></span>}
+        </a>
+        <button type="button" className="dk-tab-x" aria-label={`Close ${t.name}`} title="Close tournament" onClick={() => nav.close(t.code)}>×</button>
+      </div>;
+    })}
   </nav>;
 }
 

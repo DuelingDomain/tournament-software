@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Command, DeskView } from "@dd-tournament/engine";
 import type { DeskCommandResult } from "./helpers";
+import { cacheDesk, cachedDesk } from "./desk-tabs";
 
 export type LoadState = "loading" | "ready" | "signed_out" | "forbidden" | "missing" | "error";
 export type SendInput = Command | ((desk: DeskView) => Command | null);
@@ -34,18 +35,19 @@ export const MESSAGES: Record<string, string> = {
  *  fast keying never races the version check. */
 export function useDesk(code: string) {
   const base = `/api/events/${encodeURIComponent(code)}`;
-  const [desk, setDesk] = useState<DeskView | null>(null);
-  const [state, setState] = useState<LoadState>("loading");
+  // A tab opened before shows its last view at once; the fetch below refreshes it.
+  const [desk, setDesk] = useState<DeskView | null>(() => cachedDesk(code));
+  const [state, setState] = useState<LoadState>(() => (cachedDesk(code) ? "ready" : "loading"));
   const [saving, setSaving] = useState(0);
   const [note, setNote] = useState<string | null>(null);
-  const deskRef = useRef<DeskView | null>(null);
+  const deskRef = useRef<DeskView | null>(cachedDesk(code));
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const epoch = useRef(0);
 
   const adopt = useCallback((next: DeskView) => {
     if (deskRef.current && next.version < deskRef.current.version) return;
-    deskRef.current = next; setDesk(next); setState("ready");
-  }, []);
+    deskRef.current = next; setDesk(next); setState("ready"); cacheDesk(code, next);
+  }, [code]);
 
   const refetch = useCallback(async () => {
     try {
@@ -106,13 +108,13 @@ export function useDesk(code: string) {
           if (response.ok) { const desk = body as DeskView; adopt(desk); return { ok: true, before, desk }; }
           if (response.status === 401) { setState("signed_out"); return { ok: false, code: "signed_out", message: "You were signed out." }; }
           if (response.status === 409 && body.desk) {
-            deskRef.current = body.desk; setDesk(body.desk);
+            deskRef.current = body.desk; setDesk(body.desk); cacheDesk(code, body.desk);
             setNote("Updated by another staff member");
             if (opts?.retry && attempt === 0) continue;
             return { ok: false, code: "version_conflict", message: MESSAGES.version_conflict! };
           }
-          const code = body.error ?? "error";
-          return { ok: false, code, message: body.message ?? MESSAGES[code] ?? `Request failed (${response.status}).` };
+          const errorCode = body.error ?? "error";
+          return { ok: false, code: errorCode, message: body.message ?? MESSAGES[errorCode] ?? `Request failed (${response.status}).` };
         }
         return { ok: false, code: "version_conflict", message: MESSAGES.version_conflict! };
       } finally { setSaving(n => n - 1); }
@@ -120,8 +122,8 @@ export function useDesk(code: string) {
     const next = queue.current.then(run, run);
     queue.current = next.catch(() => undefined);
     return next;
-  }, [base, adopt]);
+  }, [base, adopt, code]);
 
-  const replaceDesk = useCallback((next: DeskView) => { deskRef.current = next; setDesk(next); setState("ready"); }, []);
+  const replaceDesk = useCallback((next: DeskView) => { deskRef.current = next; setDesk(next); setState("ready"); cacheDesk(code, next); }, [code]);
   return { desk, state, saving, note, send, refetch, replaceDesk, dismissNote: () => setNote(null) };
 }

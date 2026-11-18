@@ -19,7 +19,7 @@ export interface Action {
 export interface Handlers {
   go: (panel: Panel) => void; open: (dialog: DialogKind) => void; confirm: (kind: ConfirmKind) => void;
   print: (kind: PrintKind) => void; download: (kind: ExportKind) => void; importFile: (kind: "players" | "team-players") => void;
-  pair: () => void; palette: () => void; home: () => void; newTournament: () => void; dummyResults: () => void;
+  pair: () => void; palette: () => void; closeTab: () => void; newTournament: () => void; dummyResults: () => void;
 }
 
 /** Everything the F9 button needs: label, whether it can run now, and a one-line why when it cannot. */
@@ -74,7 +74,7 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
     // File
     a("new", "New Tournament…", "File", h.newTournament, { keys: "Ctrl+N" }),
     a("open", "Open Tournament…", "File", () => h.open("open-tournament"), { keys: "Ctrl+O" }),
-    a("home", "Close Tournament", "File", h.home),
+    a("close", "Close Tournament", "File", h.closeTab, { keys: "Ctrl+F4" }),
     a("log", "Show Recent Log Entries…", "File", () => h.open("log")),
     a("save", "Save Tournament", "File", () => h.download("tournament"), { keys: "Ctrl+S", separatorBefore: true }),
     ...(finished ? [a("save-finalized", "Save Finalized Tournament", "File", () => h.download("finalized"))] : []),
@@ -154,6 +154,7 @@ export function actionForKey(e: KeyboardEvent): string | null {
   }
   if (ctrl && !e.altKey && !e.shiftKey) {
     switch (e.key.toLowerCase()) {
+      case "f4": return "close";
       case "f": return "find"; case "k": return "notes"; case "m": return "history";
       case "p": return "print-batch"; case "s": return "save"; case "o": return "open"; case ".": return "palette";
     }

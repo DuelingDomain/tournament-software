@@ -38,6 +38,7 @@
 /* Binder tabs and panel */
 .dk-binder { padding: 6px var(--dk-pad) 0; border-bottom: 1px solid var(--border); }
 .dk-binder .dd-tab--narrow { padding: 0 12px; }
+.dk-binder .dk-tab[data-current] { background: var(--bg-surface); color: var(--text); height: 42px; position: relative; top: 1px; border-top-color: var(--border-hi); }
 .dk-main { flex: 1 0 auto; padding: 0 var(--dk-pad) 12px; }
 .dk-sheet { background: var(--bg-surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 var(--r-lg) var(--r-lg); box-shadow: var(--shadow-sheet); padding: 0 20px 14px; display: flex; flex-direction: column; gap: 10px; }
 .dk-panel-tabs { margin: 0 -20px 2px; padding: 0 20px; }
@@ -217,7 +218,7 @@
 @media (max-width: 720px) {
   .dk .dd-btn, .dk .dd-input, .dk .dd-select, .dk .dd-opt, .dk .dk-undo, .dk .dk-status, .dk .dk-timer, .dk .dk-mbtn, .dk .dk-mitem, .dk .dk-palette-hint, .dk .dd-tab { min-height: 44px; }
   .dk .dd-tab { height: 44px; }
-  .dk .dd-tab[aria-selected="true"], .dk .dd-tab[aria-current="page"] { height: 46px; }
+  .dk .dd-tab[aria-selected="true"], .dk .dd-tab[aria-current="page"], .dk .dd-tab[data-current] { height: 46px; }
   .dk-brand { min-height: 44px; }
   .dk-keys { flex-wrap: wrap; width: 100%; }
   .dk-keys .dd-keycap--big { width: auto; flex: 1 1 56px; min-width: 56px; min-height: 56px; }
@@ -338,7 +339,7 @@ details[open] > .dk-sum::before { transform: rotate(45deg); }
   .dk-sheet .dd-tabs--index .dd-tab, .dk-sheet .dd-tabs--index .dd-tab[aria-selected="true"] { height: 30px; min-height: 30px; font-size: 14px; }
   .dk-binder { padding-top: 4px; }
   .dk-binder .dd-tab, .dk-binder .dd-tab[aria-current="page"] { height: 30px; min-height: 30px; font-size: 14px; }
-  .dk-binder .dd-tab[aria-current="page"] { height: 32px; }
+  .dk-binder .dd-tab[aria-current="page"], .dk-binder .dk-tab[data-current] { height: 32px; }
   .dk-sheet .dd-input, .dk-sheet .dd-select { min-height: 32px; height: 32px; font-size: 14px; }
   .dk-sheet .dd-input--slot { height: 48px; width: 84px; font-size: 28px; }
   .dk-sheet .dd-btn { min-height: 32px; padding: 0 12px; font-size: 14px; }
@@ -432,3 +433,13 @@ details[open] > .dk-sum::before { transform: rotate(45deg); }
 /* Undrop preview: Current and New side by side for each pairing that changes. */
 .dk-undrop-change { display: grid !important; grid-template-columns: 1fr auto 1fr; align-items: start !important; gap: 10px !important; }
 .dk-undrop-side { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+/* Tournament tabs: the link, then a small close button inside the same tab */
+.dk-binder .dk-tab { padding: 0; gap: 0; flex: 0 0 auto; }
+.dk-tab-link { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 100%; padding: 0 4px 0 16px; color: inherit; text-decoration: none; min-width: 0; }
+.dk-tab-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.dk-tab-link[aria-busy="true"] { opacity: 0.6; }
+.dk-tab-x { display: inline-flex; align-items: center; justify-content: center; align-self: center; width: 24px; height: 24px; margin-right: 6px; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-3, var(--text-2)); font: 600 16px/1 var(--font-body); cursor: pointer; opacity: 0.6; }
+.dk-tab:hover .dk-tab-x, .dk-tab[data-current] .dk-tab-x, .dk-tab-x:focus-visible { opacity: 1; }
+.dk-tab-x:hover { background: var(--bg-elevated); color: var(--text); }
+.dk-binder { scrollbar-width: thin; }
