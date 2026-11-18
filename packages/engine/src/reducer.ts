@@ -150,6 +150,50 @@ function addManualMatch(state: EventState, round: Round, match: Match, table?: n
   round.matches.push(match);
 }
 
+/** Insert an unseated returnee into the current score groups without erasing results. */
+function repairUndrop(state: EventState, round: Round, returning: Player, random: () => number, ids: Set<string>): void {
+  const field = competitors(state);
+  const seated = new Set(round.matches.flatMap(m => m.p2 === null ? [m.p1] : [m.p1, m.p2]));
+  const unpaired = field.find(p => p.id !== returning.id && p.status === "active" && !seated.has(p.id));
+  if (unpaired) {
+    addManualMatch(state, round, makeMatch(returning.id, unpaired.id, round.number, random, ids));
+    return;
+  }
+
+  // Current results (including automatic byes) must not change the pairing groups.
+  const points = new Map(standings({ ...state, rounds: state.rounds.filter(r => r.number < round.number) })
+    .map(s => [s.playerId, s.matchPoints]));
+  const score = (id: string) => points.get(id) ?? 0;
+  const byId = new Map(field.map(p => [p.id, p]));
+  const available = round.matches.filter(m => m.result === null && m.reports.length === 0
+    && byId.get(m.p1)?.status === "active" && (m.p2 === null || byId.get(m.p2)?.status === "active"));
+  const group = (m: Match) => m.p2 === null ? score(m.p1) : Math.max(score(m.p1), score(m.p2));
+  available.sort((a, b) => group(b) - group(a) || (a.table ?? Infinity) - (b.table ?? Infinity));
+  let carried = returning;
+  for (const match of available) {
+    if (group(match) > score(carried.id)) continue;
+    if (match.p2 === null) {
+      // Only an explicitly unreported bye can be consumed. Scored byes stay intact.
+      const fixed = byId.get(match.p1)!.fixedTable;
+      if (fixed !== null && carried.fixedTable !== null && fixed !== carried.fixedTable) continue;
+      const table = fixed ?? carried.fixedTable;
+      const width = teamSize(state);
+      if (table !== null && round.matches.some(m => m.table !== null && table < m.table + width && m.table < table + width)) continue;
+      round.matches = round.matches.filter(m => m.id !== match.id);
+      addManualMatch(state, round, { ...match, p2: carried.id });
+      return;
+    }
+    // Keep all existing tables, including team table blocks and fixed seats.
+    if (carried.fixedTable !== null && carried.fixedTable !== match.table) continue;
+    const a = score(match.p1), b = score(match.p2);
+    const seat = a < b || (a === b && random() < 0.5) ? "p1" : "p2";
+    const displaced = byId.get(match[seat]!)!;
+    match[seat] = carried.id;
+    carried = displaced;
+  }
+  addManualMatch(state, round, makeMatch(carried.id, null, round.number, random, ids));
+}
+
 function orderAtCut(state: EventState, size: number, tieOrder: string[] | undefined, random: () => number) {
   const rows = standings(state).filter(s => s.status === "active");
   let start = size - 1, end = size;
@@ -498,8 +542,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
         const round = currentRound(state);
         requireCondition(!round.matches.some(m => m.p1 === p.id || m.p2 === p.id), "PLAYER_ALREADY_PAIRED", "This player already has a current-round match. Use next round or correct that result.");
         if (command.option === "repair") {
-          const other = competitors(state).find(q => q.id !== p.id && q.status === "active" && !round.matches.some(m => m.p1 === q.id || m.p2 === q.id));
-          addManualMatch(state, round, makeMatch(p.id, other?.id ?? null, round.number, random, ids));
+          repairUndrop(state, round, p, random, ids);
         } else if (command.option === "swap_previous_opponent") {
           const former = [...state.rounds].reverse().filter(r => r !== round).flatMap(r => r.matches).find(m => m.p2 !== null && (m.p1 === p.id || m.p2 === p.id));
           requireCondition(former, "NO_FORMER_OPPONENT", "The returning player has no previous opponent.");
