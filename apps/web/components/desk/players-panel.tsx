@@ -59,6 +59,8 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
   const [message, setMessage] = useState<{ bad: boolean; text: string } | null>(null);
   const [confirmDrop, setConfirmDrop] = useState(false);
   const search = useAccountSearch(code);
+  // Show the account list right away so the Name lookup column is never an empty box.
+  useEffect(() => { void search.run(""); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const filterRef = useRef<HTMLInputElement>(null);
   const idRef = useRef<HTMLInputElement>(null);
 
@@ -185,13 +187,13 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
 
     <div className="dk-split">
       <section aria-labelledby="enrolled-h" className="dk-split-main">
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+        <div className="dk-listhead">
           <h2 id="enrolled-h" className="dk-h2">Enrolled Players:</h2>
           <span className="dd-meta">{stats.total} enrolled · {stats.active} active ({stats.checked} checked in){stats.dropped ? ` · ${stats.dropped} dropped` : ""}{stats.cut ? ` · ${stats.cut} cut` : ""}</span>
+          <Field label={<>Filter <span className="dk-mono" style={{ textTransform: "none" }}>Ctrl+F</span></>} className="dk-filter">
+            <Input ref={filterRef} type="search" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Name, COSSY ID or Discord" autoComplete="off" />
+          </Field>
         </div>
-        <Field label={<>Filter players <span className="dk-mono" style={{ textTransform: "none" }}>Ctrl+F</span></>}>
-          <Input ref={filterRef} type="search" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Name, COSSY ID or Discord" autoComplete="off" />
-        </Field>
         <div className="dd-scroll-x dk-scroll"><div className="dk-table" style={{ "--w": open ? "760px" : "660px" } as React.CSSProperties}>
           <div aria-hidden="true" className="dk-ph dd-caps" data-pts={open}><span>Name</span><span>COSSY ID</span><span>Discord</span><span>Status</span>{open && <span>Points</span>}</div>
           {shown.length === 0 && <p className="dk-empty">{state.players.length ? "No player matches that filter." : "No players yet. Search accounts on the right and press Enroll."}</p>}

@@ -1,5 +1,5 @@
 /* Organizer desk. Builds on the dd-* components and tokens in app/globals.css; everything here is dk-* and desk-only. */
-.dk { --dk-pad: max(16px, calc((100vw - 1400px) / 2)); min-height: 100vh; display: flex; flex-direction: column; background: var(--bg-deep); color: var(--text); }
+.dk { --dk-pad: max(16px, calc((100vw - 1680px) / 2)); min-height: 100vh; display: flex; flex-direction: column; background: var(--bg-deep); color: var(--text); }
 .dk .dk-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* Spine: menu bar */
@@ -329,3 +329,79 @@ details[open] > .dk-sum::before { transform: rotate(45deg); }
 
 
 .dk-team-members > span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Compact desk, like the old desktop program: dense rows and controls so a full list fits on one screen. Desktop only; phones keep touch sizes. */
+@media (min-width: 721px) {
+  .dk-sheet { gap: 4px; padding: 0 16px 6px; }
+  .dk-panel-tabs { margin: 0 -16px 0; padding: 0 16px; }
+  .dk-spine { min-height: 32px; }
+  .dk-status-bar { min-height: 28px; padding-top: 2px; padding-bottom: 2px; }
+  .dk-sheet .dd-tabs--index .dd-tab, .dk-sheet .dd-tabs--index .dd-tab[aria-selected="true"] { height: 30px; min-height: 30px; font-size: 14px; }
+  .dk-binder { padding-top: 4px; }
+  .dk-binder .dd-tab, .dk-binder .dd-tab[aria-current="page"] { height: 30px; min-height: 30px; font-size: 14px; }
+  .dk-binder .dd-tab[aria-current="page"] { height: 32px; }
+  .dk-sheet .dd-input, .dk-sheet .dd-select { min-height: 32px; height: 32px; font-size: 14px; }
+  .dk-sheet .dd-input--slot { height: 48px; width: 84px; font-size: 28px; }
+  .dk-sheet .dd-btn { min-height: 32px; padding: 0 12px; font-size: 14px; }
+  .dk-sheet .dd-field { gap: 3px; }
+  .dk-sheet .dd-btn--block { min-height: 36px; }
+  .dk-slip { padding: 6px 12px; }
+  .dk-pane { gap: 4px; }
+  .dk-field-row { gap: 8px 10px; }
+  .dk-field-row > .dd-field { flex: 0 1 190px; }
+  .dk-field-row > .dd-field--id { flex: 0 1 130px; }
+  .dk-slip > .dk-note { flex: 1 1 260px; min-width: 220px; align-self: center; margin: 0; gap: 0 12px; line-height: 1.3; }
+  .dk-main { padding-bottom: 6px; }
+  .dk-lookup { align-self: flex-start; max-height: 100%; }
+  .dk-h2 { font-size: 18px; }
+  .dk-listhead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+  .dk-listhead .dk-filter { flex: 1 1 260px; max-width: 420px; margin-left: auto; flex-direction: row; align-items: center; gap: 8px; }
+  .dk-listhead .dk-filter > .dd-caps { white-space: nowrap; }
+  .dk-split { gap: 12px; }
+  .dk-split-main { gap: 4px; }
+  .dk-lookup { padding: 10px 12px; gap: 8px; }
+  .dk-lookup > .dd-meta { line-height: 1.35; }
+  .dk-acc li { padding: 6px 10px; }
+  /* Rows: 30px with a 1px gap. */
+  .dk-plist, .dk-list, .dk-table, .dk-grid, .dk-plist > .dk-trow { gap: 1px; }
+  .dk-prow { min-height: 30px; gap: 10px; }
+  .dk-prow-main { padding: 2px 0 2px 12px; font-size: 14px; gap: 10px; }
+  .dk-mrow, .dk-srow { min-height: 30px; font-size: 14px; }
+  .dk-plist > .dk-trow { min-height: 34px; }
+  .dk-trow-main { padding: 3px 0 3px 12px; gap: 1px; }
+  .dk-tnum, .dk-rank { font-size: 16px; }
+  .dk-ph, .dk-gh, .dk-sh { padding-bottom: 2px; }
+  .dk-status { min-height: 24px; padding: 0 8px; }
+  .dk-pts .dd-btn { min-height: 24px; height: 24px; min-width: 28px; padding: 0 6px; }
+  .dk-pts-val { font-size: 14px; min-width: 28px; }
+  .dk-tag { padding: 1px 4px; }
+  /* Shortcut tray: 34px tiles. */
+  .dk-tray { padding-top: 4px; padding-bottom: 6px; gap: 6px; }
+  .dk-tray-col { gap: 3px; }
+  .dk-tray-grp { padding: 3px; }
+  .dk-tile { height: 34px; gap: 2px; font-size: 12px; }
+  .dk-tile .dd-keycap { height: 14px; min-width: 18px; font-size: 10px; padding: 0 4px; box-shadow: 0 1px 0 var(--keycap-edge); }
+  /* Pairings: smaller entry slip and side column. */
+  .dk-entry { gap: 4px; }
+  .dk-entry-row { gap: 10px; }
+  .dk-slot-label { gap: 3px; }
+  .dk-keys { gap: 6px; }
+  .dk-keys .dd-keycap--big { width: 68px; height: 48px; gap: 2px; font-size: 17px; box-shadow: 0 2px 0 var(--keycap-edge); }
+  .dk-keys .dd-keycap--big small { font-size: 10px; max-width: 64px; overflow: hidden; text-overflow: ellipsis; }
+  .dk-echo-row { min-height: 20px; }
+  .dk-echo { font-size: 14px; }
+  .dk-timer { min-height: 32px; font-size: 14px; }
+  .dk-cols { gap: 14px; }
+  .dk-col-main { gap: 4px; }
+  .dk-col-side { gap: 8px; flex-basis: 340px; }
+  .dk-slips-card { gap: 6px; }
+  .dk-slips-card { padding: 8px 12px; }
+  .dk-tick { height: 12px; }
+  .dk-sel { padding: 8px 12px; gap: 6px; }
+  .dk-sel:not(:has(.dk-sel-head)) { padding: 6px 12px; }
+  .dk-pairside .dd-btn { height: 36px; }
+  .dk-pairside { gap: 2px; }
+  .dk-opt { min-height: 26px; }
+  .dk-sec { gap: 8px; }
+  .dk-cutline { padding: 2px 0; }
+}
