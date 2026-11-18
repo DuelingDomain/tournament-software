@@ -14,6 +14,21 @@ describe("bracket golden fixtures", () => {
     expect(s.rounds[0].matches.filter(m => m.p2 === null).every(m => m.result === "bye_win" && m.table === null)).toBe(true);
   });
 
+  it("honors the first fixed seat without changing the order of top-eight feeders", () => {
+    let s = event(8);
+    s = run(s, { type: "UpdatePlayer", playerId: s.players[0].id, fixedTable: 20 });
+    s = run(s, { type: "UpdatePlayer", playerId: s.players[7].id, fixedTable: 10 });
+    s = run(s, { type: "UpdatePlayer", playerId: s.players[3].id, fixedTable: 15 });
+    s = run(s, { type: "CutToPlayoff", size: 8 });
+    expect(s.rounds[0].matches[0]).toMatchObject({ p1: s.cut[0], p2: s.cut[7], table: 20 });
+
+    s = run(scoreAll(s), { type: "PairNextRound" });
+    expect(s.rounds[1].matches).toMatchObject([
+      { p1: s.cut[0], p2: s.cut[3], table: 20 },
+      { p1: s.cut[1], p2: s.cut[2] },
+    ]);
+  });
+
   it("selects the required cutoff ties for playoffs and allows extra ties for Top X", () => {
     const s = fixture([[[0, 1, "draw"], [2, 3, "draw"], [4, 5, "draw"]]], 6);
     const ids = s.players.map(p => p.id);
@@ -93,8 +108,8 @@ describe("bracket golden fixtures", () => {
     withWithdrawal = run(withWithdrawal, { type: "DropPlayer", playerId: initial[2].p1 });
     const next = run(withWithdrawal, { type: "PairNextRound" }).rounds[1];
     expect(next.matches).toMatchObject([
-      { p1: initial[0].p1, p2: null, result: null },
-      { p1: initial[1].p1, p2: initial[3].p1, result: null },
+      { p1: initial[0].p1, p2: initial[1].p1, result: null },
+      { p1: initial[3].p1, p2: null, result: null },
     ]);
   });
 
@@ -105,7 +120,7 @@ describe("bracket golden fixtures", () => {
     expect(s.cut).not.toEqual(source.players.map(p => p.id));
     expect(s.rounds[0].matches.filter(m => m.p2 === null).map(m => m.p1)).toEqual([s.cut[0], s.cut[1]]);
     expect(s.rounds[0].matches.filter(m => m.p2 !== null).map(m => m.table)).toEqual([11, 13]);
-    expect(standings(s).map(r => r.matchPoints)).toEqual([3, 3, 0, 0, 0, 0]);
+    expect(standings(s, { throughRound: 1 }).map(r => r.matchPoints)).toEqual([3, 3, 0, 0, 0, 0]);
     expect(run(s, { type: "CancelRound" }).phase).toBe("registration");
   });
 

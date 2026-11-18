@@ -25,16 +25,13 @@ export function initialBracket(state: EventState, entrants: string[], seed: numb
     if (a === null && b === null) continue;
     matches.push(makeMatch(a ?? b!, a === null ? null : b, number, random, ids));
   }
-  assignTables(matches, competitors(state), state.settings.startingTable, true, teamSize(state));
+  assignTables(matches, competitors(state), state.settings.startingTable, "prefer", teamSize(state));
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
 }
 
+/** Match array order determines the playoff feeders. */
 export function bracketMatchesInOrder(matches: readonly Match[]): Match[] {
-  const ordered = [...matches];
-  if (ordered.every(m => (m.table ?? m.byeTable) !== undefined)) {
-    ordered.sort((a, b) => (a.table ?? a.byeTable!) - (b.table ?? b.byeTable!));
-  }
-  return ordered;
+  return [...matches];
 }
 
 export function advanceBracket(state: EventState, seed: number, random: () => number, ids: Set<string>): Round {
@@ -44,7 +41,7 @@ export function advanceBracket(state: EventState, seed: number, random: () => nu
   if (previous.matches.length <= 1) throw new CommandError("BRACKET_FINISHED", "The final is decided. Complete the event to finish.");
   const number = previous.number + 1;
   const active = new Set(competitors(state).filter(p => p.status === "active").map(p => p.id));
-  const advancing = bracketMatchesInOrder(previous.matches).map(match => {
+  const advancing = previous.matches.map(match => {
     const id = winner(match);
     return id !== null && active.has(id) ? id : null;
   });
@@ -56,7 +53,7 @@ export function advanceBracket(state: EventState, seed: number, random: () => nu
     match.result = null;
     matches.push(match);
   }
-  assignTables(matches, competitors(state), state.settings.startingTable, true, teamSize(state));
+  assignTables(matches, competitors(state), state.settings.startingTable, "prefer", teamSize(state));
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
 }
 
