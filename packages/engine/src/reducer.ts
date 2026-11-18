@@ -3,7 +3,7 @@ import { DEFAULT_INFRACTIONS } from "./defaults.js";
 import { createRng, randomId, shuffle } from "./rng.js";
 import { assignTables, makeMatch, pairSwiss } from "./pairing.js";
 import { advanceBracket, initialBracket, refreshEliminations } from "./bracket.js";
-import { compareStandings, standings, winner } from "./standings.js";
+import { encodedPoints, standings, winner } from "./standings.js";
 import { isTemporaryMemberId, normalizeMemberId } from "./member-id.js";
 import { competitors, competitorId, nextTeamId, syncTeamMembers, teamForPlayer, teamSize, validateTeamMembers } from "./competitors.js";
 import { recordActivity } from "./activity.js";
@@ -236,19 +236,32 @@ function swapCurrentOpponents(round: Round, a: string, b: string): void {
   }
 }
 
-function orderAtCut(state: EventState, size: number, tieOrder: string[] | undefined, random: () => number) {
-  const rows = standings(state).filter(s => s.status === "active");
-  let start = size - 1, end = size;
-  if (size > 0 && rows[size] && compareStandings(rows[size - 1], rows[size]) === 0) {
-    while (start > 0 && compareStandings(rows[start - 1], rows[size - 1]) === 0) start--;
-    while (end < rows.length && compareStandings(rows[end], rows[size - 1]) === 0) end++;
-    const tied = rows.slice(start, end);
-    const order = tieOrder ?? shuffle(tied.map(s => s.playerId), random);
-    requireCondition(order.length === tied.length && new Set(order).size === tied.length && order.every(id => tied.some(s => s.playerId === id)), "INVALID_TIE_ORDER", "Tie order must list every player tied across the cut line exactly once.");
-    const byId = new Map(tied.map(s => [s.playerId, s]));
-    rows.splice(start, tied.length, ...order.map(id => byId.get(id)!));
-  } else requireCondition(tieOrder === undefined, "INVALID_TIE_ORDER", "There is no tie across the cut line to override.");
-  return rows;
+function playersAtCut(state: EventState, size: number, tieOrder: string[] | undefined, allowExtras: boolean): string[] {
+  const rows = standings(state).filter(row => row.status === "active");
+  const cutoff = rows[size - 1];
+  const next = rows[size];
+  if (!cutoff || !next || encodedPoints(cutoff) !== encodedPoints(next)) {
+    requireCondition(tieOrder === undefined, "INVALID_TIE_ORDER", "There is no tie across the cut line.");
+    return rows.slice(0, size).map(row => row.playerId);
+  }
+  const points = encodedPoints(cutoff);
+  let start = size - 1;
+  let end = size + 1;
+  while (start > 0 && encodedPoints(rows[start - 1]) === points) start--;
+  while (end < rows.length && encodedPoints(rows[end]) === points) end++;
+  if (allowExtras && tieOrder === undefined) return rows.slice(0, end).map(row => row.playerId);
+  requireCondition(tieOrder !== undefined, "CUT_TIE_SELECTION_REQUIRED", "Select which tied competitors advance.");
+
+  const tied = rows.slice(start, end).map(row => row.playerId);
+  const required = size - start;
+  const tiedIds = new Set(tied);
+  const selected = new Set(tieOrder);
+  requireCondition(selected.size === tieOrder.length && tieOrder.every(id => tiedIds.has(id))
+    && (allowExtras ? selected.size >= required : selected.size === required || selected.size === tied.length),
+    "INVALID_TIE_ORDER", allowExtras ? "Select at least enough tied competitors to fill the cut." : "Select exactly enough tied competitors to fill the cut.");
+  // A full playoff tie order is also accepted from callers that select by prefix.
+  const admitted = allowExtras ? selected : new Set(tieOrder.slice(0, required));
+  return [...rows.slice(0, start).map(row => row.playerId), ...tied.filter(id => admitted.has(id))];
 }
 
 function editable(match: Match): void {
@@ -626,8 +639,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       allResults(state);
       const size = command.size ?? state.settings.topCut;
       requireCondition(Number.isInteger(size) && size >= 2 && size <= competitors(state).filter(p => p.status === "active").length, "INVALID_CUT", "Choose a cut size of at least two and no larger than the active field.");
-      const rows = orderAtCut(state, size, command.tieOrder, random);
-      state.cut = rows.slice(0, size).map(s => s.playerId);
+      state.cut = playersAtCut(state, size, command.tieOrder, false);
       for (const p of competitors(state)) if (p.status === "active" && !state.cut.includes(p.id)) p.status = "cut";
       state.phase = "playoff";
       for (const cut of state.swissCuts) cut.roundPairedAfter = true;
@@ -639,9 +651,10 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       allResults(state);
       const active = competitors(state).filter(p => p.status === "active");
       requireCondition(Number.isInteger(command.value) && command.value >= 0 && (command.mode !== "top" || command.value <= active.length), "INVALID_CUT", "Choose a nonnegative cut value within the active field for a top cut.");
-      const rows = command.mode === "top" ? orderAtCut(state, command.value, command.tieOrder, random) : standings(state).filter(s => s.status === "active");
-      requireCondition(command.mode === "top" || command.tieOrder === undefined, "INVALID_TIE_ORDER", "Minimum points cuts do not use a tie order.");
-      const cutPlayers = (command.mode === "top" ? rows.slice(command.value) : rows.filter(s => s.matchPoints < command.value)).map(s => s.playerId);
+      requireCondition(command.mode === "top" || command.tieOrder === undefined, "INVALID_TIE_ORDER", "Minimum points cuts do not use a tie selection.");
+      const survivors = new Set(command.mode === "top" ? playersAtCut(state, command.value, command.tieOrder, true)
+        : standings(state).filter(row => row.status === "active" && row.matchPoints >= command.value).map(row => row.playerId));
+      const cutPlayers = active.filter(p => !survivors.has(p.id)).map(p => p.id);
       for (const id of cutPlayers) player(state, id).status = "cut";
       state.swissCuts.push({ afterRound: currentRound(state).number, mode: command.mode, value: command.value, cutPlayers });
       if (command.pairNext) pairNextRound(state, ctx, random, ids);

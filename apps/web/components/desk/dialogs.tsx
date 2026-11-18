@@ -41,20 +41,25 @@ export function TimerDialog({ desk, role, send, onClose }: Base & { role: StaffR
 export function CutDialog({ desk, send, onClose, onDone }: Base & { onDone: (text: string) => void }) {
   const { state } = desk;
   const rows = desk.standings.filter(s => s.status === "active");
-  const sizes = [2, 4, 8, 16, 32, 64].filter(n => n <= rows.length);
+  const maxPlayoffSize = Math.min(64, rows.length);
   const [mode, setMode] = useState<"playoff" | "top" | "min_points">("playoff");
-  const [size, setSize] = useState(sizes.includes(state.settings.topCut) ? state.settings.topCut : sizes.includes(8) ? 8 : sizes.at(-1) ?? 2);
+  const [size, setSize] = useState(state.settings.topCut >= 2 && state.settings.topCut <= maxPlayoffSize
+    ? state.settings.topCut : Math.max(2, Math.min(8, maxPlayoffSize)));
   const [top, setTop] = useState(Math.max(2, Math.min(rows.length, 8)));
   const [points, setPoints] = useState(9);
   const n = mode === "playoff" ? size : top;
   const tied = mode !== "min_points" && rows[n] && rows[n - 1] && rows[n]!.rank === rows[n - 1]!.rank ? rows.filter(r => r.rank === rows[n - 1]!.rank) : [];
-  const [order, setOrder] = useState<string[] | null>(null);
-  const tieOrder = tied.length ? (order && order.length === tied.length && order.every(id => tied.some(t => t.playerId === id)) ? order : tied.map(t => t.playerId)) : undefined;
+  const [selection, setSelection] = useState<string[] | null>(null);
+  const selected = selection?.every(id => tied.some(row => row.playerId === id)) ? selection : [];
+  const required = tied.length ? n - rows.indexOf(tied[0]) : 0;
+  const validSelection = tied.length === 0 || (mode === "playoff" ? selected.length === required : selected.length >= required);
+  const validSize = mode === "min_points" ? Number.isInteger(points) && points >= 0
+    : Number.isInteger(n) && n >= 2 && n <= (mode === "playoff" ? maxPlayoffSize : rows.length);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const lastCut = state.swissCuts.at(-1);
   const names = playerById(state);
-  const move = (i: number, d: number) => { const o = [...(tieOrder ?? [])]; const j = i + d; if (j < 0 || j >= o.length) return; [o[i], o[j]] = [o[j]!, o[i]!]; setOrder(o); };
+  const tieOrder = tied.length ? selected : undefined;
 
   async function apply() {
     setBusy(true); setErr(null);
@@ -67,28 +72,25 @@ export function CutDialog({ desk, send, onClose, onDone }: Base & { onDone: (tex
   }
   return <Dialog open onClose={onClose} title="Cut to Playoffs" actions={<>
     <Button onClick={onClose}>Cancel</Button>
-    <Button variant="rose" disabled={busy || rows.length < 2 || (mode === "playoff" && sizes.length === 0)} onClick={() => void apply()}>{mode === "playoff" ? "Cut and pair playoffs" : "Apply Day-2 cut and pair"}</Button>
+    <Button variant="rose" disabled={busy || rows.length < 2 || !validSize || !validSelection} onClick={() => void apply()}>{mode === "playoff" ? "Cut and pair playoffs" : "Apply Day-2 cut and pair"}</Button>
   </>}>
     <Wide />
     <div role="radiogroup" aria-label="Cut type">
-      <Radio name="cut-mode" label="Single-elimination playoffs: the top players play a bracket" checked={mode === "playoff"} onChange={() => setMode("playoff")} />
-      <Radio name="cut-mode" label="Day-2 cut by rank: keep the top players, Swiss continues" checked={mode === "top"} onChange={() => setMode("top")} />
-      <Radio name="cut-mode" label="Day-2 cut by points: drop players under a point total, Swiss continues" checked={mode === "min_points"} onChange={() => setMode("min_points")} />
+      <Radio name="cut-mode" label="Single-elimination playoffs: the top players play a bracket" checked={mode === "playoff"} onChange={() => { setMode("playoff"); setSelection(null); }} />
+      <Radio name="cut-mode" label="Day-2 cut by rank: keep the top players, Swiss continues" checked={mode === "top"} onChange={() => { setMode("top"); setSelection(null); }} />
+      <Radio name="cut-mode" label="Day-2 cut by points: drop players under a point total, Swiss continues" checked={mode === "min_points"} onChange={() => { setMode("min_points"); setSelection(null); }} />
     </div>
     <div className="dk-dlg-row">
-      {mode === "playoff" && <Field label="Players in the bracket"><Select value={size} onChange={e => { setSize(Number(e.target.value)); setOrder(null); }}>{sizes.map(s => <option key={s} value={s}>Top {s}</option>)}</Select></Field>}
-      {mode === "top" && <Field label="Players to keep"><Input type="number" min={2} max={rows.length} value={top} onChange={e => { setTop(Number(e.target.value)); setOrder(null); }} /></Field>}
+      {mode === "playoff" && <Field label="Players in the bracket"><Input type="number" min={2} max={maxPlayoffSize} value={size} onChange={e => { setSize(Number(e.target.value)); setSelection(null); }} /></Field>}
+      {mode === "top" && <Field label="Players to keep"><Input type="number" min={2} max={rows.length} value={top} onChange={e => { setTop(Number(e.target.value)); setSelection(null); }} /></Field>}
       {mode === "min_points" && <Field label="Minimum match points to stay"><Input type="number" min={0} value={points} onChange={e => setPoints(Number(e.target.value))} /></Field>}
     </div>
-    {tied.length > 0 && <div role="group" aria-label="Seeding order at the cut" className="dk-slip" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <b style={{ fontWeight: 600 }}>{tied.length} players are tied across the cut line</b>
-      <span className="dd-meta">The first {tied.filter((_, i) => (tied[0] ? rows.indexOf(tied[0]) + i : i) < n).length} in this order make the cut. Move players up or down to decide, or keep the order as it is.</span>
-      <ul className="dk-dlg-list">{(tieOrder ?? []).map((id, i) => {
-        const inCut = rows.indexOf(tied[0]!) + i < n;
-        return <li key={id}><span style={{ flex: 1 }}>{names.get(id)?.name}</span><span className="dd-chip dd-chip--muted">{inCut ? "In" : "Out"}</span>
-          <Button size="sm" onClick={() => move(i, -1)} disabled={i === 0} aria-label={`Move ${names.get(id)?.name} up`}>Up</Button>
-          <Button size="sm" onClick={() => move(i, 1)} disabled={i === (tieOrder?.length ?? 0) - 1} aria-label={`Move ${names.get(id)?.name} down`}>Down</Button></li>;
-      })}</ul>
+    {tied.length > 0 && <div role="group" aria-label="Tied competitors" className="dk-slip" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <b style={{ fontWeight: 600 }}>{tied.length} players are tied at the cut</b>
+      <span className="dd-meta">{mode === "playoff" ? `Select exactly ${required} to advance.` : `Select at least ${required} to advance.`}</span>
+      {tied.map(row => <Checkbox key={row.playerId} label={names.get(row.playerId)?.name ?? row.name}
+        checked={selected.includes(row.playerId)} onChange={e => setSelection(e.target.checked
+          ? [...selected, row.playerId] : selected.filter(id => id !== row.playerId))} />)}
     </div>}
     {lastCut && !lastCut.roundPairedAfter && state.phase !== "playoff" && <div className="dk-dlg-row" style={{ alignItems: "center" }}>
       <span className="dd-meta" style={{ flex: "1 1 auto" }}>A Day-2 cut after round {lastCut.afterRound} is in place ({lastCut.cutPlayers.length} players cut).</span>
@@ -117,15 +119,15 @@ export function UndropDialog({ code, desk, send, onClose, onDone }: Base & { cod
   // The returning player's match in the previous round, and the opponent who is still active.
   const prev = round ? state.rounds.find(r => r.number === round.number - 1)?.matches.find(m => m.p1 === playerId || m.p2 === playerId) : undefined;
   const prevOpp = prev ? names.get(prev.p1 === playerId ? prev.p2 ?? "" : prev.p1) : undefined;
-  const oppSeat = prevOpp && prevOpp.status === "active" ? round?.matches.find(m => (m.p1 === prevOpp.id || m.p2 === prevOpp.id) && m.result === null && m.p2 !== null) : undefined;
-  const byeMatch = round?.matches.find(m => m.p2 === null && m.result === "bye_win" && names.get(m.p1)?.status === "active");
+  const oppSeat = prevOpp && prevOpp.status === "active" ? round?.matches.find(m => (m.p1 === prevOpp.id || m.p2 === prevOpp.id) ) : undefined;
+  const byeMatch = round?.matches.find(m => m.p2 === null && m.result === "bye_win");
   const live = !!round && state.phase === "swiss";
   const why: Record<UndropOption, string | null> = {
     swap_previous_opponent: !live ? "Needs a paired round." : paired ? "Already paired this round." : !oppSeat ? "Last round's opponent has no open seat in this round." : null,
     swap_with_dropped: "Use the swap option above.",
     take_bye: !live ? "Needs a paired round." : paired ? "Already paired this round." : !byeMatch ? "Nobody has a bye this round." : null,
-    bye_win: !live ? "Needs a paired round." : paired ? "Already paired this round." : null,
-    bye_loss: !live ? "Needs a paired round." : paired ? "Already paired this round." : null,
+    bye_win: !live ? "Needs a paired round." : null,
+    bye_loss: !live ? "Needs a paired round." : null,
     repair: !live ? "Needs a paired round." : paired ? "Already paired this round." : null,
     next_round: null,
   };
@@ -273,7 +275,11 @@ export function ChangeResultDialog({ desk, send, onClose, onDone }: Base & { onD
   const [swapPlayers, setSwapPlayers] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const names = playerById(state);
-  const match = state.rounds.find(r => r.number === round)?.matches.find(m => m.table === Number(table));
+  const selectedRound = state.rounds.find(r => r.number === round);
+  const match = selectedRound?.matches.find(m => (m.table ?? m.byeTable) === Number(table));
+  const bye = !!match && match.p2 === null;
+  const canDraw = selectedRound?.stage !== "playoff" && !bye;
+  const canAwardP2 = !bye || selectedRound?.stage !== "playoff";
   const p1 = match && names.get(match.p1)?.name, p2 = match?.p2 ? names.get(match.p2)?.name : null;
   const currentMatches = state.rounds.at(-1)?.matches ?? [];
   const first = currentMatches.find(m => match && (m.p1 === match.p1 || m.p2 === match.p1));
@@ -281,21 +287,22 @@ export function ChangeResultDialog({ desk, send, onClose, onDone }: Base & { onD
   const canSwap = !!first && !!second && first !== second;
   async function run() {
     if (!match) { setErr(`No table ${table || "?"} in round ${round}.`); return; }
-    const res = await send({ type: "EnterResult", matchId: match.id, result: result === "clear" ? null : result, drop: result === "clear" ? "none" : drop, swapPlayers: canSwap && swapPlayers });
+    const corrected = result === "clear" ? null : bye ? (result === "p1" ? "bye_win" : "bye_loss") : result;
+    const res = await send({ type: "EnterResult", matchId: match.id, result: corrected, drop: result === "clear" ? "none" : drop, swapPlayers: canSwap && swapPlayers });
     if (!res.ok) { setErr(res.message); return; }
-    onDone(`Round ${round}, table ${match.table} updated.`); onClose();
+    onDone(`Round ${round}, table ${table} updated.`); onClose();
   }
-  return <Dialog open onClose={onClose} title="Change Match Result" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!match || !p2} onClick={() => void run()}>Change result</Button></>}>
+  return <Dialog open onClose={onClose} title="Change Match Result" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!match || (!canDraw && (result === "draw" || result === "double_loss")) || (!canAwardP2 && result === "p2")} onClick={() => void run()}>Change result</Button></>}>
     <div className="dk-dlg-row">
-      <Field label="Round"><Select value={round} onChange={e => setRound(Number(e.target.value))}>{state.rounds.map(r => <option key={r.number} value={r.number}>{roundTitle(r)}</option>)}</Select></Field>
-      <Field label="Table"><Input inputMode="numeric" value={table} onChange={e => setTable(e.target.value.replace(/\D/g, ""))} autoFocus /></Field>
+      <Field label="Round"><Select value={round} onChange={e => { setRound(Number(e.target.value)); setResult("p1"); setSwapPlayers(false); }}>{state.rounds.map(r => <option key={r.number} value={r.number}>{roundTitle(r)}</option>)}</Select></Field>
+      <Field label="Table"><Input inputMode="numeric" value={table} onChange={e => { setTable(e.target.value.replace(/\D/g, "")); setResult("p1"); setSwapPlayers(false); }} autoFocus /></Field>
     </div>
     {match ? <p style={{ margin: 0 }}><b style={{ fontWeight: 600 }}>{p1}</b> vs <b style={{ fontWeight: 600 }}>{p2 ?? "Bye"}</b> · now {match.result ? STAMP_TEXT[match.result] : "Unreported"}</p> : <p className="dd-meta" style={{ margin: 0 }}>Enter a table to load the match.</p>}
     <div role="radiogroup" aria-label="New result">
       <Radio name="cr" label={`${p1 ?? "Player 1"} Wins ( - )`} checked={result === "p1"} onChange={() => setResult("p1")} />
-      <Radio name="cr" label={`${p2 ?? "Player 2"} Wins ( + )`} checked={result === "p2"} onChange={() => setResult("p2")} />
-      <Radio name="cr" label="Draw ( * )" checked={result === "draw"} onChange={() => setResult("draw")} />
-      <Radio name="cr" label="Double Loss ( / )" checked={result === "double_loss"} onChange={() => setResult("double_loss")} />
+      {canAwardP2 && <Radio name="cr" label={`${p2 ?? (bye ? "Bye" : "Player 2")} Wins ( + )`} checked={result === "p2"} onChange={() => setResult("p2")} />}
+      {canDraw && <Radio name="cr" label="Draw ( * )" checked={result === "draw"} onChange={() => setResult("draw")} />}
+      {canDraw && <Radio name="cr" label="Double Loss ( / )" checked={result === "double_loss"} onChange={() => setResult("double_loss")} />}
       <Radio name="cr" label="Unreported ( $ )" checked={result === "clear"} onChange={() => setResult("clear")} />
     </div>
     {canSwap && <Checkbox checked={swapPlayers} onChange={e => setSwapPlayers(e.target.checked)} label="Swap players’ current opponents" />}

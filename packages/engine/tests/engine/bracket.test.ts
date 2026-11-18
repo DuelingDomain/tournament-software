@@ -14,22 +14,22 @@ describe("bracket golden fixtures", () => {
     expect(s.rounds[0].matches.filter(m => m.p2 === null).every(m => m.result === "bye_win" && m.table === null)).toBe(true);
   });
 
-  it("breaks a tie across the cut reproducibly, with an exact full-tie override", () => {
-    const s = event(8);
-    const a = run(s, { type: "CutToPlayoff", size: 4 }, 123);
-    expect(a).toEqual(run(s, { type: "CutToPlayoff", size: 4 }, 123));
-    expect(a.cut).not.toEqual(run(s, { type: "CutToPlayoff", size: 4 }, 456).cut);
-    const reverse = s.players.map(p => p.id).reverse();
-    expect(run(s, { type: "CutToPlayoff", size: 4, tieOrder: reverse }).cut).toEqual(reverse.slice(0, 4));
-    expect(() => run(s, { type: "CutToPlayoff", size: 4, tieOrder: reverse.slice(0, 4) })).toThrow(CommandError);
-    expect(() => run(s, { type: "CutToPlayoff", size: 4, tieOrder: Array(8).fill(reverse[0]) })).toThrow(CommandError);
+  it("selects the required cutoff ties for playoffs and allows extra ties for Top X", () => {
+    const s = fixture([[[0, 1, "draw"], [2, 3, "draw"], [4, 5, "draw"]]], 6);
+    const ids = s.players.map(p => p.id);
+    const selected = [ids[5], ids[3], ids[4]];
+    expect(() => run(s, { type: "CutToPlayoff", size: 2 })).toThrow(expect.objectContaining({ code: "CUT_TIE_SELECTION_REQUIRED" }));
+    expect(run(s, { type: "CutToPlayoff", size: 2, tieOrder: selected.slice(0, 2) }).cut).toEqual([ids[3], ids[5]]);
+    expect(() => run(s, { type: "CutToPlayoff", size: 2, tieOrder: selected })).toThrow(CommandError);
+    expect(run(s, { type: "SwissCut", mode: "top", value: 2 }).swissCuts[0].cutPlayers).toEqual([]);
+    expect(run(s, { type: "SwissCut", mode: "top", value: 2, tieOrder: selected }).swissCuts[0].cutPlayers).toEqual(ids.slice(0, 3));
   });
 
   it("takes only active players and requires all Swiss results", () => {
     let s = fixture([[[0, 1, "p1"], [2, 3, null]]]);
     expect(() => run(s, { type: "CutToPlayoff", size: 2 })).toThrow(/outstanding result/);
     s = scoreAll(s); s = run(s, { type: "DropPlayer", playerId: s.players[0].id });
-    const cut = run(s, { type: "CutToPlayoff", size: 2 });
+    const cut = run(s, { type: "CutToPlayoff", size: 2, tieOrder: [s.players[1].id] });
     expect(cut.cut).not.toContain(s.players[0].id);
     expect(cut.players[0].status).toBe("dropped");
     expect(cut.players.filter(p => p.status === "cut")).toHaveLength(1);
@@ -85,6 +85,17 @@ describe("bracket golden fixtures", () => {
     expect(s.rounds[1].matches).toHaveLength(2);
     expect(s.rounds[1].matches[1].p1).toBe(s.cut[1]);
     expect(s.rounds[1].matches[1].p2).toBe(s.cut[2]);
+
+    let withWithdrawal = run(event(8), { type: "CutToPlayoff", size: 8 });
+    const initial = withWithdrawal.rounds[0].matches;
+    [initial[1].table, initial[2].table] = [initial[2].table, initial[1].table];
+    withWithdrawal = scoreAll(withWithdrawal);
+    withWithdrawal = run(withWithdrawal, { type: "DropPlayer", playerId: initial[2].p1 });
+    const next = run(withWithdrawal, { type: "PairNextRound" }).rounds[1];
+    expect(next.matches).toMatchObject([
+      { p1: initial[0].p1, p2: null, result: null },
+      { p1: initial[1].p1, p2: initial[3].p1, result: null },
+    ]);
   });
 
   it("starts single elimination with a reproducible random bracket and padded byes", () => {

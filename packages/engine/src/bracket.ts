@@ -25,7 +25,7 @@ export function initialBracket(state: EventState, entrants: string[], seed: numb
     if (a === null && b === null) continue;
     matches.push(makeMatch(a ?? b!, a === null ? null : b, number, random, ids));
   }
-  assignTables(matches, competitors(state), state.settings.startingTable, false, teamSize(state));
+  assignTables(matches, competitors(state), state.settings.startingTable, true, teamSize(state));
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
 }
 
@@ -35,14 +35,24 @@ export function advanceBracket(state: EventState, seed: number, random: () => nu
   if (previous.matches.some(m => m.result === null)) throw new CommandError("MISSING_RESULTS", "Enter every result before advancing the bracket.");
   if (previous.matches.length <= 1) throw new CommandError("BRACKET_FINISHED", "The final is decided. Complete the event to finish.");
   const number = previous.number + 1;
-  const matches = [];
-  for (let i = 0; i < previous.matches.length; i += 2) {
-    const a = winner(previous.matches[i]);
-    const b = previous.matches[i + 1] ? winner(previous.matches[i + 1]) : null;
-    if (a === null && b === null) continue;
-    matches.push(makeMatch(a ?? b!, a === null ? null : b, number, random, ids));
+  const active = new Set(competitors(state).filter(p => p.status === "active").map(p => p.id));
+  const feeders = [...previous.matches];
+  if (feeders.every(m => (m.table ?? m.byeTable) !== undefined)) {
+    feeders.sort((a, b) => (a.table ?? a.byeTable!) - (b.table ?? b.byeTable!));
   }
-  assignTables(matches, competitors(state), state.settings.startingTable, false, teamSize(state));
+  const advancing = feeders.map(match => {
+    const id = winner(match);
+    return id !== null && active.has(id) ? id : null;
+  });
+  const matches = [];
+  for (let i = 0; i < advancing.length; i += 2) {
+    const a = advancing[i], b = advancing[i + 1] ?? null;
+    if (a === null && b === null) throw new CommandError("EMPTY_BRACKET_MATCH", "Two feeder matches have no active winner.");
+    const match = makeMatch(a ?? b!, a === null ? null : b, number, random, ids);
+    match.result = null;
+    matches.push(match);
+  }
+  assignTables(matches, competitors(state), state.settings.startingTable, true, teamSize(state));
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
 }
 

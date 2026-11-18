@@ -214,20 +214,8 @@ describe("Swiss cuts and integrity", () => {
   it.each([0, 1])("rolls back cut-and-pair atomically when only %i players survive", value => {
     const s = fixture([[[0, 1, "p1"], [2, 3, "p1"]]]);
     const before = structuredClone(s);
-    expect(() => run(s, { type: "SwissCut", mode: "top", value, pairNext: true })).toThrow(expect.objectContaining({ code: value ? "NOT_ENOUGH_PLAYERS" : "NO_PLAYERS" }));
+    expect(() => run(s, { type: "SwissCut", mode: "top", value, pairNext: true, ...(value ? { tieOrder: [s.players[0].id] } : {}) })).toThrow(expect.objectContaining({ code: value ? "NOT_ENOUGH_PLAYERS" : "NO_PLAYERS" }));
     expect(s).toEqual(before);
-  });
-
-  it("keeps exactly top X with seeded ties or an explicit full-tie order", () => {
-    const s = fixture([[[0, 1, "draw"], [2, 3, "draw"]]]);
-    const command = { type: "SwissCut", mode: "top", value: 2 } as const;
-    expect(run(s, command, 123)).toEqual(run(s, command, 123));
-    const kept = (seed: number) => run(s, command, seed).players.filter(p => p.status === "active").map(p => p.id);
-    expect(kept(123)).toHaveLength(2);
-    expect(kept(123)).not.toEqual(kept(456));
-    const order = s.players.map(p => p.id).reverse();
-    expect(run(s, { ...command, tieOrder: order }).players.map(p => p.status)).toEqual(["cut", "cut", "active", "active"]);
-    expect(() => run(s, { ...command, tieOrder: order.slice(0, 2) })).toThrow(expect.objectContaining({ code: "INVALID_TIE_ORDER" }));
   });
 
   it("reports Swiss repeats, duplicate seats, current unpaired players and normalized member-ID duplicates", () => {

@@ -80,12 +80,19 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     ...state.staff.map(s => ({ Player: playerXml(staffIds.get(s.id)!, names(s.name)), XmlStaffPositionCode: staffPositionCode(s.position ?? ROLE_POSITIONS[s.role]) })),
     ...legacyStaff.map((s, i) => ({ Player: playerXml(legacyStaffIds[i], names(s.name)), XmlStaffPositionCode: staffPositionCode(s.position) })),
   ];
+  function dropReason(p: Player): string {
+    if (p.status === "active") return "Active";
+    if (p.status === "dropped") return "Drop";
+    const swissCut = state.swissCuts.find(c => c.cutPlayers.includes(p.id));
+    if (swissCut) return swissCut.mode === "top" ? "TopX" : "Cut";
+    return firstPlayoff && state.settings.format !== "single_elim" ? "PlayoffCut" : "Cut";
+  }
   function rosterFields(p: Player) {
     const row = rows.get(p.id);
     return { DropRound: dropRound(p), Rank: row?.rank ?? 0,
       PlayoffPoints: wins.get(p.id) ?? 0,
       Wins: row?.matchPoints ?? 0, Points: row ? encodedPoints(row) : 0, OpenDueling: p.openDuelingPoints ?? 0,
-      DropReason: p.status === "active" ? "Active" : p.status === "dropped" ? "Drop" : state.cut.includes(p.id) ? "PlayoffCut" : "Cut",
+      DropReason: dropReason(p),
       AssignedSeat: p.fixedTable ?? -1, Notes: p.notes ?? "" };
   }
   const roster = teamSize(state) === 1 ? { TournPlayer: [...state.players].sort((a, b) => idFor(a.id).localeCompare(idFor(b.id))).map(p => ({
