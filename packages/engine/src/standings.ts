@@ -73,6 +73,8 @@ function playoffFinishes(state: EventState): Map<string, number> {
 /** Compare only published ranking keys; equal keys share a rank. Unfinished cut
  * players precede eliminated players, and all cut participants precede non-cut players. */
 export function compareStandings(a: Standing, b: Standing, cut: ReadonlySet<string>): number {
+  const manual = (b.openDuelingPoints ?? 0) - (a.openDuelingPoints ?? 0);
+  if (manual) return manual;
   if (cut.has(a.playerId) !== cut.has(b.playerId)) return cut.has(a.playerId) ? -1 : 1;
   if (cut.has(a.playerId)) {
     const finish = (a.playoffFinish ?? 0) - (b.playoffFinish ?? 0);
@@ -121,6 +123,7 @@ export function standings(state: EventState): Standing[] {
       : (s?.opponents.length ? floored / s.opponents.length : 0);
     return {
       rank: 0, playerId: p.id, name: p.name, status: p.status,
+      openDuelingPoints: state.settings.format === "open_dueling" || state.settings.style === "open_dueling" ? p.openDuelingPoints ?? 0 : 0,
       matchPoints: record?.points ?? 0,
       record: { wins: record?.wins ?? 0, losses: record?.losses ?? 0, draws: record?.draws ?? 0 },
       omw: percent(omw.get(p.id) ?? 0), oomw: percent(oomw),

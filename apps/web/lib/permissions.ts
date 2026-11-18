@@ -21,7 +21,7 @@ const permissions: Record<Command["type"], readonly StaffRole[]> = {
   PairNextRound: roundAndPlayer, RepairRound: roundAndPlayer, CancelRound: roundAndPlayer, SwapPlayers: roundAndPlayer,
   SetPairing: roundAndPlayer, SplitMatch: roundAndPlayer, CreateMatch: roundAndPlayer, AddByeMatch: roundAndPlayer,
   StartTimer: roundAndPlayer, AdjustTimer: roundAndPlayer, ExtendMatch: [...roundAndPlayer, "judge"],
-  EnterResult: [...roundAndPlayer, "judge"], ReportResult: roundAndPlayer, DropPlayer: [...roundAndPlayer, "judge"],
+  AdjustPoints: roundAndPlayer, EnterResult: [...roundAndPlayer, "judge"], ReportResult: roundAndPlayer, DropPlayer: [...roundAndPlayer, "judge"],
   UndropPlayer: roundAndPlayer, CutToPlayoff: roundAndPlayer, SwissCut: roundAndPlayer, UndoSwissCut: roundAndPlayer,
   CompleteEvent: roundAndPlayer, ReopenEvent: roundAndPlayer, AddPenalty: judging, RemovePenalty: judging,
 };

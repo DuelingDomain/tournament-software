@@ -12,7 +12,7 @@ const PERMISSIONS: Record<Command["type"], readonly StaffRole[]> = {
   AddTeams: manage, UpdateTeam: manage, RemoveTeam: manage, ReEnrollTeam: manage, UndropTeam: manage, DropTeam: [...manage, "judge"],
   PairNextRound: manage, RepairRound: manage, CancelRound: manage, SwapPlayers: manage, SetPairing: manage,
   SplitMatch: manage, CreateMatch: manage, AddByeMatch: manage, StartTimer: manage, AdjustTimer: manage,
-  ExtendMatch: [...manage, "judge"], EnterResult: [...manage, "judge"], ReportResult: manage,
+  ExtendMatch: [...manage, "judge"], AdjustPoints: manage, EnterResult: [...manage, "judge"], ReportResult: manage,
   DropPlayer: [...manage, "judge"], UndropPlayer: manage, CutToPlayoff: manage, SwissCut: manage, UndoSwissCut: manage,
   CompleteEvent: manage, ReopenEvent: manage, AddPenalty: judging, RemovePenalty: judging,
 };

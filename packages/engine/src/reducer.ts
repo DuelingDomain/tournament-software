@@ -431,6 +431,14 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       match.extensionMinutes += command.minutes;
       break;
     }
+    case "AdjustPoints": {
+      requireCondition(state.settings.format === "open_dueling" || state.settings.style === "open_dueling", "OPEN_DUELING_ONLY", "Manual points are available for Open Dueling events.");
+      const p = player(state, competitorId(state, command.playerId));
+      const points = (p.openDuelingPoints ?? 0) + command.delta;
+      requireCondition(Number.isSafeInteger(command.delta) && Number.isSafeInteger(points), "INVALID_POINTS", "Points and adjustments must be safe integers.");
+      p.openDuelingPoints = points;
+      break;
+    }
     case "EnterResult": {
       if (command.result !== null) requirePaired(state);
       const { round, match } = findMatch(state, command.matchId);

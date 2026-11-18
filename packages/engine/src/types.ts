@@ -63,6 +63,7 @@ export interface Player {
   droppedAfterRound: number | null;
   enteredRound: number; // 1 for normal entry; >1 for late entry
   fixedTable: number | null; // accessibility seat; honoured in Swiss
+  openDuelingPoints?: number;
   checkedIn: boolean;
   notes: string | null;
 }
@@ -137,6 +138,7 @@ export interface Standing {
   playerId: PlayerId;
   name: string;
   status: Player["status"];
+  openDuelingPoints?: number;
   matchPoints: number;
   record: { wins: number; losses: number; draws: number };
   /** Percentages 0..100 with one decimal, already truncated the documented way. */
@@ -178,6 +180,7 @@ export type Command =
   | { type: "StartTimer"; minutes?: number }
   | { type: "AdjustTimer"; deltaMinutes: number }
   | { type: "ExtendMatch"; matchId: MatchId; minutes: number }
+  | { type: "AdjustPoints"; playerId: PlayerId; delta: number }
   // Results
   | { type: "EnterResult"; matchId: MatchId; result: MatchResult | null; drop?: "loser" | "both" | "none" } // null clears; works on any round (correction); playoff refuses draw/double_loss
   | { type: "ReportResult"; playerId: PlayerId; matchId: MatchId; result: MatchResult } // player self-report: applied when both agree; a disagreement stays pending for staff
