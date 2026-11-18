@@ -36,7 +36,7 @@ const undropOption = z.enum(["bye_loss", "bye_win", "next_round", "swap_with_dro
 const teamEntry = z.strictObject({ teamId: id.optional(), name, memberIds: z.array(id).min(2).max(5) });
 export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("UpdateSettings"), settings: partialSettings, staff: z.array(staffSchema).max(100).optional() }),
-  z.strictObject({ type: z.literal("AddPlayers"), players: z.array(z.strictObject({ userId, name, memberId: memberId.optional() })).min(1).max(500) }),
+  z.strictObject({ type: z.literal("AddPlayers"), players: z.array(z.strictObject({ userId: userId.nullable(), name, memberId: memberId.optional() })).min(1).max(500) }),
   z.strictObject({ type: z.literal("UpdatePlayer"), ...playerId, name: name.optional(), memberId: memberId.optional(), fixedTable: z.number().int().positive().nullable().optional(), notes: z.string().max(2000).nullable().optional() }),
   z.strictObject({ type: z.literal("LinkPlayerAccount"), ...playerId, userId }),
   z.strictObject({ type: z.literal("ReEnroll"), ...playerId }),

@@ -281,8 +281,6 @@ details[open] > .dk-sum::before { transform: rotate(45deg); }
 .dk-split-main { flex: 999 1 560px; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .dk-scroll { min-height: 0; }
 .dk-team-form { display: flex; flex-direction: column; gap: 8px; }
-.dk-team-slots { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
-.dk-team-slots > .dk-team-name { flex: 0 1 240px; }
 .dk-team-slots > .dk-team-slot { flex: 0 1 230px; }
 .dk-team-pick { display: flex; gap: 6px; align-items: center; }
 .dk-team-pick > select, .dk-team-pick > .dd-select { flex: 1 1 auto; min-width: 0; }
@@ -407,16 +405,26 @@ details[open] > .dk-sum::before { transform: rotate(45deg); }
   .dk-cutline { padding: 2px 0; }
 }
 
-/* Team enroll: one row per member with ID / First / Last boxes. */
-.dk-team-slots > .dk-team-member { flex: 1 1 100%; }
-.dk-team-member { display: grid; grid-template-columns: 72px 118px minmax(110px, 1fr) minmax(110px, 1fr) minmax(150px, 1.2fr) auto 34px; gap: 8px; align-items: end; border: 0; margin: 0; padding: 0; min-width: 0; }
-.dk-team-no { padding-bottom: 10px; white-space: nowrap; }
+/* Team enroll: a name line with the buttons, one header line for the row labels, then one compact row per member. */
+.dk-team-top { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; }
+.dk-team-top > .dk-team-name { flex: 1 1 240px; max-width: 360px; }
+.dk-team-slots { display: flex; flex-direction: column; flex-wrap: nowrap; gap: 4px; align-items: stretch; }
+.dk-team-head, .dk-team-member { display: grid; grid-template-columns: 20px 112px minmax(90px, 1fr) minmax(90px, 1fr) minmax(140px, 1.3fr) 76px 34px; gap: 8px; align-items: center; min-width: 0; }
+.dk-team-head { padding: 0; color: var(--text-2); }
+.dk-team-member { border: 0; margin: 0; padding: 0; }
+.dk-team-no { text-align: center; }
 .dk-team-x { padding: 0; font-size: 18px; line-height: 1; justify-content: center; }
 .dk-vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-@media (max-width: 720px) { .dk-team-member { grid-template-columns: 1fr 1fr; } .dk-team-x { width: 100%; } .dk-team-no { grid-column: 1 / -1; padding-bottom: 0; } }
-
+.dk-team-member .dd-input, .dk-team-member .dd-select { min-height: 36px; font-size: 14px; }
+.dk-team-form { flex-shrink: 0; }
 .dk-slip.dk-team-form > .dk-note { flex: 0 0 auto; min-width: 0; align-self: auto; }
-
-
-
-
+/* The two lists keep a usable height: when the form is tall (4 or 5 members) the pane scrolls instead of squeezing them. */
+.dk-pane--teams { overflow-y: auto; }
+.dk-split--teams { min-height: 260px; }
+.dk-split--teams .dk-lookup > .dk-scroll { min-height: 110px; }
+@media (max-height: 820px) { .dk-split--teams .dk-lookup > .dd-meta { display: none; } }
+@media (max-width: 720px) {
+  .dk-team-head { display: none; }
+  .dk-team-member { grid-template-columns: 1fr 1fr; }
+  .dk-team-x { width: 100%; } .dk-team-no { grid-column: 1 / -1; text-align: left; }
+}
