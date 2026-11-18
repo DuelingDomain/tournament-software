@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
-import { standings as computeStandings, type DeskView, type StaffRole } from "@dd-tournament/engine";
+import { lastReportedRound, standings as computeStandings, type DeskView, type StaffRole } from "@dd-tournament/engine";
 import { Checkbox, Field, Select } from "../ui";
 import { competitorLabel, isTeamEvent, membersOf, playerById, roundTitle, statusText } from "./helpers";
 import { PointsControl } from "./points-control";
@@ -20,9 +20,10 @@ export function StandingsPanel({ desk, role, send, notify, includeDropped, setIn
   const open = state.settings.format === "open_dueling" || state.settings.style === "open_dueling";
   const last = state.rounds.at(-1)?.number ?? 0;
   const [picked, setPicked] = useState<number | null>(null);
-  const through = picked !== null && picked <= last ? picked : last;
-  const rows = useMemo(() => through === last && includeDropped ? desk.standings
-    : computeStandings(state, { throughRound: through, includeDropped }), [desk.standings, state, through, last, includeDropped]);
+  const reported = lastReportedRound(state);
+  const through = picked !== null && picked <= last ? picked : reported;
+  const rows = useMemo(() => through === reported && includeDropped ? desk.standings
+    : computeStandings(state, { throughRound: through, includeDropped }), [desk.standings, state, through, reported, includeDropped]);
   const cut = state.settings.format === "swiss" && state.phase !== "playoff" && state.settings.topCut > 0 ? state.settings.topCut : 0;
   const playoffs = state.rounds.some(r => r.stage === "playoff");
   const selectedRound = state.rounds.find(r => r.number === through);
@@ -32,8 +33,8 @@ export function StandingsPanel({ desk, role, send, notify, includeDropped, setIn
     <div className="dk-slip" style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-end" }}>
       <Field label="Round">
         <Select compact value={through} onChange={e => setPicked(Number(e.target.value))} aria-label="Standings after round" disabled={last === 0}>
+          {through === 0 && <option value={0}>{last === 0 ? "No rounds yet" : "Before round 1"}</option>}
           {state.rounds.map(r => <option key={r.number} value={r.number}>{`After ${roundTitle(r)}`}</option>)}
-          {last === 0 && <option value={0}>No rounds yet</option>}
         </Select>
       </Field>
       <Checkbox label={team ? "Include Dropped Teams" : "Include Dropped Players"} checked={includeDropped} onChange={e => setIncludeDropped(e.target.checked)} />

@@ -127,8 +127,13 @@ export interface StandingsOptions {
   includeDropped?: boolean;
 }
 
+export function lastReportedRound(state: EventState): number {
+  const pending = state.rounds.find(round => round.matches.some(match => match.result === null));
+  return pending ? pending.number - 1 : state.rounds.at(-1)?.number ?? 0;
+}
+
 export function standings(state: EventState, options: StandingsOptions = {}): Standing[] {
-  const throughRound = options.throughRound ?? state.rounds.at(-1)?.number ?? 0;
+  const throughRound = options.throughRound ?? lastReportedRound(state);
   const stats = swissStats(state, throughRound);
   const pooled = new Map<string, { numerator: number; denominator: number }>();
   const omw = new Map<string, number>();

@@ -70,11 +70,12 @@ describe("hand-computed Swiss standings", () => {
     const a = s.players[0].id;
     const b = s.players[1].id;
     Object.assign(s.players[0], { status: "dropped", droppedAfterRound: 2 });
-    expect(standings(s).find(row => row.playerId === a)).toMatchObject({ matchPoints: 6, omw: 25, oomw: 50 });
-    expect(standings(s).find(row => row.playerId === b)).toMatchObject({ omw: 50, record: { wins: 0, draws: 0, losses: 1 } });
+    expect(standings(s)).toEqual(standings(s, { throughRound: 1 }));
+    expect(standings(s, { throughRound: 2 }).find(row => row.playerId === a)).toMatchObject({ matchPoints: 6, omw: 25, oomw: 50 });
+    expect(standings(s, { throughRound: 2 }).find(row => row.playerId === b)).toMatchObject({ omw: 50, record: { wins: 0, draws: 0, losses: 1 } });
     expect(standings(s, { throughRound: 1, includeDropped: false }).find(row => row.playerId === a))
       .toMatchObject({ matchPoints: 3, omw: 0 });
-    expect(standings(s, { includeDropped: false })[0]).toMatchObject({ playerId: s.players[2].id, rank: 1 });
+    expect(standings(s, { throughRound: 2, includeDropped: false })[0]).toMatchObject({ playerId: s.players[2].id, rank: 1 });
   });
 
   it("assigns competition ranks 1,2,2,4 using the published truncated keys", () => {
