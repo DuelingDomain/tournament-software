@@ -186,7 +186,7 @@ function Infractions({ list, onChange }: { list: EventSettings["infractions"]; o
 function LocationPicker({ value, onChange, onEdited, disabled, code }: { value: string | null; onChange: (id: string | null) => void; onEdited: () => void; disabled: boolean; code: string | null }) {
   const [list, setList] = useState<Location[] | null>(null);
   const [canEdit, setCanEdit] = useState(true);
-  const [form, setForm] = useState<{ id: string | null; fields: Fields } | null>(null);
+  const [form, setForm] = useState<{ id: string | null; fields: Fields; base: string } | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [message, setMessage] = useState<{ bad: boolean; text: string } | null>(null);
@@ -226,16 +226,16 @@ function LocationPicker({ value, onChange, onEdited, disabled, code }: { value: 
       <Field label="Location" className="dd-field--grow"><Select value={value ?? ""} disabled={disabled || list === null} onChange={e => onChange(e.target.value || null)}>
         <option value="">None</option>{(list ?? []).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</Select></Field>
       <div className="dk-btn-row">
-        <Button size="sm" disabled={locked} onClick={() => { setMessage(null); setFormMessage(null); setForm({ id: null, fields: BLANK_LOCATION }); }}>New</Button>
-        <Button size="sm" disabled={locked || !current} onClick={() => { if (current) { const { id, ...fields } = current; setMessage(null); setFormMessage(null); setForm({ id, fields }); } }}>Edit</Button>
+        <Button size="sm" disabled={locked} onClick={() => { setMessage(null); setFormMessage(null); setForm({ id: null, fields: BLANK_LOCATION, base: JSON.stringify(BLANK_LOCATION) }); }}>New</Button>
+        <Button size="sm" disabled={locked || !current} onClick={() => { if (current) { const { id, ...fields } = current; setMessage(null); setFormMessage(null); setForm({ id, fields, base: JSON.stringify(fields) }); } }}>Edit</Button>
         <Button size="sm" variant="rose-outline" disabled={locked || !current} onClick={() => setConfirm(true)}>Delete</Button>
       </div>
     </div>
     {current && <p className="dd-meta" style={{ margin: 0 }}>{[current.address1, current.address2, current.city, current.state, current.postal, current.country].filter(Boolean).join(", ") || "No address saved."}</p>}
     {!canEdit && <p className="dd-meta" style={{ margin: 0 }}>Saved locations belong to the organizer. Only the organizer can change them.</p>}
     {message && <p role={message.bad ? "alert" : "status"} className={message.bad ? "dd-error" : "dd-meta"} style={{ margin: 0 }}>{message.text}</p>}
-    {form && <SubDialog title={form.id ? "Edit Location" : "New Location"} onClose={closeForm} onEnter={() => void save()}
-      actions={<><Button onClick={closeForm}>Cancel</Button><Button variant="violet" onClick={() => void save()}>{form.id ? "Save location" : "Add location"}</Button></>}>
+    {form && <SubDialog title={form.id ? "Edit Location" : "New Location"} onClose={closeForm} onEnter={() => void save()} dirty={JSON.stringify(form.fields) !== form.base}
+      actions={close => <><Button onClick={close}>Cancel</Button><Button variant="violet" onClick={() => void save()}>{form.id ? "Save location" : "Add location"}</Button></>}>
       <div className="dk-form-grid">
         <Field label="Location name"><Input value={form.fields.name} onChange={f("name")} maxLength={200} autoComplete="off" autoFocus /></Field>
         <Field label="Address"><Input value={form.fields.address1} onChange={f("address1")} autoComplete="off" /></Field>
@@ -258,13 +258,22 @@ function LocationPicker({ value, onChange, onEdited, disabled, code }: { value: 
 /**
  * A small window over the settings dialog. It renders in a portal so its fields are not part of the settings form:
  * Enter runs onEnter here and never submits the tournament. Escape closes only this window.
+ * When `dirty`, Escape and Cancel ask before they throw the typed values away; `actions` gets the close function that asks.
  */
-function SubDialog({ title, onClose, onEnter, actions, children }: { title: string; onClose: () => void; onEnter?: () => void; actions: React.ReactNode; children: React.ReactNode }) {
+function SubDialog({ title, onClose, onEnter, dirty = false, actions, children }: { title: string; onClose: () => void; onEnter?: () => void; dirty?: boolean; actions: React.ReactNode | ((requestClose: () => void) => React.ReactNode); children: React.ReactNode }) {
+  const [asking, setAsking] = useState(false);
+  const requestClose = () => { if (dirty) setAsking(true); else onClose(); };
   // React passes this window's close and cancel events up to the settings dialog through the portal; stop them here.
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
-  return createPortal(<div {...{ onClose: stop, onCancel: stop }}><Dialog open onClose={onClose} title={title} actions={actions}>
-    <div className="dk-tdlg-sub" onKeyDown={e => { if (e.key === "Enter" && onEnter && (e.target as HTMLElement).tagName === "INPUT") { e.preventDefault(); e.stopPropagation(); onEnter(); } }}>{children}</div>
-  </Dialog></div>, document.body);
+  return createPortal(<div {...{ onClose: stop, onCancel: stop }}>
+    <Dialog open onClose={requestClose} title={title} actions={typeof actions === "function" ? actions(requestClose) : actions}>
+      <div className="dk-tdlg-sub" onKeyDown={e => { if (e.key === "Enter" && onEnter && (e.target as HTMLElement).tagName === "INPUT") { e.preventDefault(); e.stopPropagation(); onEnter(); } }}>{children}</div>
+    </Dialog>
+    {asking && <Dialog open onClose={() => setAsking(false)} title="Discard changes?"
+      actions={<><Button onClick={() => setAsking(false)} autoFocus>Keep editing</Button><Button variant="rose" onClick={onClose}>Discard</Button></>}>
+      <p style={{ margin: 0 }}>This window has changes that are not saved. Close it and lose them?</p>
+    </Dialog>}
+  </div>, document.body);
 }
 
 const POSITION_ORDER = (p: StaffPosition) => POSITIONS.indexOf(p);
@@ -291,7 +300,9 @@ function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, cre
     const a = editor.account;
     if (!a) { setMessage("Search for an account, then pick it."); return; }
     if (a.userId === creatorId) { setMessage("You are already the organizer."); return; }
-    if (rows.some(r => r.userId === a.userId)) { setMessage(`${a.displayName} is already on the staff list.`); return; }
+    // The server keeps one position per person, so a second entry for the same account is refused here.
+    const dup = rows.find(r => r.userId === a.userId);
+    if (dup) { setMessage(dup.position === editor.position ? `${a.displayName} is already on staff at that position.` : `${a.displayName} is already on staff as ${POSITION_LABEL[dup.position]}. Edit that entry to change the position.`); return; }
     if (playerIds.has(a.userId) && !confirmed) { setEditor({ ...editor, confirmPlayer: true }); return; }
     setRows([...rows, { userId: a.userId, name: a.displayName, position: editor.position }]); setSelected(a.userId); close();
   }
@@ -311,9 +322,10 @@ function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, cre
     </div>
     {disabled && <p className="dd-meta" style={{ margin: 0 }}>Only an organizer or head judge changes the staff list.</p>}
     {editor && <SubDialog title={editor.mode === "add" ? "Add Staff" : "Edit Staff"} onClose={close}
+      dirty={editor.mode === "edit" ? editor.position !== row?.position : editor.account !== null || editor.position !== "floor_judge"}
       onEnter={() => { if (editor.mode === "add" && !editor.account) { void search.run(search.query.trim()); } else commit(); }}
       actions={editor.confirmPlayer ? <><Button onClick={() => setEditor({ ...editor, confirmPlayer: false })} autoFocus>Cancel</Button><Button variant="violet" onClick={() => commit(true)}>Add as staff</Button></>
-        : <><Button onClick={close}>Cancel</Button><Button variant="violet" onClick={() => commit()}>{editor.mode === "add" ? "Add staff" : "Save position"}</Button></>}>
+        : requestClose => <><Button onClick={requestClose}>Cancel</Button><Button variant="violet" onClick={() => commit()}>{editor.mode === "add" ? "Add staff" : "Save position"}</Button></>}>
       {editor.confirmPlayer ? <p style={{ margin: 0 }}>This person is registered as a player. Add as staff anyway?</p> : <>
         {editor.mode === "edit" && row ? <p style={{ margin: 0, fontWeight: 600 }}>{row.name}</p> : <>
           <Field label="Account search"><Input type="search" value={search.query} onChange={e => search.setQuery(e.target.value)} autoComplete="off" autoFocus placeholder="Name, username or Discord" /></Field>
