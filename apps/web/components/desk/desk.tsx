@@ -141,7 +141,7 @@ export function Desk({ code }: { code: string }) {
     <main className="dk-main" id="main">
       <div className="dk-sheet">
         {view === "event" && <Tabs className="dk-panel-tabs" variant="index" label="Desk sections" items={tabs} value={active} onChange={id => go(id as Panel)} />}
-        {flash && <p role={flash.bad ? "alert" : "status"} className={`dk-note ${flash.bad ? "dk-note--bad" : ""}`}>{flash.text}</p>}
+        {flash?.bad && <p role="alert" className="dk-note dk-note--bad">{flash.text}</p>}
         <div id="dk-panel" role="tabpanel" aria-label={view === "all" ? "All Players" : tabs.find(t => t.id === active)?.label as string} className="dk-sec">
           {view === "all" ? <AllPlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />
             : active === "players" ? (isTeamEvent(desk.state) ? <TeamsPanel code={code} desk={desk} role={role} send={send} notify={notify} /> : <PlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />)
@@ -151,7 +151,7 @@ export function Desk({ code }: { code: string }) {
         </div>
       </div>
     </main>
-    <StatusBar desk={desk} saving={saving} note={note} onDismiss={dismissNote} />
+    <StatusBar desk={desk} saving={saving} note={note} onDismiss={dismissNote} confirmation={flash && !flash.bad ? flash.text : null} />
 
     {palette && <Palette actions={actions} onClose={() => setPalette(false)} />}
     {dialog === "timer" && <TimerDialog desk={desk} role={role} send={send} onClose={close} />}

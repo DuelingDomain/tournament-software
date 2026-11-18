@@ -118,7 +118,8 @@ export function Binder({ code, desk, view, setView }: { code: string; desk: Desk
 }
 
 /* ---------- Sticky status bar ---------- */
-export function StatusBar({ desk, saving, note, onDismiss }: { desk: DeskView; saving: number; note: string | null; onDismiss: () => void }) {
+/** `confirmation` is the last success message ("Tournament settings updated."); it shows here so the panel above never shifts. */
+export function StatusBar({ desk, saving, note, onDismiss, confirmation = null }: { desk: DeskView; saving: number; note: string | null; onDismiss: () => void; confirmation?: string | null }) {
   const { state } = desk;
   const round = state.rounds.at(-1);
   const stats = roundStats(state, round);
@@ -132,6 +133,7 @@ export function StatusBar({ desk, saving, note, onDismiss }: { desk: DeskView; s
     <span>{formatLabel(state)}</span>
     {state.phase === "complete" && <><i className="dk-sq" aria-hidden="true" /><span>Finalized</span></>}
     <span className="dk-saved">
+      {confirmation && <span className="dk-note-quiet">{confirmation}</span>}
       {note && <span className="dk-note-quiet">{note} <button type="button" className="dd-btn dd-btn--link dd-btn--sm" onClick={onDismiss}>Dismiss</button></span>}
       <span>{saving > 0 ? "Saving…" : <><CheckIcon size={13} color="var(--success)" /> Saved</>}</span>
     </span>
