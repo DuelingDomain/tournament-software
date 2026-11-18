@@ -38,7 +38,7 @@ export function handleApi(request: Request, path: string[]) {
     const method = request.method;
     if (path.length === 1 && path[0] === "me" && method === "GET") {
       const user = currentUser(request);
-      return json({ user, canCreate: user !== null });
+      return json({ user, canCreate: user !== null, createCodeRequired: user !== null && Boolean(process.env.CREATE_CODE) });
     }
     if (path[0] === "locations") {
       const user = signedIn(request);
@@ -69,6 +69,13 @@ export function handleApi(request: Request, path: string[]) {
       }
     }
     if (path[0] === "accounts") {
+      // Searching while creating a tournament has no event yet; any signed-in organizer may look accounts up then.
+      if (path.length === 2 && path[1] === "search" && method === "GET" && !url.searchParams.has("event")) {
+        signedIn(request);
+        const query = z.string().max(200).parse(url.searchParams.get("q") ?? "");
+        const users = await searchAccounts(query);
+        return json({ users: users.map(({ id, ...user }) => ({ userId: id, ...user })) });
+      }
       const access = codeForAccounts(request);
       if (path.length === 2 && path[1] === "search" && method === "GET") {
         const query = z.string().max(200).parse(url.searchParams.get("q") ?? "");

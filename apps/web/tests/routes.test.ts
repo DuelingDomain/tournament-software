@@ -94,12 +94,12 @@ describe("authentication routes", () => {
     const cookie = response.headers.get("set-cookie")!;
     expect(cookie).toContain("HttpOnly"); expect(cookie).toContain("SameSite=Lax"); expect(cookie).toContain("Max-Age=2592000");
     const browserCookie = cookie.split(";")[0]!;
-    expect(await (await api("me", browserCookie)).json()).toEqual({ user: user(), canCreate: true });
+    expect(await (await api("me", browserCookie)).json()).toEqual({ user: user(), canCreate: true, createCodeRequired: false });
     const stored = database().prepare<[], { token_hash: string }>("SELECT token_hash FROM sessions").get()!;
     expect(browserCookie).not.toContain(stored.token_hash);
     const signedOut = await auth("sign-out", undefined, browserCookie, "POST");
     expect(signedOut.status).toBe(204); expect(signedOut.headers.get("set-cookie")).toContain("Max-Age=0");
-    expect(await (await api("me", browserCookie)).json()).toEqual({ user: null, canCreate: false });
+    expect(await (await api("me", browserCookie)).json()).toEqual({ user: null, canCreate: false, createCodeRequired: false });
   });
   it.each([
     ["expired", () => { const now = Math.floor(Date.now() / 1000); return assertion({ iat: now - 61, exp: now - 1 }); }],
