@@ -26,7 +26,16 @@ export function Landing() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const [signinError, setSigninError] = useState("");
+
   useEffect(() => {
+    // A failed sign-in step sends the browser here with ?signin=<code>; show it once, then clean the address bar.
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("signin")) {
+      setSigninError(params.get("signin") === "replayed_assertion" ? "That sign-in link was already used. Sign in again." : "Sign-in did not finish. Try again.");
+      params.delete("signin");
+      window.history.replaceState(null, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+    }
     let alive = true;
     (async () => {
       try {
@@ -62,7 +71,7 @@ export function Landing() {
   }
 
   if (!loaded) return <div className="land-center"><p role="status" className="dd-meta">Loading...</p></div>;
-  if (!me?.user) return <SignIn message={message} />;
+  if (!me?.user) return <SignIn message={message || signinError} />;
 
   return <div className="pub-page"><div className="pub-wrap" style={{ maxWidth: 960 }}>
     <header className="land-bar">
