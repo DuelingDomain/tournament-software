@@ -405,3 +405,10 @@ details[open] > .dk-sum::before { transform: rotate(45deg); }
   .dk-sec { gap: 8px; }
   .dk-cutline { padding: 2px 0; }
 }
+
+/* Team enroll: one row per member with ID / First / Last boxes. */
+.dk-team-slots > .dk-team-member { flex: 1 1 100%; }
+.dk-team-member { display: grid; grid-template-columns: 64px 118px minmax(110px, 1fr) minmax(110px, 1fr) minmax(150px, 1.2fr) auto; gap: 8px; align-items: end; border: 0; margin: 0; padding: 0; min-width: 0; }
+.dk-team-no { padding-bottom: 8px; }
+.dk-vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 720px) { .dk-team-member { grid-template-columns: 1fr 1fr; } .dk-team-no { grid-column: 1 / -1; padding-bottom: 0; } }

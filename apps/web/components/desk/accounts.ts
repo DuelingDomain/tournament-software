@@ -41,3 +41,13 @@ export async function saveMemberId(code: string, userId: number, memberId: strin
     return { ok: true, memberId: body.memberId ?? null, checkDigitOk: body.checkDigitOk ?? true };
   } catch { return { ok: false, message: "Could not reach the server." }; }
 }
+
+/** One-shot account lookup for an event (no state), used where several inputs each look up on Enter. */
+export async function findAccounts(code: string, q: string): Promise<{ ok: true; users: Account[] } | { ok: false; message: string }> {
+  try {
+    const response = await fetch(`/api/accounts/search?event=${encodeURIComponent(code)}&q=${encodeURIComponent(q)}`, { cache: "no-store" });
+    const body = (await response.json().catch(() => ({}))) as { users?: Account[]; error?: string };
+    if (!response.ok) return { ok: false, message: MESSAGES[body.error ?? ""] ?? "Search failed." };
+    return { ok: true, users: body.users ?? [] };
+  } catch { return { ok: false, message: "Could not reach the server." }; }
+}

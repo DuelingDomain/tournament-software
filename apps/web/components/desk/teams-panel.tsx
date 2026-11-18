@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DeskView, Player, StaffRole, Team } from "@dd-tournament/engine";
 import { isTemporaryMemberId, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
 import { Button, ConfirmDialog, Field, Input, Select } from "../ui";
-import { useAccountSearch, type Account } from "./accounts";
+import { findAccounts, useAccountSearch, type Account } from "./accounts";
 import { CheckIcon, DashIcon, RingIcon, WarnIcon } from "./icons";
 import { byName, membersOf, nextTempId } from "./helpers";
 import { AccountList } from "./players-panel";
@@ -16,6 +16,13 @@ const SIZE_NAME = ["", "", "Tag Dueling", "Three-Player Team", "Four-Player Team
 /** One ordered member position: an enrolled person, or an account that Enroll adds first. */
 type Slot = { playerId: string | null; account: Account | null };
 const EMPTY: Slot = { playerId: null, account: null };
+/** What the user typed in one member row: the same ID / First / Last boxes as single-player enroll. */
+type Draft = { id: string; first: string; last: string };
+const NO_DRAFT: Draft = { id: "", first: "", last: "" };
+function splitName(name: string): [string, string] {
+  const parts = name.trim().split(/\s+/);
+  return parts.length < 2 ? [name, ""] : [parts.slice(0, -1).join(" "), parts.at(-1)!];
+}
 
 interface Props { code: string; desk: DeskView; role: StaffRole; send: SendFn; notify: (m: string, bad?: boolean) => void }
 
@@ -28,6 +35,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [slots, setSlots] = useState<Slot[]>(() => Array.from({ length: size }, () => EMPTY));
+  const [drafts, setDrafts] = useState<Draft[]>(() => Array.from({ length: size }, () => NO_DRAFT));
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ bad: boolean; text: string } | null>(null);
@@ -51,22 +59,44 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
   useEffect(() => { const on = () => { filterRef.current?.focus(); filterRef.current?.select(); }; window.addEventListener("dk:focus-find", on); return () => window.removeEventListener("dk:focus-find", on); }, []);
 
   const blank = useCallback(() => Array.from({ length: size }, () => EMPTY), [size]);
-  const clear = useCallback(() => { setSelectedId(null); setName(""); setSlots(blank()); setMessage(null); search.setQuery(""); search.clear(); }, [blank, search]);
+  const clear = useCallback(() => { setSelectedId(null); setName(""); setSlots(blank()); setDrafts(Array.from({ length: size }, () => NO_DRAFT)); setMessage(null); search.setQuery(""); search.clear(); }, [blank, size, search]);
   const pick = (t: Team) => {
     setSelectedId(t.id); setName(t.name); setMessage(null);
     setSlots(Array.from({ length: size }, (_, i) => (t.memberIds[i] ? { playerId: t.memberIds[i]!, account: null } : EMPTY)));
+    setDrafts(Array.from({ length: size }, (_, i) => { const p = t.memberIds[i] ? peopleById.get(t.memberIds[i]!) : undefined; return p ? draftOf(p.name, p.memberId) : NO_DRAFT; }));
   };
-  const setSlot = (i: number, slot: Slot) => setSlots(list => list.map((s, k) => (k === i ? slot : s)));
+  const draftOf = (displayName: string, memberId: string | null): Draft => { const [first, last] = splitName(displayName); return { id: pad(memberId), first, last }; };
+  const setDraft = (i: number, patch: Partial<Draft>) => setDrafts(list => list.map((d, k) => (k === i ? { ...d, ...patch } : d)));
+  const setSlot = (i: number, slot: Slot, draft?: Draft) => {
+    setSlots(list => list.map((s, k) => (k === i ? slot : s)));
+    if (draft) setDrafts(list => list.map((d, k) => (k === i ? draft : d)));
+    else if (slot === EMPTY) setDrafts(list => list.map((d, k) => (k === i ? NO_DRAFT : d)));
+  };
   /** A looked-up account fills the first free position; an account that is already enrolled uses its person entry. */
-  const fromAccount = (a: Account) => {
+  const fromAccount = (a: Account, index?: number) => {
     const person = state.players.find(p => p.userId === a.userId);
     if (person && onTeam.has(person.id)) { setMessage({ bad: true, text: `${a.displayName} is already on a team.` }); return; }
     const key = person ? person.id : `a${a.userId}`;
-    if (used.has(key)) { setMessage({ bad: true, text: `${a.displayName} is already in this team.` }); return; }
-    const at = slots.findIndex(s => taken(s) === null);
+    if (used.has(key) && !(index !== undefined && taken(slots[index]!) === key)) { setMessage({ bad: true, text: `${a.displayName} is already in this team.` }); return; }
+    const at = index ?? slots.findIndex(s => taken(s) === null);
     if (at < 0) { setMessage({ bad: true, text: "Every member position is full. Clear one first." }); return; }
-    setSlot(at, person ? { playerId: person.id, account: null } : { playerId: null, account: a }); setMessage(null);
+    setSlot(at, person ? { playerId: person.id, account: null } : { playerId: null, account: a }, draftOf(a.displayName, person?.memberId ?? a.memberId)); setMessage(null);
   };
+  /** Enter in a member row: look the typed COSSY ID or name up. One match fills the row; several go to Name lookup. */
+  async function lookup(i: number) {
+    const d = drafts[i]!;
+    const typedId = d.id.trim() ? normalizeMemberId(d.id) : null;
+    if (typedId && isTemporaryMemberId(typedId)) { setMessage({ bad: false, text: `Member ${i + 1} gets temp ID ${pad(typedId)} on Enroll. Type a name for the entry.` }); return; }
+    const q = typedId ?? [d.first.trim(), d.last.trim()].filter(Boolean).join(" ");
+    if (!q) { setMessage({ bad: true, text: `Type a COSSY ID or a name for member ${i + 1}, then press Enter.` }); return; }
+    const found = await findAccounts(code, q);
+    if (!found.ok) { setMessage({ bad: true, text: found.message }); return; }
+    const exact = typedId ? found.users.filter(a => a.memberId && normalizeMemberId(a.memberId) === typedId) : [];
+    const pool = exact.length ? exact : found.users;
+    if (pool.length === 1) { fromAccount(pool[0]!, i); return; }
+    if (pool.length === 0) { setMessage({ bad: true, text: `No account matches "${q}". Use the list or Temp ID.` }); return; }
+    search.setQuery(q); setMessage({ bad: false, text: `${pool.length} accounts match "${q}". Click one in Name lookup to fill member ${i + 1}.` });
+  }
   const slotName = (s: Slot) => (s.playerId ? peopleById.get(s.playerId)?.name : s.account?.displayName) ?? "";
 
   const filled = slots.every(s => taken(s) !== null);
@@ -86,12 +116,13 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
       const id = s.playerId ?? current.state.players.find(p => p.userId === s.account?.userId)?.id;
       if (id) ids.push(id);
     }
-    // Members without a COSSY ID get a temp ID, like single-player enroll.
+    // Members without a COSSY ID get a temp ID (the one typed in the row, else the next free one), like single-player enroll.
     if (!state.settings.requireMemberId && can(role, "UpdatePlayer")) {
-      for (const id of ids) {
+      for (const [i, id] of ids.entries()) {
         const person = current.state.players.find(p => p.id === id);
         if (person && person.memberId === null) {
-          const r = await send({ type: "UpdatePlayer", playerId: id, memberId: nextTempId(current.state.players) });
+          const typed = drafts[i]?.id.trim() ? normalizeMemberId(drafts[i]!.id) : null;
+          const r = await send({ type: "UpdatePlayer", playerId: id, memberId: typed && isTemporaryMemberId(typed) ? typed : nextTempId(current.state.players) });
           if (r.ok) current = r.desk;
         }
       }
@@ -154,22 +185,30 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
         {slots.map((s, i) => {
           const key = s.playerId ?? (s.account ? `a${s.account.userId}` : "");
           const mine = s.playerId ? peopleById.get(s.playerId) : undefined;
-          return <Field key={i} label={`Member ${i + 1}`} className="dk-team-slot">
-            <div className="dk-team-pick">
+          const d = drafts[i] ?? NO_DRAFT;
+          const onEnter = (e: React.KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); void lookup(i); } };
+          const filledRow = taken(s) !== null;
+          return <fieldset key={i} className="dk-team-member">
+            <legend className="dk-vh">Member {i + 1}</legend>
+            <span className="dk-team-no dd-caps" aria-hidden="true">Member {i + 1}</span>
+            <Field label="COSSY ID"><Input aria-label={`Member ${i + 1} COSSY ID`} inputMode="numeric" autoComplete="off" value={d.id} readOnly={filledRow} onKeyDown={onEnter} onChange={e => setDraft(i, { id: e.target.value })} /></Field>
+            <Field label="First & middle"><Input aria-label={`Member ${i + 1} first name`} autoComplete="off" value={d.first} readOnly={filledRow} onKeyDown={onEnter} onChange={e => setDraft(i, { first: e.target.value })} /></Field>
+            <Field label="Last"><Input aria-label={`Member ${i + 1} last name`} autoComplete="off" value={d.last} readOnly={filledRow} onKeyDown={onEnter} onChange={e => setDraft(i, { last: e.target.value })} /></Field>
+            <Field label="Or choose">
               <Select value={key} onChange={e => {
                 const v = e.target.value;
                 if (!v) setSlot(i, EMPTY);
                 else if (v.startsWith("a")) setSlot(i, s.account ? s : EMPTY);
-                else setSlot(i, { playerId: v, account: null });
+                else { const p = peopleById.get(v); setSlot(i, { playerId: v, account: null }, p ? draftOf(p.name, p.memberId) : undefined); }
               }} aria-label={`Member ${i + 1}`}>
                 <option value="">Choose a member</option>
                 {s.account && <option value={key}>{s.account.displayName} (new)</option>}
                 {mine && !free.some(p => p.id === mine.id) && <option value={mine.id}>{mine.name}</option>}
                 {free.filter(p => !used.has(p.id) || p.id === s.playerId).map(p => <option key={p.id} value={p.id}>{p.name}{p.memberId ? ` · ${pad(p.memberId)}` : ""}</option>)}
               </Select>
-              <Button size="sm" aria-label={`Clear member ${i + 1}`} disabled={taken(s) === null} onClick={() => setSlot(i, EMPTY)}>Clear</Button>
-            </div>
-          </Field>;
+            </Field>
+            <Button size="sm" aria-label={`Clear member ${i + 1}`} disabled={!filledRow && !d.id && !d.first && !d.last} onClick={() => setSlot(i, EMPTY)}>Clear</Button>
+          </fieldset>;
         })}
       </div>
       <div className="dk-btn-row">
@@ -181,7 +220,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
       </div>
       <p id="team-note" className={`dk-note${message?.bad ? " dk-note--bad" : ""}`} role="status">
         {message && <span>{message.text}</span>}
-        {!message && !selected && <span>{label}: name the team, then choose {size} members in playing order. Click an account in Name lookup to fill the next position.</span>}
+        {!message && !selected && <span>{label}: name the team, then choose {size} members in playing order. Type a COSSY ID or name in a member row and press Enter, or click an account in Name lookup.</span>}
         {!message && selected && <span>{selected.name} selected. Change the name or members and press Update.</span>}
         {lateBlocked && <span>Late entry is off for this tournament. Turn it on in Update Settings.</span>}
         {selected && registration && <span>Dropping before round 1 removes the team. Its members stay enrolled.</span>}
