@@ -103,6 +103,7 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
     if (!name) { setMessage({ bad: true, text: "Type a first and last name, or pick an account." }); return; }
     const normalized = typedId.trim() ? normalizeMemberId(typedId) : null;
     if (typedId.trim() && normalized === null) { setMessage({ bad: true, text: "A COSSY ID is one to ten digits." }); return; }
+    if (!normalized && state.settings.requireMemberId) { setMessage({ bad: true, text: "This tournament requires a COSSY ID. Type one in the ID box, then Enroll." }); return; }
     const memberId = normalized ?? nextTempId(state.players);
     setBusy(true); setMessage(null);
     const result = await send({ type: "AddPlayers", players: [{ userId: null, name, memberId }] });

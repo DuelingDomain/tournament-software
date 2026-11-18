@@ -109,7 +109,7 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
     if (match.p2 === null) { setEcho({ kind: "error", text: "A bye is scored automatically." }); return; }
     if (round?.stage === "playoff" && (kind === "draw" || kind === "double_loss")) { setEcho({ kind: "error", text: "Playoff matches cannot be a draw or a double loss." }); return; }
     // A result is already on this match: ask before replacing it, like the original.
-    if (!confirmed && round && match.result !== null) {
+    if (!confirmed && round && match.result !== null && match.result !== kind) {
       setOverwrite({ kind, withDrop, match, was: match.result, table: match.table, round: round.number }); return;
     }
     const drop = withDrop ? (kind === "p1" || kind === "p2" ? "loser" : kind === "double_loss" ? "both" : "none") : "none";

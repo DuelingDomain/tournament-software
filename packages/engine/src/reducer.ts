@@ -388,6 +388,8 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
         const memberId = command.memberId === null ? null : normalizeMemberId(command.memberId);
         requireCondition(memberId === null || memberId === p.memberId || !isTeamId(memberId), "INVALID_MEMBER_ID", "Team IDs belong to teams.");
         requireCondition(!state.settings.requireMemberId || memberId !== null, "member_id_required", "A member ID is required for this event.");
+        requireCondition(!(input.phase === "complete" && state.settings.requireMemberId && memberId !== null && isTemporaryMemberId(memberId)),
+          "TEMPORARY_MEMBER_IDS", "A finalized tournament that requires member IDs cannot use a temporary ID.");
         p.memberId = memberId;
         const team = teamForPlayer(state, p.id);
         if (team) validateTeamMembers(state, team.memberIds, team.id);
