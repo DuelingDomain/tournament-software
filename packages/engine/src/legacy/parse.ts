@@ -1,6 +1,6 @@
 import { CommandError, type CommandContext, type EventState, type MatchResult, type Penalty, type Player, type PlayerStructure, type Round, type StaffPosition, type Team } from "../types.js";
 import { createEvent } from "../reducer.js";
-import { normalizeMemberId } from "../member-id.js";
+import { isTeamId, normalizeMemberId } from "../member-id.js";
 import { syncTeamMembers, teamSize, validateTeamMembers } from "../competitors.js";
 import { STAFF_POSITIONS } from "../staff.js";
 import { integrity } from "../integrity.js";
@@ -166,7 +166,7 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
   function addTeam(node: Element, sourceId: string, missing: boolean): Team {
     const id = key(sourceId);
     if (byLegacyId.has(id)) throw new CommandError("invalid_legacy_xml", "Team IDs must be unique and separate from member IDs.");
-    if (!/^\d{10}$/.test(id) || Number(id) < 9988000000 || Number(id) > 9998999999)
+    if (!isTeamId(id))
       throw new CommandError("invalid_legacy_xml", "A team ID is outside the reserved team range.");
     const nested = node.child("Team");
     const members = nested.child("PlayerList").all("Player").sort((a, b) => a.int("TeamPosition") - b.int("TeamPosition"));

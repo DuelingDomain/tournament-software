@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isTemporaryMemberId, memberIdCheckDigitOk, normalizeMemberId, padMemberId } from "../../src/member-id.js";
+import { isTeamId, isTemporaryMemberId, memberIdCheckDigitOk, normalizeMemberId, padMemberId } from "../../src/member-id.js";
 
 describe("member IDs", () => {
   it.each([
@@ -18,7 +18,10 @@ describe("member IDs", () => {
   });
 
   it.each([
-    ["9987999999", false], ["9988000000", true], ["9998999999", true],
-    ["9999000000", true], ["9999999999", true], ["10000000000", false], ["12345673", false],
-  ])("classifies temporary range %s", (id, expected) => expect(isTemporaryMemberId(id)).toBe(expected));
+    ["9987999999", false, false], ["9988000000", false, true], ["9998999999", false, true],
+    ["9999000000", true, false], ["9999999999", true, false], ["10000000000", false, false], ["12345673", false, false],
+  ])("classifies reserved ID %s", (id, temporary, team) => {
+    expect(isTemporaryMemberId(id)).toBe(temporary);
+    expect(isTeamId(id)).toBe(team);
+  });
 });

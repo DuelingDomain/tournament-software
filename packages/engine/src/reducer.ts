@@ -4,7 +4,7 @@ import { createRng, randomId, shuffle } from "./rng.js";
 import { assignTables, makeMatch, pairSwiss } from "./pairing.js";
 import { advanceBracket, initialBracket, refreshEliminations } from "./bracket.js";
 import { encodedPoints, standings, winner } from "./standings.js";
-import { isTemporaryMemberId, normalizeMemberId } from "./member-id.js";
+import { isTeamId, isTemporaryMemberId, normalizeMemberId } from "./member-id.js";
 import { competitors, competitorId, nextTeamId, syncTeamMembers, teamForPlayer, teamSize, validateTeamMembers } from "./competitors.js";
 import { recordActivity } from "./activity.js";
 import { staffAssignment } from "./staff.js";
@@ -319,7 +319,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
         requireCondition(entry.name.trim(), "INVALID_NAME", "Every team needs a name.");
         const existing = entry.teamId ? state.teams.find(t => t.id === entry.teamId) : undefined;
         const id = entry.teamId ?? nextTeamId(state);
-        requireCondition(/^\d{10}$/.test(id) && Number(id) >= 9988000000 && Number(id) <= 9998999999, "INVALID_TEAM_ID", "Use a team ID in the reserved team range.");
+        requireCondition(id.length === 10 && isTeamId(id), "INVALID_TEAM_ID", "Use a team ID in the reserved team range.");
         validateTeamMembers(state, entry.memberIds, id);
         if (existing) {
           existing.name = entry.name.trim(); existing.memberIds = [...entry.memberIds];
@@ -327,7 +327,9 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
           existing.status = "active"; existing.droppedAfterRound = null;
           for (const r of state.rounds) if (!r.matches.some(m => m.p1 === id || m.p2 === id)) r.matches.push(makeMatch(id, null, r.number, random, ids, "bye_loss"));
         } else {
-          requireCondition(!ids.has(id), "DUPLICATE_TEAM_ID", "That team ID is already used."); ids.add(id);
+          requireCondition(!ids.has(id) && !state.players.some(p => p.memberId !== null && normalizeMemberId(p.memberId) === id),
+            "DUPLICATE_TEAM_ID", "That team ID is already used.");
+          ids.add(id);
           state.teams.push({ id, userId: null, memberId: id, name: entry.name.trim(), memberIds: [...entry.memberIds], status: "active", droppedAfterRound: null,
             enteredRound: (state.rounds.at(-1)?.number ?? 0) + 1, fixedTable: null, checkedIn: false, notes: null });
           for (const r of state.rounds) r.matches.push(makeMatch(id, null, r.number, random, ids, "bye_loss"));

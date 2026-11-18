@@ -1,5 +1,5 @@
 import { CommandError, type EventState, type Penalty, type Player } from "../types.js";
-import { normalizeMemberId, padMemberId } from "../member-id.js";
+import { FIRST_TEMPORARY_MEMBER_ID, MEMBER_ID_LIMIT, normalizeMemberId, padMemberId } from "../member-id.js";
 import { teamSize } from "../competitors.js";
 import { ROLE_POSITIONS, staffPositionCode } from "../staff.js";
 import { encodedPoints, playoffWins, standings } from "../standings.js";
@@ -34,10 +34,10 @@ function penaltyCode(penalty: Penalty): string {
 
 export function serializeLegacyTournament(state: EventState, opts: LegacyExportOptions = {}): string {
   const used = new Set(state.players.flatMap(p => p.memberId === null ? [] : [normalizeMemberId(p.memberId)]));
-  let next = 9999000000;
+  let next = FIRST_TEMPORARY_MEMBER_ID;
   function temporaryId(): string {
     while (used.has(String(next))) next++;
-    if (next > 9999999999) throw new CommandError("legacy_id_exhausted", "There are no unused temporary legacy player IDs.");
+    if (next >= MEMBER_ID_LIMIT) throw new CommandError("legacy_id_exhausted", "There are no unused temporary legacy player IDs.");
     const id = String(next++); used.add(id); return padMemberId(id);
   }
   const ids = new Map<string, string>();

@@ -1,3 +1,4 @@
+import { FIRST_TEAM_ID, FIRST_TEMPORARY_MEMBER_ID, normalizeMemberId } from "./member-id.js";
 import { CommandError, type EventState, type Player, type Team } from "./types.js";
 
 export function teamSize(state: EventState): number { return state.settings.playerStructure ?? 1; }
@@ -35,8 +36,12 @@ export function validateTeamMembers(state: EventState, memberIds: string[], team
 }
 export function nextTeamId(state: EventState): string {
   const used = new Set((state.teams ?? []).map(t => t.id));
-  let next = 9988000000;
+  for (const p of state.players) if (p.memberId !== null) {
+    const id = normalizeMemberId(p.memberId);
+    if (id !== null) used.add(id);
+  }
+  let next = FIRST_TEAM_ID;
   while (used.has(String(next))) next++;
-  if (next > 9998999999) throw new CommandError("TEAM_ID_EXHAUSTED", "There are no unused team IDs.");
+  if (next >= FIRST_TEMPORARY_MEMBER_ID) throw new CommandError("TEAM_ID_EXHAUSTED", "There are no unused team IDs.");
   return String(next);
 }
