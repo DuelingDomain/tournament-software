@@ -1,4 +1,4 @@
-import { isTemporaryMemberId, type DeskView, type StaffRole } from "@dd-tournament/engine";
+import type { DeskView, StaffRole } from "@dd-tournament/engine";
 import { allResultsIn, competitorLabel, competitors, hasEnteredResult, isTeamEvent } from "./helpers";
 import type { PairInfo } from "./pairings-panel";
 import { can } from "./roles";
@@ -60,10 +60,8 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
   const cutWhy = reason("CutToPlayoff", state.settings.format !== "swiss" ? "Single elimination has no Swiss cut." : !hasRounds ? "Pair a round first." : state.phase === "playoff" ? "Playoffs have started." : !allResultsIn(state) ? "Enter every result first." : undefined);
   const repairWhy = reason("RepairRound", !hasRounds ? "Pair a round first." : undefined);
   const unreportedAny = rounds.flatMap(r => r.matches).filter(m => m.result === null).length;
-  const tempIds = state.players.filter(p => p.memberId !== null && isTemporaryMemberId(p.memberId)).length;
   const finishWhy = reason("CompleteEvent", state.phase === "registration" ? "Pair a round first."
-    : unreportedAny > 0 ? "Unable to finalize a tournament with unreported matches."
-    : state.settings.requireMemberId && tempIds > 0 ? "Temporary IDs must be replaced before finalizing." : undefined);
+    : unreportedAny > 0 ? "Unable to finalize a tournament with unreported matches." : undefined);
 
   const dummyAllowed = role === "organizer" || role === "head_judge";
   const unreportedNow = (current?.matches ?? []).filter(m => m.result === null).length;

@@ -12,6 +12,7 @@ import {
 } from "./dialogs";
 import { postDummy } from "./dummy";
 import { isTemporaryMemberId } from "@dd-tournament/engine";
+import { WarnIcon } from "./icons";
 import { JudgingPanel } from "./judging-panel";
 import { Palette } from "./palette";
 import { PairingsPanel } from "./pairings-panel";
@@ -58,6 +59,7 @@ export function Desk({ code, nav }: { code: string; nav: DeskNav }) {
   const [palette, setPalette] = useState(false);
   const [includeDropped, setIncludeDropped] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ text: string; bad: boolean } | null>(null);
   const flashTimer = useRef<number | undefined>(undefined);
 
@@ -67,6 +69,7 @@ export function Desk({ code, nav }: { code: string; nav: DeskNav }) {
     flashTimer.current = window.setTimeout(() => setFlash(null), 6000);
   }, []);
   useEffect(() => () => window.clearTimeout(flashTimer.current), []);
+  useEffect(() => { setFinishError(null); }, [confirm]);
 
   const role = desk?.viewerRole ?? "staff";
   const active: Panel = panel ?? (desk && (role === "staff" || desk.state.rounds.length === 0) ? "players" : "pairings");
@@ -127,9 +130,17 @@ export function Desk({ code, nav }: { code: string; nav: DeskNav }) {
     notify(r.ok ? ok : r.message, !r.ok);
     return r.ok;
   };
+  const finalize = async () => {
+    setBusy(true); setFinishError(null);
+    const r = await send({ type: "CompleteEvent" });
+    setBusy(false);
+    if (!r.ok) { setFinishError(r.message); return; }
+    setConfirm(null); notify("Tournament finalized."); setDialog("finalized");
+  };
   const close = () => setDialog(null);
   const done = (t: string) => notify(t);
   const tempIds = desk.state.players.filter(p => p.memberId !== null && isTemporaryMemberId(p.memberId)).length;
+  const tempBlocks = desk.state.settings.requireMemberId && tempIds > 0;
   const lastRound = desk.state.rounds.at(-1);
   const afterSwissCut = !!lastRound && desk.state.swissCuts.some(c => c.afterRound === lastRound.number - 1 && c.roundPairedAfter);
   const firstPlayoff = desk.state.rounds.at(-1)?.stage === "playoff" && desk.state.rounds.filter(r => r.stage === "playoff").length === 1;
@@ -191,9 +202,11 @@ export function Desk({ code, nav }: { code: string; nav: DeskNav }) {
     <ConfirmDialog open={confirm === "cancel"} title="Cancel the current round?" confirmLabel="Cancel round" busy={busy} onCancel={() => setConfirm(null)}
       message={<>Round {desk.state.rounds.at(-1)?.number} and its {stats.reported} reported {stats.reported === 1 ? "result" : "results"} are deleted.{firstPlayoff ? " Cancelling the first playoff round also undoes the cut." : ""}{afterSwissCut ? " Players cut before this round return." : ""} This cannot be undone.</>}
       onConfirm={() => void sendCmd({ type: "CancelRound" }, "Round cancelled.")} />
-    <ConfirmDialog open={confirm === "finish"} title="Finalize the tournament?" confirmLabel="Finalize tournament" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
-      message={<>{tempIds > 0 ? <b style={{ color: "var(--rose-2)", fontWeight: 600 }}>{tempIds} {tempIds === 1 ? "player has" : "players have"} a temporary ID. </b> : null}Standings lock and players see the final results. You can reopen the tournament afterwards.</>}
-      onConfirm={() => void (async () => { const r = await sendCmd({ type: "CompleteEvent" }, "Tournament finalized."); if (r) setDialog("finalized"); })()} />
+    <ConfirmDialog open={confirm === "finish"} title="Finalize the tournament?" confirmLabel="Finalize tournament" busy={busy} onCancel={() => { setConfirm(null); setFinishError(null); }} confirmVariant="violet"
+      confirmDisabled={tempBlocks} error={finishError}
+      blockedReason={tempBlocks ? <><WarnIcon size={14} />{tempIds} {tempIds === 1 ? "player has" : "players have"} a temporary ID, and this tournament requires a COSSY ID. Replace {tempIds === 1 ? "it" : "each one"} on the Players tab, then finalize.</> : undefined}
+      message={<>{tempIds > 0 && !tempBlocks ? <b style={{ color: "var(--rose-2)", fontWeight: 600 }}>Warning: {tempIds} {tempIds === 1 ? "player has" : "players have"} a temporary ID. </b> : null}Standings lock and players see the final results. You can reopen the tournament afterwards.</>}
+      onConfirm={() => void finalize()} />
     <ConfirmDialog open={confirm === "reopen"} title="Reopen the tournament?" confirmLabel="Reopen tournament" busy={busy} onCancel={() => setConfirm(null)} confirmVariant="violet"
       message="Staff can enter results and pair rounds again."
       onConfirm={() => void sendCmd({ type: "ReopenEvent" }, "Tournament reopened.")} />
