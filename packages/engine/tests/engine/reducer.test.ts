@@ -214,12 +214,14 @@ describe("commands and audience views", () => {
     catch (e) { expect(e).toMatchObject({ name: "CommandError", code: "NO_ROUND" }); }
   });
 
-  it("requires temporary person IDs to be replaced before finalization, including dropped and cut entries", () => {
+  it("blocks finalization for temporary person IDs only when member IDs are required", () => {
     for (const status of ["active", "dropped", "cut"] as const) {
       let s = fixture([[[0, 1, "p1"], [2, 3, "p1"]]]);
       s = run(s, { type: "UpdatePlayer", playerId: s.players[1].id, memberId: "9999000000" });
       if (status === "dropped") s = run(s, { type: "DropPlayer", playerId: s.players[1].id });
       if (status === "cut") s = run(s, { type: "SwissCut", mode: "min_points", value: 1 });
+      expect(run(s, { type: "CompleteEvent" }).completedAt).toBe(context.now);
+      s = run(s, { type: "UpdateSettings", settings: { requireMemberId: true } });
       const before = structuredClone(s);
       expect(() => run(s, { type: "CompleteEvent" })).toThrow(expect.objectContaining({ code: "TEMPORARY_MEMBER_IDS" }));
       expect(s).toEqual(before);

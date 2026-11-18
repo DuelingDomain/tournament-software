@@ -17,6 +17,11 @@ export function database() {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
   db.exec(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS known_accounts (
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      PRIMARY KEY (owner_user_id, user_id)
+    );
     CREATE TABLE IF NOT EXISTS events (code TEXT PRIMARY KEY, owner_user_id INTEGER NOT NULL REFERENCES users(id), state TEXT NOT NULL, version INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS locations (id TEXT PRIMARY KEY, owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
@@ -32,6 +37,30 @@ export function cacheUser(user: TournamentUser) {
 export function cachedUser(id: number): TournamentUser | null {
   const row = database().prepare<[number], { data: string }>("SELECT data FROM users WHERE id=?").get(id);
   return row ? tournamentUserSchema.parse(JSON.parse(row.data)) : null;
+}
+export function rememberAccounts(ownerId: number, users: readonly TournamentUser[]) {
+  if (!users.length) return;
+  const db = database();
+  const insert = db.prepare("INSERT INTO known_accounts (owner_user_id, user_id) VALUES (?, ?) ON CONFLICT DO NOTHING");
+  db.transaction(() => {
+    for (const user of users) insert.run(ownerId, user.id);
+  })();
+}
+export function knownAccounts(ownerId: number, limit: number): TournamentUser[] {
+  // Roster and staff entries also cover events saved before account searches were tracked.
+  const rows = database().prepare<[{ ownerId: number; limit: number }], { data: string }>(`
+    WITH known(id) AS (
+      SELECT @ownerId
+      UNION SELECT user_id FROM known_accounts WHERE owner_user_id = @ownerId
+      UNION SELECT json_extract(player.value, '$.userId')
+        FROM events, json_each(events.state, '$.players') AS player WHERE owner_user_id = @ownerId
+      UNION SELECT json_extract(staff.value, '$.userId')
+        FROM events, json_each(events.state, '$.staff') AS staff WHERE owner_user_id = @ownerId
+    )
+    SELECT users.data FROM known JOIN users ON users.id = known.id
+    ORDER BY json_extract(users.data, '$.displayName') COLLATE NOCASE, users.id
+    LIMIT @limit`).all({ ownerId, limit });
+  return rows.map(row => tournamentUserSchema.parse(JSON.parse(row.data)));
 }
 export interface EventRecord { code: string; ownerUserId: number; state: EventState; version: number }
 interface EventRow { code: string; owner_user_id: number; state: string; version: number }

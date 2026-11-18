@@ -37,6 +37,8 @@ export interface EventSettings {
   roundMinutes: number;  // default 50
   location: string | null;
   startsAt: string | null; // ISO
+  /** Organizer's IANA time zone for local file exports. Defaults to UTC. */
+  timeZone?: string;
   /** Infraction list the organizer can edit; generic defaults from the engine. */
   infractions: InfractionDef[];
   publicNames: "full" | "initials"; // how names appear on the public page

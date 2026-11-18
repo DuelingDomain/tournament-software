@@ -210,6 +210,40 @@ describe("event HTTP contract", () => {
     expect(saved.state.rounds[1]!.matches.flatMap(m => [m.p1, m.p2]).sort())
       .toEqual(saved.state.players.filter(p => p.status === "active").map(p => p.id).sort());
   });
+  it("lets a scorekeeper correct an event member ID through the cut and after finalization", async () => {
+    const owner = await login(); const scorekeeper = await login(5); const other = await login(6);
+    const code = await create(owner, { allowLateEntry: false });
+    let version = 1;
+    const send = async (input: Command) => {
+      const response = await command(code, scorekeeper, version, input);
+      expect(await response.clone().json()).toMatchObject({ version: version + 1 });
+      expect(response.status).toBe(200);
+      version++;
+      return deskSchema.parse(await response.json()).state;
+    };
+    expect((await command(code, owner, version++, { type: "AddStaff", userId: 5, name: "Scorekeeper", role: "scorekeeper" })).status).toBe(200);
+    const { players } = await send({ type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) });
+    const playerId = players[0]!.id;
+    const editId = async (memberId: string) => {
+      const { players } = await send({ type: "UpdatePlayer", playerId, memberId });
+      expect(players.find(p => p.id === playerId)?.memberId).toBe(memberId);
+    };
+    await editId("1000000014");
+    const swiss = await send({ type: "PairNextRound" });
+    await editId("1000000026");
+    for (const m of swiss.rounds[0]!.matches) await send({ type: "EnterResult", matchId: m.id, result: m.p1 === playerId ? "p2" : "p1" });
+    const playoff = await send({ type: "CutToPlayoff", size: 2 });
+    expect(playoff.players.find(p => p.id === playerId)?.status).toBe("cut");
+    await editId("1000000038");
+    for (const m of playoff.rounds[1]!.matches) await send({ type: "EnterResult", matchId: m.id, result: "p1" });
+    const complete = await send({ type: "CompleteEvent" });
+    expect((await command(code, other, version, { type: "UpdatePlayer", playerId, memberId: "1000000040" })).status).toBe(403);
+    const mixed = await command(code, scorekeeper, version, { type: "UpdatePlayer", playerId, memberId: "1000000040", name: "Changed name" });
+    expect(await mixed.json()).toMatchObject({ error: "EVENT_COMPLETE" });
+    await editId("1000000040");
+    expect((await desk(code, owner)).state.rounds).toEqual(complete.rounds);
+    expect(await (await api(`events/${code}`)).json()).toMatchObject({ phase: "complete" });
+  });
   it("accepts an explicit current round for scored re-pairing and rejects it after advancement without saving", async () => {
     const owner = await login(); const code = await create(owner);
     await dummyPlayers(code, owner, 1, 4);
@@ -587,10 +621,48 @@ describe("legacy files and service bridge", () => {
     expect(received).toContain('POST /api/tournament-bridge/users/lookup {"ids":[1]}');
     expect(received).toContain('PUT /api/tournament-bridge/users/1/member-id {"memberId":"101"}');
   });
+  it("lists a bounded set of the organizer's known accounts for an empty search", async () => {
+    const owner = await login(); const staff = await login(2); const other = await login(3);
+    const code = await create(owner);
+    expect((await (await api(`accounts/search?event=${code}&q=`, owner)).json()).users).toHaveLength(names.length);
+    const previous = await create(owner);
+    expect((await command(previous, owner, 1, { type: "AddPlayers", players: [{ userId: 4, name: "Player" }] })).status).toBe(200);
+    expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Scorekeeper", role: "scorekeeper" })).status).toBe(200);
+
+    process.env.DD_APP_URL = "https://service.example.test";
+    const matches = Array.from({ length: 100 }, (_, i) => ({ ...user(), id: i + 10, displayName: `Search Result ${i}` }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ users: matches }));
+    const ids = async (cookie: string, path = "accounts/search?q=") => {
+      const response = await api(path, cookie);
+      expect(response.status).toBe(200);
+      return z.object({ users: z.array(z.object({ userId: z.number() })) }).parse(await response.json()).users.map(u => u.userId);
+    };
+    const path = `accounts/search?event=${code}&q=`;
+    expect(await ids(staff, path)).toEqual([1, 2, 4]);
+    expect((await api(path, other)).status).toBe(403);
+    expect((await ids(staff, `${path}search`))).toHaveLength(matches.length);
+    const listed = await ids(owner, path);
+    expect(listed).toHaveLength(100);
+    expect(listed.slice(0, 3)).toEqual([1, 2, 4]);
+    expect(await ids(staff)).toEqual([2]);
+    expect(await ids(other)).toEqual([3]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
 });
 
 
 describe("tournament configuration", () => {
+  it("exports the scheduled date and time in the event's IANA zone or UTC by default", async () => {
+    const owner = await login(); const startsAt = "2026-07-12T04:15:00Z";
+    const local = await create(owner, { startsAt, timeZone: "America/Los_Angeles" });
+    const utc = await create(owner, { startsAt });
+    const xml = async (code: string) => (await api(`events/${code}/export/tournament`, owner)).text();
+    expect(await xml(local)).toMatch(/<Date>2026-07-11<\/Date>\s*<Time>21:15<\/Time>/);
+    expect(await xml(utc)).toMatch(/<Date>2026-07-12<\/Date>\s*<Time>04:15<\/Time>/);
+    for (const timeZone of ["Invalid/Zone", "+04:00"]) {
+      expect((await api("events", owner, "POST", { name: "Invalid zone", createCode: "", settings: { timeZone } })).status).toBe(400);
+    }
+  });
   it("creates and edits full settings and staff, and protects organizer locations in use", async () => {
     const cookie = await login();
     const other = await login(2);

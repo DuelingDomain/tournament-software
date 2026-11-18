@@ -25,6 +25,7 @@ format: "swiss" | "single_elim" | "open_dueling"; // pairing structure
 playerStructure: 1 | 2 | 3 | 4 | 5;
 locationId: string | null;
 locationDetails: Location | null;
+timeZone?: string;
 ```
 
 Defaults are advanced, Swiss, individual and no saved location. `startsAt` is the combined date/time in ISO format with an offset. Player structure locks as soon as anyone enrolls, including after roster removal. Existing stored documents receive missing defaults when loaded. Pairing structure remains editable after rounds begin; existing round stages and any ongoing playoff bracket are preserved.
@@ -60,6 +61,10 @@ A `Location` has `{ id, name, address1, address2, city, state, postal, country, 
 
 Only the location owner can edit/delete; another user's ID returns 404. Setting `settings.locationId` selects a saved location owned by the event organizer and copies its name/details into the event. Null clears the selection and snapshot. Editing the saved list preserves existing event snapshots; select the same ID again to refresh a snapshot. Legacy imports retain embedded snapshots without granting ownership of a saved location.
 
+## Account lookup
+
+`GET /api/accounts/search` uses the signed-in organizer's account. With `event=:code`, event staff can search on behalf of its organizer. A blank `q` lists up to 100 known accounts by display name, including the organizer, linked players and staff from the organizer's events, and prior search results. Nonempty queries search the account service and add the results to the organizer's known accounts.
+
 ## Team commands
 
 Enroll people through the existing account-based `AddPlayers` command, self-join, practice data or player-file import, then enroll teams using the resulting player IDs. In team events these people do not receive individual match backfills. `teams` holds competitors; `players` continues to hold people with their account links.
@@ -91,7 +96,9 @@ Public views add playerStructure, style, teamCount and a teams array with public
 - `GET /api/events/:code/print-data` returns `PrintData`, staff only. The same data is at `DeskView.printData`.
 - `PrintData` contains `matches`, `pairingsByTeam`, `unreportedMatches` (all rounds), `pairedDownPlayers` (pre-round point gaps and byes), and `penalties` with player/infraction/judge labels. Match rows carry round, table block, ordered team members, result and extension. Staff print names are full names. The engine exports `printData(state)` for other renderers.
 
-Finalization requires every result and active pairing, and replacement of temporary person IDs across the entire roster, including dropped/cut people. Reserved team competitor IDs do not prevent finalization.
+Finalization requires every match result and active pairing. When `requireMemberId` is enabled, temporary person IDs must be replaced across the entire roster, including dropped and cut players. With the setting off, the desk warns about temporary IDs and permits finalization.
+
+Organizers, head judges and scorekeepers can correct a player's ID in every phase, including for players who missed the cut. In a finalized event, send only `{ type: "UpdatePlayer", playerId, memberId }` to correct the ID while keeping the event finalized.
 
 ## File interchange
 
@@ -105,7 +112,7 @@ Finalization requires every result and active pairing, and replacement of tempor
 
 Round-trip limits of Save Tournament then Open Tournament: the activity log and account links of staff are not stored; the opened event gets a new code. The event number (`<ID>`, letter, two digits, dash, six digits) is kept inside the event, upper-cased, and written back on save; it is not shown or edited in the app. New events get a random `X99-nnnnnn`. A built-in infraction that shares its legacy name with others is written with that name and its own label in the notes as `[Infraction: label]`, and reads back as itself; a custom infraction is written as `None` with the same tag.
 
-Legacy files do not encode account IDs or timezone offsets. Dates use the existing UTC interpretation and minute precision. Automated synthetic round-trips establish representable data behavior; compatibility with an original desktop installation has not been executed.
+Tournament files store local date and time to the minute and carry no time zone or account IDs. Export formats `startsAt`, or the creation time for unscheduled events, in `settings.timeZone`. The create dialog captures the organizer's IANA time zone, and export uses UTC when the zone is missing. Import interprets dates as UTC.
 
 Tournament XML stores match tables relative to `TableOffset`. Add the offset to a stored match table to get its displayed number. An offset of 6 makes table 1 display as table 7. Fixed seats are stored as displayed numbers. If a match has a table below the configured offset, export lowers the file's offset so the displayed tables survive reopening and all stored match tables are nonnegative.
 
