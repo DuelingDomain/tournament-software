@@ -386,3 +386,8 @@ html { scrollbar-color: var(--border-hi) transparent; }
 .print-bracket-match small { color: #333; font-size: 11px; }
 .print-bracket-match .w { font-weight: 700; }
 .print-bracket-match .w::after { content: " (win)"; font-weight: 400; font-size: 11px; }
+
+/* ---------- Not found / error states ---------- */
+.state-card { width: min(440px, 100%); display: flex; flex-direction: column; align-items: flex-start; gap: 16px; padding: 32px; }
+.state-title { margin: 0; font-size: 28px; line-height: 1.15; }
+.state-text { margin: 0; color: var(--text-3); }
