@@ -109,6 +109,7 @@ function pairNextRound(state: EventState, ctx: CommandContext, random: () => num
     state.rounds.push(pairSwiss(state, (state.rounds.at(-1)?.number ?? 0) + 1, ctx.seed, random, ids));
     state.phase = "swiss";
   }
+  state.rounds[state.rounds.length - 1]!.pairedAt = ctx.now;
 }
 
 function requirePaired(state: EventState): void {
@@ -398,6 +399,7 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       const pairingState = { ...state, players: state.players.filter(p => p.enteredRound <= round.number), teams: state.teams.filter(t => t.enteredRound <= round.number) };
       const replacement = pairSwiss(pairingState, round.number, ctx.seed, random, ids);
       replacement.matches.push(...late);
+      replacement.pairedAt = round.pairedAt;
       state.rounds.push(replacement);
       break;
     }

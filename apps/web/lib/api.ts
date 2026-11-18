@@ -58,11 +58,15 @@ export function handleApi(request: Request, path: string[]) {
         const role = viewerRole(event, user.id);
         const joined = event.state.players.some(p => p.userId === user.id);
         if (!role && !joined) return [];
-        const { settings, rounds, players, teams } = event.state;
+        const { settings, rounds, players, teams, activityLog } = event.state;
+        const first = rounds[0];
         // The listing needs no standings or match data: round progress and counts come straight from the stored state.
         return [{
           code: event.code, name: settings.name, phase: event.state.phase, role, joined, startsAt: settings.startsAt,
-          createdAt: event.state.createdAt, format: settings.format, playerStructure: settings.playerStructure,
+          createdAt: event.state.createdAt,
+          // When play began: the first round's timer, else its pairing time, else the first pairing in the activity log (older events).
+          firstRoundAt: first ? first.startedAt ?? first.pairedAt ?? activityLog?.find(a => a.action === "PairNextRound")?.at ?? null : null,
+          format: settings.format, playerStructure: settings.playerStructure,
           playerCount: players.length, teamCount: teams.length, round: rounds.at(-1)?.number ?? null,
           plannedRounds: settings.plannedRounds ?? suggestRounds(competitors(event.state).length),
         }];

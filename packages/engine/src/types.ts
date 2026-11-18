@@ -97,6 +97,8 @@ export interface Round {
   stage: "swiss" | "playoff";
   seed: number; // pairing seed, recorded for audit/reproduction
   startedAt: string | null; // timer start
+  /** When the round was paired; absent on events created before it was recorded and on imports. */
+  pairedAt?: string;
   endsAt: string | null;
   matches: Match[];
   /** Set when pairing could not avoid a rematch or a repeat bye; shown as a warning. */
