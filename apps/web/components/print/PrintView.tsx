@@ -41,7 +41,8 @@ function fromPublic(view: PublicView, code: string): Source {
 
 const byTable = (a: PrintMatch, b: PrintMatch) => (a.table ?? 1e9) - (b.table ?? 1e9);
 
-export function PrintView({ code, kind, sortByPlayer = false }: { code: string; kind: PrintKind; sortByPlayer?: boolean }) {
+/** `onlyTables` limits the result slips to those tables (the new slips after an Undrop re-pair). */
+export function PrintView({ code, kind, sortByPlayer = false, onlyTables = null }: { code: string; kind: PrintKind; sortByPlayer?: boolean; onlyTables?: number[] | null }) {
   const [source, setSource] = useState<Source | null>(null);
   const [error, setError] = useState("");
   const [roundPick, setRoundPick] = useState<number | null>(null);
@@ -95,11 +96,11 @@ export function PrintView({ code, kind, sortByPlayer = false }: { code: string; 
     <article className="print-paper">
       <header className="print-head">
         <h1>{source.name}</h1>
-        <p>{title}{(kind === "pairings" || kind === "slips") && round ? ` · ${round.stage === "playoff" ? "Playoff round" : "Round"} ${round.number}` : ""}</p>
+        <p>{title}{(kind === "pairings" || kind === "slips") && round ? ` · ${round.stage === "playoff" ? "Playoff round" : "Round"} ${round.number}` : ""}{kind === "slips" && onlyTables?.length ? ` · New slips for table${onlyTables.length > 1 ? "s" : ""} ${onlyTables.join(", ")}` : ""}</p>
       </header>
 
       {kind === "pairings" && (round ? <PairingsTable matches={matches} byPlayer={byPlayer} team={source.teamEvent} /> : <p>No round has been paired yet.</p>)}
-      {kind === "slips" && (round ? <div className="print-slips">{matches.filter(m => m.p2 !== null).map(m => <Slip key={m.id} m={m} round={round.number} event={source.name} />)}</div> : <p>No round has been paired yet.</p>)}
+      {kind === "slips" && (round ? <div className="print-slips">{matches.filter(m => m.p2 !== null && (!onlyTables || (m.table !== null && onlyTables.includes(m.table)))).map(m => <Slip key={m.id} m={m} round={round.number} event={source.name} />)}</div> : <p>No round has been paired yet.</p>)}
       {kind === "standings" && <StandingsTable rows={rows} team={source.teamEvent} members={source.teamMembers} />}
       {kind === "players" && (source.players ? <PlayerList players={source.players} team={source.teamEvent} /> : <p>The player list is available to event staff. Sign in to the desk to print it.</p>)}
       {kind === "brackets" && (playoffs.length ? <div className="print-brackets">{playoffs.map(r => <div key={r.number} className="print-bracket-col"><h2>Round {r.number}</h2>
