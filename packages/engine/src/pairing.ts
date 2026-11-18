@@ -140,7 +140,7 @@ function fixedSeatsFit(order: Player[], width: number): boolean {
   return true;
 }
 
-export function assignTables(matches: Match[], players: Player[], startingTable: number, fixed = true, width = 1): void {
+export function assignTables(matches: Match[], players: Player[], startingTable: number, fixed: boolean | "prefer" = true, width = 1): void {
   const byId = new Map(players.map(p => [p.id, p]));
   const reserved = new Set<number>();
   for (const m of matches) {
@@ -148,10 +148,13 @@ export function assignTables(matches: Match[], players: Player[], startingTable:
     delete m.byeTable;
     const a = fixed ? byId.get(m.p1)?.fixedTable : null;
     const b = fixed && m.p2 !== null ? byId.get(m.p2)?.fixedTable : null;
-    if (a != null && b != null && a !== b) throw new CommandError("FIXED_TABLE_CONFLICT", "These players require different fixed tables and cannot play each other.");
+    if (fixed === true && a != null && b != null && a !== b) throw new CommandError("FIXED_TABLE_CONFLICT", "These players require different fixed tables and cannot play each other.");
     const table = a ?? b;
     if (table != null) {
-      if (Array.from({ length: width }, (_, i) => table + i).some(t => reserved.has(t))) throw new CommandError("FIXED_TABLE_CONFLICT", `More than one match requires table ${table}.`);
+      if (Array.from({ length: width }, (_, i) => table + i).some(t => reserved.has(t))) {
+        if (fixed === "prefer") continue;
+        throw new CommandError("FIXED_TABLE_CONFLICT", `More than one match requires table ${table}.`);
+      }
       for (let i = 0; i < width; i++) reserved.add(table + i);
       if (m.p2 === null) m.byeTable = table;
       else m.table = table;
@@ -222,7 +225,10 @@ export function pairSwiss(state: EventState, number: number, seed: number, rando
 
   // Use polynomial matching when the rotation search hits its work limit or
   // the proposed pairs cannot share tables without conflicting reservations.
-  const byeOptions = ordered.length % 2 ? [...ordered].reverse() : [null];
+  // Try first-time bye candidates first so the first rematch-free option is preferred.
+  const byeOptions = ordered.length % 2
+    ? [...ordered].reverse().sort((a, b) => Number(byes.has(a.id)) - Number(byes.has(b.id)))
+    : [null];
   let selected: { players: Player[]; pairs: Pair[]; bye: Player | null; rematches: number } | undefined;
   for (const bye of byeOptions) {
     const players = ordered.filter(p => p.id !== bye?.id);

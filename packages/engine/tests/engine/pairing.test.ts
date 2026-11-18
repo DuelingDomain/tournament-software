@@ -67,6 +67,15 @@ describe("Swiss pairing properties", () => {
     expect(next.rounds[3].warnings).toEqual([expect.stringContaining("rematch"), expect.stringContaining("repeat bye")]);
   });
 
+  it("finds a first bye without a rematch when fixed seats require the fallback", () => {
+    const s = fixture([[[0, 1, "double_loss"], [2, 3, "double_loss"], [4, null, "bye_loss"]]], 5);
+    s.players[0].fixedTable = 5;
+    s.players[2].fixedTable = 6;
+    const round = run(s, { type: "PairNextRound" }, 3).rounds[1];
+    expect(round.matches.find(m => m.p2 === null)?.p1).not.toBe(s.players[4].id);
+    expect(round.warnings).toEqual([]);
+  });
+
   it("finds a rematch-free perfect matching whenever the exhaustive small-field oracle does", () => {
     for (let seed = 1; seed <= 220; seed++) {
       const random = generator(seed);
