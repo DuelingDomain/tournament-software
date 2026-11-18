@@ -1,8 +1,8 @@
 "use client";
-import { useMemo, useState, type ReactNode } from "react";
-import type { DeskView, EventState, Match, Player, StaffRole } from "@dd-tournament/engine";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { DeskView, EventState, Match, Player, StaffRole, UndropOption } from "@dd-tournament/engine";
 import { Button, ButtonLink, Dialog, Field, FilePicker, Input, Keycap, Radio, Select, Textarea, matchesAccept } from "../ui";
-import { STAMP_TEXT, byName, clockLabel, formatClock, playerById, roundTitle } from "./helpers";
+import { STAMP_TEXT, byName, clockLabel, competitors, competitorLabel, dropCommand, formatClock, isTeamEvent, playerById, reEnrollCommand, removeCommand, roundTitle, undropCommand } from "./helpers";
 import { can } from "./roles";
 import { MESSAGES, type SendFn } from "./use-desk";
 import { WarnIcon } from "./icons";
@@ -97,11 +97,12 @@ export function CutDialog({ desk, send, onClose, onDone }: Base & { onDone: (tex
 }
 
 /* ---------- Undrop wizard ---------- */
-type UndropOption = "swap_drops" | "take_bye" | "bye_win" | "bye_loss" | "repair" | "next_round";
+const UNDROP_OPTIONS: UndropOption[] = ["swap_previous_opponent", "take_bye", "bye_win", "bye_loss", "repair", "next_round"];
 export function UndropDialog({ desk, send, onClose, onDone }: Base & { onDone: (t: string) => void }) {
   const { state } = desk;
   const round = state.rounds.at(-1);
-  const dropped = useMemo(() => state.players.filter(p => p.status === "dropped").sort(byName), [state.players]);
+  const team = isTeamEvent(state);
+  const dropped = useMemo(() => competitors(state).filter(p => p.status === "dropped").sort(byName), [state]);
   const [playerId, setPlayerId] = useState(dropped[0]?.id ?? "");
   const [option, setOption] = useState<UndropOption>("bye_loss");
   const [err, setErr] = useState<string | null>(null);
@@ -114,52 +115,50 @@ export function UndropDialog({ desk, send, onClose, onDone }: Base & { onDone: (
   const prevOpp = prev ? names.get(prev.p1 === playerId ? prev.p2 ?? "" : prev.p1) : undefined;
   const oppSeat = prevOpp && prevOpp.status === "active" ? round?.matches.find(m => (m.p1 === prevOpp.id || m.p2 === prevOpp.id) && m.result === null && m.p2 !== null) : undefined;
   const byeMatch = round?.matches.find(m => m.p2 === null && m.result === "bye_win" && names.get(m.p1)?.status === "active");
-  const noResults = !!round && !round.matches.some(m => m.p2 !== null && m.result !== null);
   const live = !!round && state.phase === "swiss";
   const why: Record<UndropOption, string | null> = {
-    swap_drops: !live ? "Needs a paired round." : paired ? "Already paired this round." : !oppSeat ? "Last round's opponent has no open seat in this round." : null,
+    swap_previous_opponent: !live ? "Needs a paired round." : paired ? "Already paired this round." : !oppSeat ? "Last round's opponent has no open seat in this round." : null,
+    swap_with_dropped: "Use the swap option above.",
     take_bye: !live ? "Needs a paired round." : paired ? "Already paired this round." : !byeMatch ? "Nobody has a bye this round." : null,
     bye_win: !live ? "Needs a paired round." : paired ? "Already paired this round." : null,
     bye_loss: !live ? "Needs a paired round." : paired ? "Already paired this round." : null,
-    repair: !live ? "Needs a paired round." : paired ? "Already paired this round." : !noResults ? "Results are already entered. Pick another option." : null,
+    repair: !live ? "Needs a paired round." : paired ? "Already paired this round." : null,
     next_round: null,
   };
   const effective: UndropOption = why[option] === null ? option : "next_round";
   const labels: Record<UndropOption, string> = {
-    swap_drops: "Drop other player and pair with that person's opponent",
+    swap_previous_opponent: "Drop other player and pair with that person's opponent", swap_with_dropped: "Drop other player and pair with that person's opponent",
     take_bye: byeMatch ? `Pair vs. Bye Player: ${names.get(byeMatch.p1)?.name ?? ""}` : "Pair vs. Bye Player",
     bye_win: "Bye Opponent - Win", bye_loss: "Bye Opponent - Loss", repair: "Re-Pair as necessary",
     next_round: "Re-enter next round (no match this round)",
   };
   async function run() {
     setBusy(true); setErr(null);
-    // Each option is one or two engine commands; stop at the first refusal.
-    const steps: Parameters<SendFn>[0][] = effective === "swap_drops" && prevOpp ? [{ type: "DropPlayer", playerId: prevOpp.id }, { type: "UndropPlayer", playerId, option: "swap_with_dropped", swapWith: prevOpp.id }]
-      : effective === "repair" ? [{ type: "UndropPlayer", playerId, option: "next_round" }, { type: "RepairRound", round: round?.number }]
-      : [{ type: "UndropPlayer", playerId, option: effective as "bye_loss" | "bye_win" | "take_bye" | "next_round" }];
+    // One server command per option: it also drops the old opponent or re-pairs where the option needs it.
+    const steps: Parameters<SendFn>[0][] = [undropCommand(team, playerId, effective)];
     for (const step of steps) {
       const res = await send(step);
       if (!res.ok) { setBusy(false); setErr(res.message); return; }
     }
     setBusy(false);
-    onDone(`${player?.name ?? "Player"} is back in the tournament.`); onClose();
+    onDone(`${player?.name ?? competitorLabel(state)} is back in the tournament.`); onClose();
   }
   const done = (m: Match) => `${names.get(m.p1)?.name ?? "?"} vs ${m.p2 ? names.get(m.p2)?.name ?? "?" : "Bye"}`;
-  return <Dialog open onClose={onClose} title="Undrop Player Wizard" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!playerId || busy || state.phase === "playoff"} onClick={() => void run()}>Apply changes</Button></>}>
+  return <Dialog open onClose={onClose} title={`Undrop ${competitorLabel(state)} Wizard`} actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!playerId || busy || state.phase === "playoff"} onClick={() => void run()}>Apply changes</Button></>}>
     <Wide />
     {dropped.length === 0 ? <p className="dd-meta">Nobody has dropped.</p> : <>
       {state.phase === "playoff" && <p className="dd-error"><WarnIcon size={14} />Dropped players cannot re-enter the playoff bracket.</p>}
-      <Field label="Dropped Players"><Select value={playerId} onChange={e => setPlayerId(e.target.value)}>{dropped.map(p => <option key={p.id} value={p.id}>{p.name} (R{p.droppedAfterRound ?? 0})</option>)}</Select></Field>
+      <Field label={`Dropped ${competitorLabel(state)}s`}><Select value={playerId} onChange={e => setPlayerId(e.target.value)}>{dropped.map(p => <option key={p.id} value={p.id}>{p.name} (R{p.droppedAfterRound ?? 0})</option>)}</Select></Field>
       <section className="dk-slip dk-sec" style={{ gap: 4 }} aria-label="Last round">
         <span className="dd-caps">Last Round</span>
         {prev ? <span>{done(prev)}{prev.result ? <span className="dd-meta"> · {STAMP_TEXT[prev.result]}</span> : null}</span> : <span className="dd-meta">{player?.name ?? "This player"} was not paired in the previous round.</span>}
         {prevOpp && <span className="dd-meta">{prevOpp.name} is {prevOpp.status === "active" ? "still in the tournament" : "also out"}.</span>}
       </section>
       <div role="radiogroup" aria-label="How the player re-enters" className="dk-sec" style={{ gap: 2 }}>
-        {(["swap_drops", "take_bye", "bye_win", "bye_loss", "repair", "next_round"] as UndropOption[]).map(o =>
+        {UNDROP_OPTIONS.map(o =>
           <Radio key={o} name="undrop" label={labels[o]} checked={effective === o} disabled={why[o] !== null} onChange={() => setOption(o)} hint={why[o] ? `(${why[o]})` : undefined} />)}
       </div>
-      {effective === "swap_drops" && prevOpp && oppSeat && <p className="dd-meta" style={{ margin: 0 }}>{prevOpp.name} drops. {player?.name} takes their seat at table {oppSeat.table ?? "?"}.</p>}
+      {effective === "swap_previous_opponent" && prevOpp && oppSeat && <p className="dd-meta" style={{ margin: 0 }}>{prevOpp.name} drops. {player?.name} takes their seat at table {oppSeat.table ?? "?"}.</p>}
       <Err text={err} />
     </>}
   </Dialog>;
@@ -168,35 +167,39 @@ export function UndropDialog({ desk, send, onClose, onDone }: Base & { onDone: (
 /* ---------- Drop / Re-enroll pick lists ---------- */
 export function DropPlayerDialog({ desk, send, onClose, onDone }: Base & { onDone: (t: string) => void }) {
   const { state } = desk;
-  const active = useMemo(() => state.players.filter(p => p.status === "active").sort(byName), [state.players]);
+  const team = isTeamEvent(state);
+  const who = competitorLabel(state);
+  const active = useMemo(() => competitors(state).filter(p => p.status === "active").sort(byName), [state]);
   const [playerId, setPlayerId] = useState(active[0]?.id ?? "");
   const [err, setErr] = useState<string | null>(null);
   const registration = state.phase === "registration";
   async function run() {
-    const res = await send(registration ? { type: "RemovePlayer", playerId } : { type: "DropPlayer", playerId });
+    const res = await send(registration ? removeCommand(team, playerId) : dropCommand(team, playerId));
     if (!res.ok) { setErr(res.message); return; }
-    onDone(`${state.players.find(p => p.id === playerId)?.name} ${registration ? "was removed" : "dropped"}.`); onClose();
+    onDone(`${competitors(state).find(p => p.id === playerId)?.name} ${registration ? "was removed" : "dropped"}.`); onClose();
   }
-  return <Dialog open onClose={onClose} title="Drop Player" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="rose" disabled={!playerId} onClick={() => void run()}>{registration ? "Remove player" : "Drop player"}</Button></>}>
-    <p className="dd-meta" style={{ margin: 0 }}>{registration ? "The tournament has not started, so the player is removed from the list." : "The player stays in standings and is no longer paired. Their current match is not changed; enter its result as usual."}</p>
-    <Field label="Player"><Select value={playerId} onChange={e => setPlayerId(e.target.value)} autoFocus>{active.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
+  return <Dialog open onClose={onClose} title={`Drop ${who}`} actions={<><Button onClick={onClose}>Cancel</Button><Button variant="rose" disabled={!playerId} onClick={() => void run()}>{registration ? `Remove ${who.toLowerCase()}` : `Drop ${who.toLowerCase()}`}</Button></>}>
+    <p className="dd-meta" style={{ margin: 0 }}>{registration ? `The tournament has not started, so the ${who.toLowerCase()} is removed from the list.` : `The ${who.toLowerCase()} stays in standings and is no longer paired. Their current match is not changed; enter its result as usual.`}</p>
+    <Field label={who}><Select value={playerId} onChange={e => setPlayerId(e.target.value)} autoFocus>{active.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
     <Err text={err} />
   </Dialog>;
 }
 
 export function ReEnrollDialog({ desk, send, onClose, onDone }: Base & { onDone: (t: string) => void }) {
   const { state } = desk;
-  const dropped = useMemo(() => state.players.filter(p => p.status === "dropped").sort(byName), [state.players]);
+  const team = isTeamEvent(state);
+  const who = competitorLabel(state);
+  const dropped = useMemo(() => competitors(state).filter(p => p.status === "dropped").sort(byName), [state]);
   const [playerId, setPlayerId] = useState(dropped[0]?.id ?? "");
   const [err, setErr] = useState<string | null>(null);
   async function run() {
-    const res = await send({ type: "ReEnroll", playerId });
+    const res = await send(reEnrollCommand(team, playerId));
     if (!res.ok) { setErr(res.message); return; }
-    onDone(`${state.players.find(p => p.id === playerId)?.name} is enrolled again.`); onClose();
+    onDone(`${competitors(state).find(p => p.id === playerId)?.name} is enrolled again.`); onClose();
   }
-  return <Dialog open onClose={onClose} title="Re-Enroll Player" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!playerId} onClick={() => void run()}>Re-enroll player</Button></>}>
-    <p className="dd-meta" style={{ margin: 0 }}>The player returns with a loss for every round they missed, including this one. Use the Undrop wizard to choose a different way back.</p>
-    <Field label="Dropped player"><Select value={playerId} onChange={e => setPlayerId(e.target.value)} autoFocus>{dropped.map(p => <option key={p.id} value={p.id}>{p.name} (R{p.droppedAfterRound ?? 0})</option>)}</Select></Field>
+  return <Dialog open onClose={onClose} title={`Re-Enroll ${who}`} actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={!playerId} onClick={() => void run()}>Re-enroll {who.toLowerCase()}</Button></>}>
+    <p className="dd-meta" style={{ margin: 0 }}>The {who.toLowerCase()} returns with a loss for every round they missed, including this one. Use the Undrop wizard to choose a different way back.</p>
+    <Field label={`Dropped ${who.toLowerCase()}`}><Select value={playerId} onChange={e => setPlayerId(e.target.value)} autoFocus>{dropped.map(p => <option key={p.id} value={p.id}>{p.name} (R{p.droppedAfterRound ?? 0})</option>)}</Select></Field>
     <Err text={err} />
   </Dialog>;
 }
@@ -204,7 +207,8 @@ export function ReEnrollDialog({ desk, send, onClose, onDone }: Base & { onDone:
 /* ---------- Assigned seats ---------- */
 export function SeatsDialog({ desk, send, onClose }: Base) {
   const { state } = desk;
-  const players = useMemo(() => [...state.players].sort(byName), [state.players]);
+  const team = isTeamEvent(state);
+  const players = useMemo(() => [...competitors(state)].sort(byName), [state]);
   const seated = players.filter(p => p.fixedTable !== null).sort((a, b) => (a.fixedTable ?? 0) - (b.fixedTable ?? 0));
   const [playerId, setPlayerId] = useState("");
   const [table, setTable] = useState("");
@@ -212,7 +216,7 @@ export function SeatsDialog({ desk, send, onClose }: Base) {
   const n = Number(table);
   const valid = playerId !== "" && Number.isInteger(n) && n >= 1 && n <= 100000;
   const set = async (id: string, value: number | null) => {
-    const res = await send({ type: "UpdatePlayer", playerId: id, fixedTable: value });
+    const res = await send(team ? { type: "UpdateTeam", teamId: id, fixedTable: value } : { type: "UpdatePlayer", playerId: id, fixedTable: value });
     if (!res.ok) { setErr(res.message); return false; }
     setErr(null); return true;
   };
@@ -315,14 +319,15 @@ export function ManualPairingsDialog({ desk, send, onClose }: Base) {
 }
 
 /* ---------- Import ---------- */
-const IMPORT_ACCEPT = { players: ".xml,text/xml,application/xml", tournament: ".Tournament,.tournament" } as const;
-export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk }: Close & { code: string; kind: "tournament" | "players"; onDone: (t: string) => void; replaceDesk: (d: DeskView) => void }) {
+const IMPORT_ACCEPT = { players: ".xml,text/xml,application/xml", tournament: ".Tournament,.tournament", "team-players": ".Tournament,.tournament" } as const;
+type ImportKind = keyof typeof IMPORT_ACCEPT;
+export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk }: Close & { code: string; kind: ImportKind; onDone: (t: string) => void; replaceDesk: (d: DeskView) => void }) {
   const [kind, setKindRaw] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   // Switching the kind drops a chosen file that the new kind does not accept.
-  const setKind = (next: "tournament" | "players") => { setKindRaw(next); if (file && !matchesAccept(file.name, IMPORT_ACCEPT[next])) setFile(null); setErr(null); };
+  const setKind = (next: ImportKind) => { setKindRaw(next); if (file && !matchesAccept(file.name, IMPORT_ACCEPT[next])) setFile(null); setErr(null); };
   async function run() {
     if (!file) { setErr("Choose a file."); return; }
     setBusy(true); setErr(null);
@@ -330,7 +335,7 @@ export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk
     try {
       const res = await fetch(`/api/events/${encodeURIComponent(code)}/import`, { method: "POST", body: form });
       const body = (await res.json().catch(() => ({}))) as { desk?: DeskView; imported?: number; unmatched?: number; error?: string; message?: string };
-      if (!res.ok || !body.desk) { setErr(MESSAGES[body.error ?? ""] ?? (body.error === "REGISTRATION_ONLY" ? "Player lists import during registration only." : body.message ?? "That file could not be imported.")); setBusy(false); return; }
+      if (!res.ok || !body.desk) { setErr(MESSAGES[body.error ?? ""] ?? (body.error === "REGISTRATION_ONLY" ? "Player lists import during registration only." : body.error === "INVALID_PLAYER_STRUCTURE" ? "That file is not a team tournament, or this tournament is a team event. Team player lists import into a tournament with individual players." : body.message ?? "That file could not be imported.")); setBusy(false); return; }
       replaceDesk(body.desk);
       onDone(`Imported ${body.imported ?? 0} players${body.unmatched ? `, ${body.unmatched} without a matching account (they can join later with their COSSY ID)` : ""}.`);
       onClose();
@@ -339,6 +344,7 @@ export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk
   return <Dialog open onClose={onClose} title="Import" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={busy || !file} onClick={() => void run()}>Import</Button></>}>
     <div role="radiogroup" aria-label="What to import">
       <Radio name="imp" label="Player list (AllPlayers XML), adds players during registration" checked={kind === "players"} onChange={() => setKind("players")} />
+      <Radio name="imp" label="Team player list (team .Tournament file), adds its players during registration" checked={kind === "team-players"} onChange={() => setKind("team-players")} />
       <Radio name="imp" label="Tournament file (.Tournament), replaces players and rounds" checked={kind === "tournament"} onChange={() => setKind("tournament")} />
     </div>
     {kind === "tournament" && <p className="dd-meta" style={{ margin: 0 }}>This replaces the players and rounds in this tournament. Staff stay as they are.</p>}
@@ -375,7 +381,7 @@ export function KeyboardDialog({ onClose }: Close) {
 }
 
 export function IntegrityDialog({ desk, onClose }: Close & { desk: DeskView }) {
-  const nm = (id: string) => desk.state.players.find(p => p.id === id)?.name ?? "Unknown";
+  const nm = (id: string) => playerById(desk.state).get(id)?.name ?? "Unknown";
   const i = desk.integrity;
   const none = !i.repeatMatches.length && !i.pairedTwiceInRound.length && !i.unpairedActive.length && !i.memberIdWarnings.length;
   return <Dialog open onClose={onClose} title="Verify Pairings" actions={<Button onClick={onClose} autoFocus>Close</Button>}>
@@ -389,7 +395,7 @@ export function IntegrityDialog({ desk, onClose }: Close & { desk: DeskView }) {
 }
 
 export function HistoryDialog({ state, onClose }: Close & { state: EventState }) {
-  const players = [...state.players].sort(byName);
+  const players = [...competitors(state)].sort(byName);
   const [id, setId] = useState(players[0]?.id ?? "");
   const names = playerById(state);
   const rows = state.rounds.flatMap(r => r.matches.filter(m => m.p1 === id || m.p2 === id).map(m => {
@@ -397,8 +403,8 @@ export function HistoryDialog({ state, onClose }: Close & { state: EventState })
     const res = m.result === null ? "Unreported" : m.result === "draw" ? "Draw" : m.result === "double_loss" ? "Double loss" : m.result === "bye_win" ? "Bye (win)" : m.result === "bye_loss" ? "Bye (loss)" : (m.result === "p1") === me1 ? "Win" : "Loss";
     return { round: r.number, table: m.table, opp: opp ? names.get(opp)?.name ?? "Unknown" : "Bye", res };
   }));
-  return <Dialog open onClose={onClose} title="Player Match History" actions={<Button onClick={onClose} autoFocus>Close</Button>}>
-    <Field label="Player"><Select value={id} onChange={e => setId(e.target.value)}>{players.map((p: Player) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
+  return <Dialog open onClose={onClose} title={`${competitorLabel(state)} Match History`} actions={<Button onClick={onClose} autoFocus>Close</Button>}>
+    <Field label={competitorLabel(state)}><Select value={id} onChange={e => setId(e.target.value)}>{players.map((p: Player) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
     {rows.length === 0 ? <p className="dd-meta">No matches yet.</p> : <ul className="dk-dlg-list">{rows.map(r => <li key={r.round}><span className="dk-num" style={{ width: 70 }}>Round {r.round}</span><span style={{ flex: 1 }}>{r.table !== null ? `Table ${r.table} · ` : ""}vs {r.opp}</span><span className="dd-chip dd-chip--muted">{r.res}</span></li>)}</ul>}
   </Dialog>;
 }
@@ -471,5 +477,36 @@ export function AddTestPlayersDialog({ code, desk, replaceDesk, onClose, onDone 
       <Input inputMode="numeric" value={count} onChange={e => setCount(e.target.value.replace(/\D/g, "").slice(0, 3))} autoFocus onKeyDown={e => { if (e.key === "Enter" && valid && !busy) { e.preventDefault(); void run(); } }} />
     </Field>
     <Err text={err} />
+  </Dialog>;
+}
+
+/* ---------- Recent log entries ---------- */
+type LogEntry = { actor: string; at: string; action: string };
+const logWords = (action: string) => action.replace(/([a-z])([A-Z])/g, "$1 $2");
+export function LogDialog({ code, onClose }: Close & { code: string }) {
+  const [rows, setRows] = useState<LogEntry[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`/api/events/${encodeURIComponent(code)}/activity`, { cache: "no-store" });
+        if (!r.ok) throw new Error("bad");
+        const body = (await r.json()) as { activity: LogEntry[] };
+        if (alive) setRows(body.activity.slice(0, 200));
+      } catch { if (alive) setErr("Could not load the log. Close this window and try again."); }
+    })();
+    return () => { alive = false; };
+  }, [code]);
+  const when = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "medium" }); };
+  return <Dialog open onClose={onClose} title="Recent Log Entries" actions={<Button onClick={onClose} autoFocus>Close</Button>}>
+    <Wide />
+    <Err text={err} />
+    {!rows && !err && <p role="status" className="dd-meta" style={{ margin: 0 }}>Loading…</p>}
+    {rows && rows.length === 0 && <p className="dd-meta" style={{ margin: 0 }}>Nothing has been logged yet.</p>}
+    {rows && rows.length > 0 && <div className="dk-log" role="table" aria-label="Recent log entries">
+      <div role="row" className="dk-log-row dk-log-head dd-caps"><span role="columnheader">Time</span><span role="columnheader">Who</span><span role="columnheader">Action</span></div>
+      {rows.map((r, i) => <div role="row" key={i} className="dk-log-row"><span role="cell">{when(r.at)}</span><span role="cell">{r.actor}</span><span role="cell">{logWords(r.action)}</span></div>)}
+    </div>}
   </Dialog>;
 }

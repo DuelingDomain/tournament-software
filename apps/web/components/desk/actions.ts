@@ -1,14 +1,14 @@
 import { isTemporaryMemberId, type DeskView, type StaffRole } from "@dd-tournament/engine";
-import { allResultsIn, hasEnteredResult } from "./helpers";
+import { allResultsIn, competitorLabel, competitors, hasEnteredResult, isTeamEvent } from "./helpers";
 import type { PairInfo } from "./pairings-panel";
 import { can } from "./roles";
 
 export type Panel = "players" | "pairings" | "standings";
-export type DialogKind = "timer" | "cut" | "undrop" | "change" | "manual" | "print" | "keys" | "integrity" | "history" | "notes" | "dummy-players" | "settings" | "judging" | "drop" | "reenroll" | "seats";
+export type DialogKind = "timer" | "cut" | "undrop" | "change" | "manual" | "print" | "keys" | "integrity" | "history" | "notes" | "dummy-players" | "settings" | "judging" | "drop" | "reenroll" | "seats" | "log";
 export type ConfirmKind = "repair" | "cancel" | "finish" | "reopen";
 export type MenuName = "File" | "Tournament" | "Players" | "Pairings" | "Standings" | "Help";
 export const MENUS: MenuName[] = ["File", "Tournament", "Players", "Pairings", "Standings", "Help"];
-export type PrintKind = "pairings" | "pairings-by-player" | "slips" | "standings" | "players" | "brackets";
+export type PrintKind = "pairings" | "pairings-by-player" | "pairings-by-team" | "slips" | "standings" | "players" | "brackets" | "unreported" | "paired-down" | "penalties";
 export type ExportKind = "tournament" | "players-xml" | "players.csv" | "standings.csv" | "matches.csv";
 
 export interface Action {
@@ -18,7 +18,7 @@ export interface Action {
 }
 export interface Handlers {
   go: (panel: Panel) => void; open: (dialog: DialogKind) => void; confirm: (kind: ConfirmKind) => void;
-  print: (kind: PrintKind) => void; download: (kind: ExportKind) => void; importFile: (kind: "tournament" | "players") => void;
+  print: (kind: PrintKind) => void; download: (kind: ExportKind) => void; importFile: (kind: "tournament" | "players" | "team-players") => void;
   pair: () => void; palette: () => void; home: () => void; dummyResults: () => void;
 }
 
@@ -28,14 +28,14 @@ export function pairInfo(desk: DeskView, role: StaffRole, run: () => void): Pair
   const rounds = state.rounds;
   const playoff = state.phase === "playoff";
   const label = playoff ? "Pair Next Playoff Round" : `Pair Round ${rounds.length + 1}`;
-  const active = state.players.filter(p => p.status === "active").length;
+  const active = competitors(state).filter(p => p.status === "active").length;
   const unreported = rounds.flatMap(r => r.matches).filter(m => m.result === null).length;
   let note = "";
   if (state.phase === "complete") note = "The tournament is finished.";
   else if (!can(role, "PairNextRound")) note = "Your role cannot pair rounds.";
   else if (unreported > 0) note = `${unreported} unreported ${unreported === 1 ? "match" : "matches"}. Enter every result first.`;
   else if (playoff && rounds.at(-1)?.matches.length === 1) note = "The final is reported. Finalize the tournament from the Tournament menu.";
-  else if (active < 2) note = "Enroll at least two active players.";
+  else if (active < 2) note = isTeamEvent(state) ? "Enroll at least two active teams." : "Enroll at least two active players.";
   return { label, enabled: note === "", note: note || (rounds.length === 0 ? "Pairs everyone enrolled and starts the timer when you set it." : "Pairs by points, avoiding repeat opponents."), run };
 }
 
@@ -52,8 +52,11 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
     const why = opts.reason;
     return { id, label, menu, run, enabled: !why, ...opts, reason: why };
   };
-  const hasDropped = state.players.some(p => p.status === "dropped");
-  const hasActive = state.players.some(p => p.status === "active");
+  const team = isTeamEvent(state);
+  const who = competitorLabel(state);
+  const all = competitors(state);
+  const hasDropped = all.some(p => p.status === "dropped");
+  const hasActive = all.some(p => p.status === "active");
   const cutWhy = reason("CutToPlayoff", state.settings.format !== "swiss" ? "Single elimination has no Swiss cut." : !hasRounds ? "Pair a round first." : state.phase === "playoff" ? "Playoffs have started." : !allResultsIn(state) ? "Enter every result first." : undefined);
   const repairWhy = reason("RepairRound", !hasRounds ? "Pair a round first." : undefined);
   const unreportedAny = rounds.flatMap(r => r.matches).filter(m => m.result === null).length;
@@ -66,12 +69,16 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
   const unreportedNow = (current?.matches ?? []).filter(m => m.result === null).length;
   const playoffRounds = rounds.some(r => r.stage === "playoff");
   const noPlayers = state.players.length === 0 ? "No players yet." : undefined;
+  const noCompetitors = all.length === 0 ? (team ? "No teams yet." : "No players yet.") : undefined;
+  const teamOnly = team ? undefined : "This tournament is not a team event.";
   const list: Action[] = [
     // File
     a("open", "Open Tournament…", "File", () => h.importFile("tournament"), { keys: "Ctrl+O", reason: reason("UpdateSettings") }),
     a("home", "Close Tournament", "File", h.home),
+    a("log", "Show Recent Log Entries…", "File", () => h.open("log")),
     a("save", "Save Tournament", "File", () => h.download("tournament"), { keys: "Ctrl+S", separatorBefore: true }),
     a("import-players", "Import Players (AllPlayers XML)…", "File", () => h.importFile("players"), { reason: reason("AddPlayers", state.phase !== "registration" && "Players import during registration only.") }),
+    a("import-team-players", "Import Team Player List…", "File", () => h.importFile("team-players"), { reason: reason("AddPlayers", team ? "Team player lists import into a tournament with individual players." : state.phase !== "registration" && "Players import during registration only.") }),
     a("export-players", "Export Players (XML)", "File", () => h.download("players-xml"), { separatorBefore: true }),
     a("export-players-csv", "Export Players (CSV)", "File", () => h.download("players.csv")),
     a("export-standings-csv", "Export Standings (CSV)", "File", () => h.download("standings.csv")),
@@ -97,12 +104,13 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
     a("go-players", "View Players", "Players", () => h.go("players"), { keys: "F1" }),
     a("find", "Find Player", "Players", () => { h.go("players"); window.setTimeout(() => window.dispatchEvent(new Event("dk:focus-find")), 30); }, { keys: "Ctrl+F" }),
     a("notes", "Player Notes and Penalties…", "Players", () => h.open("notes"), { keys: "Ctrl+K", reason: noPlayers }),
-    a("history", "Player Match History…", "Players", () => h.open("history"), { keys: "Ctrl+M", reason: noPlayers }),
-    a("drop", "Drop Player…", "Players", () => h.open("drop"), { separatorBefore: true, reason: reason("DropPlayer", !hasActive && "No active players to drop.") }),
-    a("reenroll", "Re-Enroll Player…", "Players", () => h.open("reenroll"), { reason: reason("ReEnroll", !hasDropped && "Nobody has dropped.") }),
-    a("undrop", "Undrop Player Wizard…", "Players", () => h.open("undrop"), { reason: reason("UndropPlayer", !hasDropped && "Nobody has dropped.") }),
-    a("seats", "Assigned Seats…", "Players", () => h.open("seats"), { reason: reason("UpdatePlayer", noPlayers) }),
-    a("print-players", "Print Player List", "Players", () => h.print("players"), { keys: "F4", separatorBefore: true, reason: noPlayers }),
+    a("history", `${who} Match History…`, "Players", () => h.open("history"), { keys: "Ctrl+M", reason: noCompetitors }),
+    a("drop", `Drop ${who}…`, "Players", () => h.open("drop"), { separatorBefore: true, reason: reason(team ? "DropTeam" : "DropPlayer", !hasActive && `No active ${who.toLowerCase()}s to drop.`) }),
+    a("reenroll", `Re-Enroll ${who}…`, "Players", () => h.open("reenroll"), { reason: reason(team ? "ReEnrollTeam" : "ReEnroll", !hasDropped && "Nobody has dropped.") }),
+    a("undrop", `Undrop ${who} Wizard…`, "Players", () => h.open("undrop"), { reason: reason(team ? "UndropTeam" : "UndropPlayer", !hasDropped && "Nobody has dropped.") }),
+    a("seats", "Assigned Seats…", "Players", () => h.open("seats"), { reason: reason(team ? "UpdateTeam" : "UpdatePlayer", noCompetitors) }),
+    a("print-players", team ? "Print Team List" : "Print Player List", "Players", () => h.print("players"), { keys: "F4", separatorBefore: true, reason: noPlayers }),
+    a("print-penalties", "Print Penalties", "Players", () => h.print("penalties"), { reason: state.penalties.length === 0 ? "No penalties have been recorded." : undefined }),
 
     // Pairings
     a("go-pairings", "View Pairings", "Pairings", () => h.go("pairings"), { keys: "F2" }),
@@ -112,8 +120,11 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
     a("cancel", "Cancel Round", "Pairings", () => h.confirm("cancel"), { keys: "F12", reason: reason("CancelRound", !hasRounds && "Nothing to cancel.") }),
     a("change", "Change Match Result Wizard…", "Pairings", () => h.open("change"), { reason: reason("EnterResult", !hasRounds && "Pair a round first.") }),
     a("integrity", "Verify Pairings…", "Pairings", () => h.open("integrity")),
-    a("print-pairings", "Print Pairings (by player)", "Pairings", () => h.print("pairings-by-player"), { keys: "F5", separatorBefore: true, reason: hasRounds ? undefined : "Pair a round first." }),
+    a("print-pairings", team ? "Print Pairings (by team)" : "Print Pairings (by player)", "Pairings", () => h.print("pairings-by-player"), { keys: "F5", separatorBefore: true, reason: hasRounds ? undefined : "Pair a round first." }),
     a("print-pairings-table", "Print Pairings (by table)", "Pairings", () => h.print("pairings"), { reason: hasRounds ? undefined : "Pair a round first." }),
+    a("print-pairings-team", "Print Pairings by Team", "Pairings", () => h.print("pairings-by-team"), { reason: teamOnly ?? (hasRounds ? undefined : "Pair a round first.") }),
+    a("print-unreported", "Print Unreported Matches", "Pairings", () => h.print("unreported"), { reason: hasRounds ? (unreportedAny === 0 ? "Every match has a result." : undefined) : "Pair a round first." }),
+    a("print-paired-down", "Print Paired-down Players", "Pairings", () => h.print("paired-down"), { reason: hasRounds ? undefined : "Pair a round first." }),
     a("print-brackets", "Print Brackets", "Pairings", () => h.print("brackets"), { keys: "F6", reason: playoffRounds ? undefined : "No playoff has been paired yet." }),
     a("print-slips", "Print Result Slips", "Pairings", () => h.print("slips"), { keys: "F7", reason: hasRounds ? undefined : "Pair a round first." }),
 

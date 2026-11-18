@@ -6,7 +6,7 @@ import { actionForKey, buildActions, pairInfo, type ConfirmKind, type DialogKind
 import { AllPlayersPanel } from "./all-players-panel";
 import { Binder, MenuBar, StatusBar, Tray } from "./chrome";
 import {
-  AddTestPlayersDialog, BatchPrintDialog, ChangeResultDialog, CutDialog, DropPlayerDialog, ReEnrollDialog, SeatsDialog, HistoryDialog, ImportDialog, IntegrityDialog, KeyboardDialog, ManualPairingsDialog, PlayerNotesDialog, TimerDialog, UndropDialog,
+  AddTestPlayersDialog, BatchPrintDialog, ChangeResultDialog, CutDialog, DropPlayerDialog, ReEnrollDialog, SeatsDialog, HistoryDialog, ImportDialog, IntegrityDialog, KeyboardDialog, LogDialog, ManualPairingsDialog, PlayerNotesDialog, TimerDialog, UndropDialog,
 } from "./dialogs";
 import { postDummy } from "./dummy";
 import { isTemporaryMemberId } from "@dd-tournament/engine";
@@ -14,13 +14,26 @@ import { JudgingPanel } from "./judging-panel";
 import { Palette } from "./palette";
 import { PairingsPanel } from "./pairings-panel";
 import { PlayersPanel } from "./players-panel";
+import { TeamsPanel } from "./teams-panel";
 import { SharingSections } from "./settings-panel";
 import { TournamentDialog } from "./tournament-dialog";
 import { StandingsPanel } from "./standings-panel";
-import { roundStats } from "./helpers";
+import { isTeamEvent, roundStats } from "./helpers";
 import { can } from "./roles";
 import { useDesk } from "./use-desk";
 
+/** Fetch the file first, so a failed export shows an error here and never saves the error text as a file. */
+async function downloadExport(code: string, kind: ExportKind, notify: (text: string, bad?: boolean) => void) {
+  try {
+    const res = await fetch(`/api/events/${encodeURIComponent(code)}/export/${kind}`, { cache: "no-store" });
+    if (!res.ok) { notify(res.status === 403 || res.status === 401 ? "You do not have access to this export." : "The export failed. Nothing was saved. Try again.", true); return; }
+    const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? `${code}-${kind}`;
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  } catch { notify("The export failed. Check your connection. Nothing was saved.", true); }
+}
 const modalOpen = () => !!document.querySelector("dialog[open]");
 
 function Centered({ title, children }: { title: string; children?: React.ReactNode }) {
@@ -33,7 +46,7 @@ export function Desk({ code }: { code: string }) {
   const [view, setView] = useState<"all" | "event">("event");
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
-  const [importKind, setImportKind] = useState<"tournament" | "players" | null>(null);
+  const [importKind, setImportKind] = useState<"tournament" | "players" | "team-players" | null>(null);
   const [palette, setPalette] = useState(false);
   const [includeDropped, setIncludeDropped] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -65,7 +78,7 @@ export function Desk({ code }: { code: string }) {
   const actions = useMemo(() => desk ? buildActions(desk, role, {
     go, open: setDialog, confirm: setConfirm,
     print: (k: PrintKind) => { window.open(`/e/${encodeURIComponent(code)}/print/${k === "pairings-by-player" ? "pairings?by=player" : k}`, "_blank", "noopener"); },
-    download: (k: ExportKind) => { const a = document.createElement("a"); a.href = `/api/events/${encodeURIComponent(code)}/export/${k}`; a.download = ""; document.body.append(a); a.click(); a.remove(); },
+    download: (k: ExportKind) => { void downloadExport(code, k, notify); },
     importFile: setImportKind, pair: () => void doPair(), palette: () => setPalette(true), home: () => { window.location.assign("/"); },
     dummyResults: () => { void (async () => {
       const r = await postDummy(code, desk, { action: "results" });
@@ -131,9 +144,9 @@ export function Desk({ code }: { code: string }) {
         {flash && <p role={flash.bad ? "alert" : "status"} className={`dk-note ${flash.bad ? "dk-note--bad" : ""}`}>{flash.text}</p>}
         <div id="dk-panel" role="tabpanel" aria-label={view === "all" ? "All Players" : tabs.find(t => t.id === active)?.label as string} className="dk-sec">
           {view === "all" ? <AllPlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />
-            : active === "players" ? <PlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />
+            : active === "players" ? (isTeamEvent(desk.state) ? <TeamsPanel code={code} desk={desk} role={role} send={send} notify={notify} /> : <PlayersPanel code={code} desk={desk} role={role} send={send} notify={notify} />)
             : active === "pairings" ? <PairingsPanel desk={desk} role={role} send={send} pair={pair} onRepair={() => setConfirm("repair")} onTimer={() => setDialog("timer")} onManual={() => setDialog("manual")} notify={notify} />
-            : active === "standings" ? <StandingsPanel desk={desk} includeDropped={includeDropped} setIncludeDropped={setIncludeDropped} />
+            : active === "standings" ? <StandingsPanel desk={desk} role={role} send={send} includeDropped={includeDropped} setIncludeDropped={setIncludeDropped} />
             : null}
         </div>
       </div>
@@ -158,6 +171,7 @@ export function Desk({ code }: { code: string }) {
     {dialog === "drop" && <DropPlayerDialog desk={desk} send={send} onClose={close} onDone={done} />}
     {dialog === "reenroll" && <ReEnrollDialog desk={desk} send={send} onClose={close} onDone={done} />}
     {dialog === "seats" && <SeatsDialog desk={desk} send={send} onClose={close} />}
+    {dialog === "log" && <LogDialog code={code} onClose={close} />}
     {dialog === "history" && <HistoryDialog state={desk.state} onClose={close} />}
     {importKind && <ImportDialog code={code} kind={importKind} onClose={() => setImportKind(null)} onDone={done} replaceDesk={replaceDesk} />}
 
