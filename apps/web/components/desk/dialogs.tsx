@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useState, type ReactNode } from "react";
 import type { DeskView, EventState, Match, Player, StaffRole } from "@dd-tournament/engine";
-import { Button, ButtonLink, Dialog, Field, Input, Keycap, Radio, Select } from "../ui";
+import { Button, ButtonLink, Dialog, Field, FilePicker, Input, Keycap, Radio, Select, Textarea, matchesAccept } from "../ui";
 import { STAMP_TEXT, byName, clockLabel, formatClock, playerById, roundTitle } from "./helpers";
 import { can } from "./roles";
 import { MESSAGES, type SendFn } from "./use-desk";
@@ -315,11 +315,14 @@ export function ManualPairingsDialog({ desk, send, onClose }: Base) {
 }
 
 /* ---------- Import ---------- */
+const IMPORT_ACCEPT = { players: ".xml,text/xml,application/xml", tournament: ".Tournament,.tournament" } as const;
 export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk }: Close & { code: string; kind: "tournament" | "players"; onDone: (t: string) => void; replaceDesk: (d: DeskView) => void }) {
-  const [kind, setKind] = useState(initial);
+  const [kind, setKindRaw] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  // Switching the kind drops a chosen file that the new kind does not accept.
+  const setKind = (next: "tournament" | "players") => { setKindRaw(next); if (file && !matchesAccept(file.name, IMPORT_ACCEPT[next])) setFile(null); setErr(null); };
   async function run() {
     if (!file) { setErr("Choose a file."); return; }
     setBusy(true); setErr(null);
@@ -339,7 +342,9 @@ export function ImportDialog({ code, kind: initial, onClose, onDone, replaceDesk
       <Radio name="imp" label="Tournament file (.Tournament), replaces players and rounds" checked={kind === "tournament"} onChange={() => setKind("tournament")} />
     </div>
     {kind === "tournament" && <p className="dd-meta" style={{ margin: 0 }}>This replaces the players and rounds in this tournament. Staff stay as they are.</p>}
-    <Field label="File"><input className="dd-input" type="file" accept=".xml,.Tournament,.tournament,text/xml,application/xml" onChange={e => setFile(e.target.files?.[0] ?? null)} /></Field>
+    <FilePicker label="File" accept={IMPORT_ACCEPT[kind]} file={file} onChange={f => { setFile(f); setErr(null); }}
+      onReject={name => setErr(`${name} is not ${kind === "players" ? "an .xml player list" : "a .Tournament file"}.`)}
+      hint={kind === "players" ? "An .xml player list." : "A .Tournament file."} />
     <Err text={err} />
   </Dialog>;
 }
@@ -422,7 +427,7 @@ export function PlayerNotesDialog({ desk, role, send, onClose }: Base & { role: 
     {player && <>
       <section className="dk-sec" style={{ gap: 8 }} aria-label="Notes">
         <Field label="Notes" hint={canNotes ? "Seating, accessibility, anything the desk should remember." : "Your role can read notes but not change them."}>
-          <textarea className="dd-input" rows={3} value={notes} disabled={!canNotes} maxLength={1000} onChange={e => setNotes(e.target.value)} style={{ height: "auto", paddingBlock: 8 }} />
+          <Textarea rows={3} value={notes} disabled={!canNotes} maxLength={1000} onChange={e => setNotes(e.target.value)} />
         </Field>
         {canNotes && <div><Button variant="violet" disabled={notes === (player.notes ?? "")} onClick={() => void run({ type: "UpdatePlayer", playerId: player.id, notes: notes.trim() || null }, "Notes saved.")}>Save notes</Button></div>}
       </section>

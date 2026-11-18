@@ -5,6 +5,10 @@ export function Input({ className, mono, slot, ...rest }: ComponentProps<"input"
   return <input className={cx("dd-input", mono && "dd-input--mono", slot && "dd-input--slot", className)} {...rest} />;
 }
 
+export function Textarea({ className, ...rest }: ComponentProps<"textarea">) {
+  return <textarea className={cx("dd-input", "dd-textarea", className)} {...rest} />;
+}
+
 export function Select({ className, compact, children, ...rest }: ComponentProps<"select"> & { compact?: boolean }) {
   return <select className={cx("dd-select", compact && "dd-select--sm", className)} {...rest}>{children}</select>;
 }
