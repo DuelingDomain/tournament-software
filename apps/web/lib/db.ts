@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
-import type { EventState } from "@dd-tournament/engine";
+import { createEvent, type EventState } from "@dd-tournament/engine";
 import { tournamentUserSchema, type TournamentUser } from "./validation";
 import { HttpError } from "./http";
 
@@ -18,6 +18,7 @@ export function database() {
   db.pragma("busy_timeout = 5000");
   db.exec(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS events (code TEXT PRIMARY KEY, owner_user_id INTEGER NOT NULL REFERENCES users(id), state TEXT NOT NULL, version INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS locations (id TEXT PRIMARY KEY, owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS discord_settings (event_code TEXT PRIMARY KEY REFERENCES events(code) ON DELETE CASCADE, webhook_url TEXT, post_pairings INTEGER NOT NULL DEFAULT 0, post_standings INTEGER NOT NULL DEFAULT 0);`);
@@ -37,7 +38,9 @@ function decode(row: EventRow): EventRecord {
   // Only the engine and legacy parser write this private document; schemaVersion gates storage upgrades.
   const parsed: unknown = JSON.parse(row.state);
   z.object({ schemaVersion: z.literal(1) }).parse(parsed);
-  return { code: row.code, ownerUserId: row.owner_user_id, state: parsed as EventState, version: row.version };
+  const state = parsed as EventState;
+  state.settings = { ...createEvent({ name: state.settings.name }, { now: state.createdAt, seed: 0, actor: "migration" }).settings, ...state.settings };
+  return { code: row.code, ownerUserId: row.owner_user_id, state, version: row.version };
 }
 export function eventRecord(code: string): EventRecord {
   const row = database().prepare<[string], EventRow>("SELECT * FROM events WHERE code=?").get(code);

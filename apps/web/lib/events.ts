@@ -1,11 +1,12 @@
 import { randomBytes, randomInt } from "node:crypto";
-import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole } from "@dd-tournament/engine";
+import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole, type StaffAssignment } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { isTemporaryMemberId, normalizeMemberId } from "@dd-tournament/engine";
 import { lookupAccounts, searchAccounts } from "./bridge";
 import { cacheUser, cachedUser, database, eventRecord, saveEvent, type EventRecord } from "./db";
 import { HttpError } from "./http";
 import { joinReason, requireCommand, requireDummyData, requireImport, requireStaff } from "./permissions";
+import { locationSettings } from "./locations";
 import type { DummyData, TournamentUser } from "./validation";
 
 export function context(user: TournamentUser): CommandContext {
@@ -26,11 +27,18 @@ export function playerResponse(event: EventRecord, user: TournamentUser) {
   const reason = joinReason(event.state, user.memberId);
   return { joined: false, canJoin: !reason, ...(reason ? { reason } : {}), memberId: user.memberId };
 }
-export function newEvent(user: TournamentUser, name: string, settings: Parameters<typeof createEvent>[0]) {
+export function newEvent(user: TournamentUser, name: string, settings: Parameters<typeof createEvent>[0], staff: StaffAssignment[] = []) {
   return database().transaction(() => {
     cacheUser(user);
-    let state = createEvent({ ...settings, name }, context(user));
+    let state = createEvent({ ...locationSettings(user.id, settings), name }, context(user));
     state = applyCommand(state, { type: "AddStaff", userId: user.id, name: user.displayName, role: "organizer" }, context(user));
+    for (const entry of staff) {
+      if (entry.userId === user.id) {
+        if ((entry.position ?? entry.role) !== "organizer") throw new HttpError(403, "forbidden_role");
+        continue;
+      }
+      state = applyCommand(state, { type: "AddStaff", ...entry }, context(user));
+    }
     let code: string;
     do { code = randomBytes(5).toString("hex").toUpperCase(); } while (database().prepare("SELECT 1 FROM events WHERE code=?").get(code));
     database().prepare("INSERT INTO events(code,owner_user_id,state,version) VALUES (?,?,?,1)").run(code, user.id, JSON.stringify(state));
@@ -38,7 +46,7 @@ export function newEvent(user: TournamentUser, name: string, settings: Parameter
   }).immediate();
 }
 export async function resolveCommand(command: Command): Promise<Command> {
-  const ids = command.type === "AddPlayers" ? command.players.flatMap(p => p.userId === null ? [] : [p.userId]) : command.type === "AddStaff" || command.type === "LinkPlayerAccount" ? [command.userId] : [];
+  const ids = command.type === "UpdateSettings" && command.staff ? command.staff.map(s => s.userId) : command.type === "AddPlayers" ? command.players.flatMap(p => p.userId === null ? [] : [p.userId]) : command.type === "AddStaff" || command.type === "LinkPlayerAccount" ? [command.userId] : [];
   if (!ids.length) return command;
   const { users, missing } = await lookupAccounts(ids);
   if (missing.length) throw new HttpError(422, "account_not_found");
@@ -47,6 +55,7 @@ export async function resolveCommand(command: Command): Promise<Command> {
     if (!user) throw new HttpError(422, "account_not_found");
     return user;
   }
+  if (command.type === "UpdateSettings" && command.staff) return { ...command, staff: command.staff.map(s => ({ ...s, name: account(s.userId).displayName })) };
   if (command.type === "AddPlayers") return { ...command, players: command.players.map(p => {
     if (p.userId === null) return p;
     const user = account(p.userId); return { userId: user.id, name: user.displayName, memberId: user.memberId };
@@ -63,7 +72,8 @@ function runCommands(code: string, user: TournamentUser, expectedVersion: number
     if (event.version !== expectedVersion) throw new HttpError(409, "version_conflict", { desk: deskView(event, role) });
     const commands = makeCommands(event);
     let state = event.state;
-    for (const command of commands) state = applyCommand(state, command, context(user));
+    for (const command of commands) state = applyCommand(state, command.type === "UpdateSettings"
+      ? { ...command, settings: locationSettings(event.ownerUserId, command.settings) } : command, context(user));
     return { desk: deskView(saveEvent(event, state), role), count: commands.length };
   }).immediate();
 }

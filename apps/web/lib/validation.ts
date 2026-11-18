@@ -7,6 +7,11 @@ const name = z.string().trim().min(1).max(200);
 const memberId = z.string().max(64).nullable();
 const penalty = z.enum(["caution", "warning", "game_loss", "match_loss", "disqualification"]);
 export const role = z.enum(["organizer", "head_judge", "judge", "scorekeeper", "staff"]);
+export const position = z.enum(["organizer", "head_judge", "assistant_head_judge", "floor_judge_team_lead", "floor_judge", "scorekeeper", "event_manager", "event_staff"]);
+export const staffSchema = z.strictObject({ userId, name, role: role.optional(), position: position.optional() });
+export const locationFields = z.strictObject({ name, address1: z.string().max(500).default(""), address2: z.string().max(500).default(""),
+  city: z.string().max(200).default(""), state: z.string().max(200).default(""), postal: z.string().max(100).default(""),
+  country: z.string().max(200).default(""), phone: z.string().max(100).default(""), website: z.string().max(500).default("") });
 export const result = z.enum(["p1", "p2", "draw", "double_loss", "bye_win", "bye_loss"]);
 const expectedVersion = z.number().int().positive().safe();
 export const dummyDataSchema = z.discriminatedUnion("action", [
@@ -15,7 +20,9 @@ export const dummyDataSchema = z.discriminatedUnion("action", [
 ]);
 export type DummyData = z.infer<typeof dummyDataSchema>;
 export const settingsSchema = z.strictObject({
-  name, format: z.enum(["swiss", "single_elim"]), plannedRounds: z.number().int().min(1).max(100).nullable(),
+  name, format: z.enum(["swiss", "single_elim", "open_dueling"]),
+  style: z.enum(["advanced", "traditional", "sealed", "open_dueling"]), playerStructure: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
+  locationId: id.nullable(), locationDetails: locationFields.extend({ id }).nullable(), plannedRounds: z.number().int().min(1).max(100).nullable(),
   topCut: z.union([z.literal(0), z.literal(2), z.literal(4), z.literal(8), z.literal(16), z.literal(32), z.literal(64)]),
   tiebreak: z.enum(["floor33", "legacy"]), startingTable: z.number().int().min(1).max(100000),
   roundMinutes: z.number().positive().max(1440), location: z.string().max(500).nullable(), startsAt: z.iso.datetime({ offset: true }).nullable(),
@@ -26,14 +33,15 @@ export const partialSettings = settingsSchema.partial();
 const playerId = { playerId: id };
 const matchId = { matchId: id };
 export const commandSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("UpdateSettings"), settings: partialSettings }),
+  z.strictObject({ type: z.literal("UpdateSettings"), settings: partialSettings, staff: z.array(staffSchema).max(100).optional() }),
   z.strictObject({ type: z.literal("AddPlayers"), players: z.array(z.strictObject({ userId, name, memberId: memberId.optional() })).min(1).max(500) }),
   z.strictObject({ type: z.literal("UpdatePlayer"), ...playerId, name: name.optional(), memberId: memberId.optional(), fixedTable: z.number().int().positive().nullable().optional(), notes: z.string().max(2000).nullable().optional() }),
   z.strictObject({ type: z.literal("LinkPlayerAccount"), ...playerId, userId }),
   z.strictObject({ type: z.literal("ReEnroll"), ...playerId }),
   z.strictObject({ type: z.literal("RemovePlayer"), ...playerId }),
   z.strictObject({ type: z.literal("SetCheckedIn"), ...playerId, checkedIn: z.boolean() }),
-  z.strictObject({ type: z.literal("AddStaff"), userId, name, role }),
+  z.strictObject({ type: z.literal("AddStaff"), ...staffSchema.shape }),
+  z.strictObject({ type: z.literal("SetStaffPosition"), staffId: id, position }),
   z.strictObject({ type: z.literal("SetStaffRole"), staffId: id, role }),
   z.strictObject({ type: z.literal("RemoveStaff"), staffId: id }),
   z.strictObject({ type: z.literal("PairNextRound") }),

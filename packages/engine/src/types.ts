@@ -7,16 +7,27 @@ export type PlayerId = string; // short random id, stable for the event
 export type MatchId = string;
 
 export type TiebreakMode = "floor33" | "legacy"; // floor33: each opponent's win% counts at least 33.3%
-export type EventFormat = "swiss" | "single_elim";
+export type EventFormat = "swiss" | "single_elim" | "open_dueling";
 export type EventPhase = "registration" | "swiss" | "playoff" | "complete";
 
 export type MatchResult =
   | "p1" | "p2" | "draw" | "double_loss" // two-player results
   | "bye_win" | "bye_loss";             // one-player results (p2 null)
 
+export type EventStyle = "advanced" | "traditional" | "sealed" | "open_dueling";
+export type PlayerStructure = 1 | 2 | 3 | 4 | 5;
+export interface Location {
+  id: string; name: string; address1: string; address2: string; city: string;
+  state: string; postal: string; country: string; phone: string; website: string;
+}
+
 export interface EventSettings {
   name: string;
   format: EventFormat;
+  style: EventStyle;
+  playerStructure: PlayerStructure;
+  locationId: string | null;
+  locationDetails: Location | null;
   /** Planned Swiss rounds; null = organizer decides as they go. */
   plannedRounds: number | null;
   /** 0 = no cut. Otherwise 2, 4, 8, 16, 32 or 64. */
@@ -91,8 +102,10 @@ export interface PenaltyEntry {
 }
 
 export type StaffRole = "organizer" | "head_judge" | "judge" | "scorekeeper" | "staff";
+export type StaffPosition = "organizer" | "head_judge" | "assistant_head_judge" | "floor_judge_team_lead" | "floor_judge" | "scorekeeper" | "event_manager" | "event_staff";
+export interface StaffAssignment { userId: number; name: string; role?: StaffRole; position?: StaffPosition }
 /** Staff are DuelingDomain accounts. The event owner is always an organizer. */
-export interface StaffMember { id: string; userId: number; name: string; role: StaffRole }
+export interface StaffMember { id: string; userId: number; name: string; role: StaffRole; position?: StaffPosition }
 
 export interface EventState {
   schemaVersion: 1;
@@ -129,14 +142,15 @@ export interface CommandContext { now: string; seed: number; actor: string }
 
 export type Command =
   // Setup
-  | { type: "UpdateSettings"; settings: Partial<Omit<EventSettings, "format">> & { format?: EventFormat } }
+  | { type: "UpdateSettings"; settings: Partial<Omit<EventSettings, "format">> & { format?: EventFormat }; staff?: StaffAssignment[] }
   | { type: "AddPlayers"; players: { userId: number | null; name: string; memberId?: string | null }[] } // service resolves accounts; late entry after R1 = bye losses for every round already paired, including the current one; duplicate non-null userId refused
   | { type: "UpdatePlayer"; playerId: PlayerId; name?: string; memberId?: string | null; fixedTable?: number | null; notes?: string | null }
   | { type: "LinkPlayerAccount"; playerId: PlayerId; userId: number } // claim an imported entry
   | { type: "ReEnroll"; playerId: PlayerId } // dropped player re-enters: bye losses for every missed round incl. current (legacy re-enroll)
   | { type: "RemovePlayer"; playerId: PlayerId } // registration only
   | { type: "SetCheckedIn"; playerId: PlayerId; checkedIn: boolean }
-  | { type: "AddStaff"; userId: number; name: string; role: StaffRole }
+  | ({ type: "AddStaff" } & StaffAssignment)
+  | { type: "SetStaffPosition"; staffId: string; position: StaffPosition }
   | { type: "SetStaffRole"; staffId: string; role: StaffRole }
   | { type: "RemoveStaff"; staffId: string }
   // Rounds

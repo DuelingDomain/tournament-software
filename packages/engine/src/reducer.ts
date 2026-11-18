@@ -5,6 +5,7 @@ import { assignTables, makeMatch, pairSwiss } from "./pairing.js";
 import { advanceBracket, initialBracket, refreshEliminations } from "./bracket.js";
 import { compareStandings, standings } from "./standings.js";
 import { isTemporaryMemberId, normalizeMemberId } from "./member-id.js";
+import { staffAssignment } from "./staff.js";
 import { integrity } from "./integrity.js";
 
 function requireCondition(condition: unknown, code: string, message: string): asserts condition {
@@ -17,6 +18,10 @@ function validateContext(ctx: CommandContext): void {
 }
 
 function validateSettings(settings: EventSettings): void {
+  requireCondition(["swiss", "single_elim", "open_dueling"].includes(settings.format), "INVALID_FORMAT", "Choose a pairing structure.");
+  requireCondition(["advanced", "traditional", "sealed", "open_dueling"].includes(settings.style), "INVALID_STYLE", "Choose a tournament style.");
+  requireCondition([1, 2, 3, 4, 5].includes(settings.playerStructure), "INVALID_PLAYER_STRUCTURE", "Choose a player structure from one through five.");
+  requireCondition(settings.startsAt === null || Number.isFinite(Date.parse(settings.startsAt)), "INVALID_TIME", "Choose a valid event date and time.");
   requireCondition(settings.name.trim(), "INVALID_NAME", "Give the event a name.");
   requireCondition(Number.isInteger(settings.startingTable) && settings.startingTable >= 1, "INVALID_TABLE", "Starting table must be a positive integer.");
   requireCondition(Number.isFinite(settings.roundMinutes) && settings.roundMinutes > 0, "INVALID_MINUTES", "Round length must be positive.");
@@ -28,7 +33,7 @@ function validateSettings(settings: EventSettings): void {
 export function createEvent(settings: Partial<EventSettings> & { name: string }, ctx: CommandContext): EventState {
   validateContext(ctx);
   const configured: EventSettings = structuredClone({
-    format: "swiss", plannedRounds: null, topCut: 0, tiebreak: "legacy",
+    format: "swiss", style: "advanced", playerStructure: 1, locationId: null, locationDetails: null, plannedRounds: null, topCut: 0, tiebreak: "legacy",
     startingTable: 1, roundMinutes: 50, location: null, startsAt: null,
     infractions: DEFAULT_INFRACTIONS, publicNames: "full", registrationOpen: true,
     requireMemberId: false, allowLateEntry: true, ...settings,
@@ -179,8 +184,19 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
   switch (command.type) {
     case "UpdateSettings": {
       requireCondition(command.settings.format === undefined || command.settings.format === state.settings.format || state.rounds.length === 0, "FORMAT_LOCKED", "The format cannot change after a round has been paired.");
+      requireCondition(command.settings.playerStructure === undefined || command.settings.playerStructure === state.settings.playerStructure || state.players.length === 0,
+        "PLAYER_STRUCTURE_LOCKED", "Player structure cannot change after anyone is enrolled.");
       state.settings = { ...state.settings, ...structuredClone(command.settings) };
       validateSettings(state.settings);
+      if (command.staff) {
+        state.staff = [];
+        for (const entry of command.staff) {
+          requireAccount(entry.userId);
+          requireCondition(entry.name.trim(), "INVALID_NAME", "The staff member needs a name.");
+          requireCondition(!state.staff.some(s => s.userId === entry.userId), "duplicate_account", "This account is already on the event staff.");
+          state.staff.push({ id: randomId(random, ids), userId: entry.userId, name: entry.name.trim(), ...staffAssignment(entry) });
+        }
+      }
       break;
     }
     case "AddPlayers": {
@@ -241,12 +257,18 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       requireCondition(command.name.trim(), "INVALID_NAME", "The staff member needs a name.");
       requireAccount(command.userId);
       requireCondition(!state.staff.some(s => s.userId === command.userId), "duplicate_account", "This account is already on the event staff.");
-      state.staff.push({ id: randomId(random, ids), userId: command.userId, name: command.name.trim(), role: command.role });
+      state.staff.push({ id: randomId(random, ids), userId: command.userId, name: command.name.trim(), ...staffAssignment(command) });
       break;
+    case "SetStaffPosition": {
+      const staff = state.staff.find(s => s.id === command.staffId);
+      requireCondition(staff, "STAFF_NOT_FOUND", "That staff member does not exist.");
+      Object.assign(staff, staffAssignment({ position: command.position }));
+      break;
+    }
     case "SetStaffRole": {
       const staff = state.staff.find(s => s.id === command.staffId);
       requireCondition(staff, "STAFF_NOT_FOUND", "That staff member does not exist.");
-      staff.role = command.role;
+      Object.assign(staff, staffAssignment({ role: command.role }));
       break;
     }
     case "RemoveStaff":

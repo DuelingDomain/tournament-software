@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { createServer } from "node:http";
 import { z } from "zod";
 import type { Command, StaffRole } from "@dd-tournament/engine";
-import { GET as apiGet, POST as apiPost, PUT as apiPut } from "../app/api/[...path]/route";
+import { GET as apiGet, POST as apiPost, PUT as apiPut, DELETE as apiDelete } from "../app/api/[...path]/route";
 import { GET as authGet, POST as authPost } from "../app/auth/[action]/route";
 import { GET as healthGet } from "../app/api/health/route";
 import { database } from "../lib/db";
@@ -39,7 +39,7 @@ async function api(path: string, cookie?: string, method = "GET", data?: unknown
   const request = new Request(`http://localhost:3000/api/${path}`, { method, headers: { ...(cookie ? { cookie } : {}), ...(data ? { "Content-Type": "application/json" } : {}) },
     ...(data ? { body: JSON.stringify(data) } : {}) });
   const context = { params: Promise.resolve({ path: new URL(request.url).pathname.slice(5).split("/") }) };
-  return method === "GET" ? apiGet(request, context) : method === "PUT" ? apiPut(request, context) : apiPost(request, context);
+  return method === "GET" ? apiGet(request, context) : method === "PUT" ? apiPut(request, context) : method === "DELETE" ? apiDelete(request, context) : apiPost(request, context);
 }
 async function create(cookie: string, settings = {}) {
   const response = await api("events", cookie, "POST", { name: "Cloudberry Cup", createCode: "", settings });
@@ -578,5 +578,34 @@ describe("legacy files and service bridge", () => {
       expect(received).toContain('POST /api/tournament-bridge/users/lookup {"ids":[1]}');
       expect(received).toContain('PUT /api/tournament-bridge/users/1/member-id {"memberId":"101"}');
     } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+  });
+});
+
+
+describe("tournament configuration", () => {
+  it("creates and edits full settings and staff, and protects organizer locations in use", async () => {
+    const cookie = await login();
+    const other = await login(2);
+    const fields = { name: "Sample Hall", address1: "1 Example Way", address2: "Room 2", city: "Example City", state: "ST",
+      postal: "00000", country: "Example", phone: "000-0000", website: "https://example.test" };
+    const added = await api("locations", cookie, "POST", fields);
+    expect(added.status).toBe(201);
+    const location = await added.json() as { id: string };
+    expect((await api(`locations/${location.id}`, other, "PUT", fields)).status).toBe(404);
+    const created = await api("events", cookie, "POST", { name: "Team Cup", createCode: "", settings: {
+      style: "traditional", format: "open_dueling", playerStructure: 3, locationId: location.id, startsAt: "2026-12-02T13:15:00Z" },
+      staff: [{ userId: 2, name: "Sample Judge", position: "floor_judge_team_lead" }] });
+    expect(created.status).toBe(201);
+    const { code } = await created.json() as { code: string };
+    const initial = await (await api(`events/${code}/desk`, cookie)).json() as { version: number; state: { settings: object; staff: object[] } };
+    expect(initial.state.settings).toMatchObject({ location: fields.name, locationId: location.id, locationDetails: fields, style: "traditional", playerStructure: 3 });
+    expect(initial.state.staff).toContainEqual(expect.objectContaining({ userId: 2, role: "judge", position: "floor_judge_team_lead" }));
+    expect((await api(`locations/${location.id}`, cookie, "DELETE")).status).toBe(409);
+    expect((await api(`locations/${location.id}`, cookie, "PUT", { ...fields, city: "Updated City" })).status).toBe(200);
+    expect((await api("locations", cookie)).status).toBe(200);
+    expect((await command(code, cookie, initial.version, { type: "UpdateSettings", settings: { locationId: null, name: "Updated Cup" } })).status).toBe(200);
+    expect((await api(`locations/${location.id}`, cookie, "DELETE")).status).toBe(200);
+    expect((await api(`events/${code}/commands`, other, "POST", { expectedVersion: initial.version + 1,
+      command: { type: "SetStaffPosition", staffId: "missing", position: "organizer" } })).status).toBe(403);
   });
 });
