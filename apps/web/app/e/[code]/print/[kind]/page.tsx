@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { PrintView, type PrintKind } from "@/components/print/PrintView";
 
-const KINDS: PrintKind[] = ["pairings", "slips", "standings", "players", "brackets"];
+const KINDS: PrintKind[] = ["pairings", "slips", "standings", "players", "brackets", "pairings-by-team", "unreported", "paired-down", "penalties"];
 export default async function Page({ params, searchParams }: { params: Promise<{ code: string; kind: string }>; searchParams: Promise<{ by?: string }> }) {
   const { code, kind } = await params;
   const { by } = await searchParams;

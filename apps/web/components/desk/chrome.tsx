@@ -4,7 +4,7 @@ import type { DeskView } from "@dd-tournament/engine";
 import { Keycap, LogoMark } from "../ui";
 import { MENUS, type Action, type MenuName, type Panel } from "./actions";
 import { CheckIcon } from "./icons";
-import { formatLabel, roundStats } from "./helpers";
+import { competitors, formatLabel, isTeamEvent, roundStats } from "./helpers";
 
 /* ---------- Menu bar ---------- */
 export function MenuBar({ actions, onPalette, brandHref }: { actions: Action[]; onPalette: () => void; brandHref: string }) {
@@ -122,9 +122,10 @@ export function StatusBar({ desk, saving, note, onDismiss }: { desk: DeskView; s
   const { state } = desk;
   const round = state.rounds.at(-1);
   const stats = roundStats(state, round);
-  const active = state.players.filter(p => p.status === "active").length;
+  const all = competitors(state);
+  const active = all.filter(p => p.status === "active").length;
   return <footer className="dk-status-bar" role="status" aria-live="polite">
-    <span><b>{active}</b> Active of <b>{state.players.length}</b> Total Players</span><i className="dk-sq" aria-hidden="true" />
+    <span><b>{active}</b> Active of <b>{all.length}</b> Total {isTeamEvent(state) ? "Teams" : "Players"}</span><i className="dk-sq" aria-hidden="true" />
     {round ? <><span>Round <b>{round.number}</b>{round.stage === "playoff" ? " Playoffs" : ""}</span><i className="dk-sq" aria-hidden="true" />
       <span><b>{stats.unreported}</b> Unreported Matches (<b>{stats.reported}</b> Reported)</span><i className="dk-sq" aria-hidden="true" /></>
       : <><span>Tournament Not Started</span><i className="dk-sq" aria-hidden="true" /></>}

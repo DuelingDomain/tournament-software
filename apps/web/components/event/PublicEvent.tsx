@@ -22,24 +22,26 @@ function ResultCell({ m }: { m: PublicMatchView }) {
   }
 }
 
+const Roster = ({ names }: { names: { name: string }[] }) => names.length ? <small className="pub-roster">{names.map(n => n.name).join(", ")}</small> : null;
+
 function PairingRows({ matches }: { matches: PublicMatchView[] }) {
   return <ol className="pub-list" aria-label="Pairings">
     {matches.map(m => <li key={m.id} className="dd-table-row pub-prow">
-      <span className="dd-display pub-table pub-a-t"><span className="dd-sr">Table </span>{m.table ?? "-"}</span>
-      <span className="pub-a-1"><Winner name={m.p1} won={m.result === "p1"} /></span>
-      <span className="pub-a-2">{m.p2 === null ? <span className="dd-meta">Bye</span> : <Winner name={m.p2} won={m.result === "p2"} />}</span>
+      <span className="dd-display pub-table pub-a-t"><span className="dd-sr">Table </span>{m.table === null ? "-" : m.tables.length > 1 ? `${m.tables[0]}–${m.tables.at(-1)}` : m.table}</span>
+      <span className="pub-a-1"><Winner name={m.p1} won={m.result === "p1"} /><Roster names={m.p1Members} /></span>
+      <span className="pub-a-2">{m.p2 === null ? <span className="dd-meta">Bye</span> : <><Winner name={m.p2} won={m.result === "p2"} /><Roster names={m.p2Members} /></>}</span>
       <span className="pub-a-r"><ResultCell m={m} /></span>
     </li>)}
   </ol>;
 }
 
-function StandingRows({ rows, topCut, expanded }: { rows: Standing[]; topCut: number; expanded: boolean }) {
+function StandingRows({ rows, topCut, expanded, members }: { rows: Standing[]; topCut: number; expanded: boolean; members: Map<string, string> }) {
   const shown = expanded ? rows : rows.slice(0, STANDINGS_PREVIEW);
   return <ol className="pub-list" aria-label="Standings">
     {shown.map((s, i) => <li key={s.playerId} className="pub-srow-wrap">
       <div className="dd-table-row pub-srow">
         <span className="dd-display pub-table" style={{ color: s.rank === 1 ? "var(--gold)" : undefined }}>{s.rank}</span>
-        <span className="pub-ellipsis">{s.name}{s.status === "dropped" && <span className="dd-meta"> (dropped)</span>}</span>
+        <span className="pub-ellipsis">{s.name}{s.status === "dropped" && <span className="dd-meta"> (dropped)</span>}{members.get(s.playerId) && <small className="pub-roster">{members.get(s.playerId)}</small>}</span>
         <span className="dd-num pub-r" style={{ fontWeight: 600 }}>{s.matchPoints}</span>
         <span className="dd-num pub-r">{s.record.wins}-{s.record.losses}-{s.record.draws}</span>
         <span className="dd-num pub-r pub-soft">{s.omw.toFixed(2)}</span>
@@ -84,7 +86,7 @@ export function PublicEvent({ code }: { code: string }) {
       {round && <span className="dd-meta dd-num">{reported} of {played.length} reported</span>}
     </div>
     {round ? matches.length ? <div className="dd-scroll-x"><div className="pub-minw-pair">
-      <div aria-hidden="true" className="dd-caps pub-head pub-prow pub-head-pair"><span style={{ textAlign: "center" }}>Table</span><span>Player 1</span><span>Player 2</span><span>Result</span></div>
+      <div aria-hidden="true" className="dd-caps pub-head pub-prow pub-head-pair"><span style={{ textAlign: "center" }}>Table</span><span>{view.playerStructure > 1 ? "Team 1" : "Player 1"}</span><span>{view.playerStructure > 1 ? "Team 2" : "Player 2"}</span><span>Result</span></div>
       <PairingRows matches={matches} />
     </div></div> : <p className="dd-meta">No pairing matches your search.</p>
       : <p className="dd-meta">{view.phase === "registration" ? "Pairings appear when the first round is paired." : "No round is in progress."}</p>}
@@ -95,8 +97,8 @@ export function PublicEvent({ code }: { code: string }) {
       {round && live && <span className="dd-meta">Includes {reported} reported round {round.number} matches</span>}
     </div>
     {standings.length ? <div className="dd-scroll-x"><div className="pub-minw-stand">
-      <div aria-hidden="true" className="dd-caps pub-head pub-srow"><span style={{ textAlign: "center" }}>Rank</span><span>Player</span><span className="pub-r">Points</span><span className="pub-r">W-L-D</span><span className="pub-r">OMW%</span><span className="pub-r pub-hide-sm">OOMW%</span></div>
-      <StandingRows rows={standings} topCut={q ? 0 : view.topCut} expanded={expanded || !!q} />
+      <div aria-hidden="true" className="dd-caps pub-head pub-srow"><span style={{ textAlign: "center" }}>Rank</span><span>{view.playerStructure > 1 ? "Team" : "Player"}</span><span className="pub-r">Points</span><span className="pub-r">W-L-D</span><span className="pub-r">OMW%</span><span className="pub-r pub-hide-sm">OOMW%</span></div>
+      <StandingRows members={new Map(view.teams.map(t => [t.id, t.members.map(m => m.name).join(", ")]))} rows={standings} topCut={q ? 0 : view.topCut} expanded={expanded || !!q} />
     </div></div> : <p className="dd-meta">{view.standings.length ? "No player matches your search." : "Standings appear once results are in."}</p>}
     {!q && standings.length > STANDINGS_PREVIEW && <button type="button" className="dd-btn dd-btn--ghost dd-btn--sm pub-more" onClick={() => setExpanded(e => !e)}>
       {expanded ? "Show fewer players" : `Show all ${standings.length} players`}</button>}

@@ -29,10 +29,10 @@ export function phaseLabel(view: Pick<PublicView, "phase" | "currentRound">): st
 }
 
 export function eventMeta(view: PublicView): string {
-  const parts = [view.format === "swiss" ? "Swiss" : "Single elimination"];
+  const parts = [view.format === "open_dueling" || view.style === "open_dueling" ? "Open Dueling" : view.format === "swiss" ? "Swiss" : "Single elimination"];
   if (view.plannedRounds) parts.push(`${view.plannedRounds} rounds`);
   if (view.topCut) parts.push(`top ${view.topCut} cut`);
-  parts.push(`${view.playerCount} players`);
+  parts.push(view.playerStructure > 1 ? `${view.teamCount} teams · ${view.playerCount} players` : `${view.playerCount} players`);
   return parts.join(" · ");
 }
 

@@ -1,11 +1,11 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DeskView, Match, MatchResult, Player, StaffRole } from "@dd-tournament/engine";
+import type { DeskView, Match, MatchResult, Player, StaffRole, Team } from "@dd-tournament/engine";
 import { BigKeycap, Button, Checkbox, ConfirmDialog, EmptyStamp, Field, Keycap, Select, Stamp, type StampKind } from "../ui";
 import { CheckIcon, WarnIcon } from "./icons";
 import {
-  KEY_OF, RESULT_KEY, STAMP_TEXT, byName, clockLabel, describeResult, formatClock, hasEnteredResult,
-  pendingReport, playerById, recordsBefore, roundTitle, winnerText, type Entry,
+  KEY_OF, RESULT_KEY, STAMP_TEXT, byName, clockLabel, competitors, describeResult, dropCommand, formatClock, hasEnteredResult,
+  isTeamEvent, pendingReport, playerById, recordsBefore, roundTitle, undropCommand, winnerText, type Entry,
 } from "./helpers";
 import { can } from "./roles";
 import type { SendFn } from "./use-desk";
@@ -17,13 +17,17 @@ interface Props {
 }
 interface Echo { kind: "info" | "ok" | "error"; text: string }
 interface UndoEntry { matchId: string; table: number | null; prev: MatchResult | null; dropped: string[] }
-type Row = { match: Match; left: Player; right: Player | null; flipped: boolean };
+type Competitor = Player | Team;
+type Row = { match: Match; left: Competitor; right: Competitor | null; flipped: boolean };
+const span = (tables: number[]) => (tables.length > 1 ? `${tables[0]}–${tables.at(-1)}` : String(tables[0] ?? "—"));
 
 const KEYS: { kind: Exclude<Entry, null> | "clear"; key: string }[] = [
   { kind: "p1", key: "-" }, { kind: "p2", key: "+" }, { kind: "draw", key: "*" }, { kind: "double_loss", key: "/" }, { kind: "clear", key: "$" },
 ];
 const flip = (r: MatchResult | null): MatchResult | null => (r === "p1" ? "p2" : r === "p2" ? "p1" : r);
 const stampKind = (r: MatchResult): StampKind => (r === "bye_win" || r === "bye_loss" ? "bye" : r);
+
+const MemberLine = ({ names }: { names: string[] }) => (names.length ? <span className="dk-members">{names.join(" · ")}</span> : null);
 
 export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onManual, notify }: Props) {
   const { state } = desk;
@@ -52,13 +56,18 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
   const reselect = useCallback(() => { window.setTimeout(() => { slotRef.current?.focus(); slotRef.current?.select(); }, 0); }, []);
   useEffect(() => { reselect(); const on = () => reselect(); window.addEventListener("dk:focus-slot", on); return () => window.removeEventListener("dk:focus-slot", on); }, [reselect]);
 
+  const team = isTeamEvent(state);
   const byId = useMemo(() => playerById(state), [state]);
+  // Team matches hold several tables and list each side's members; the server already worked those out for printing.
+  const printById = useMemo(() => new Map(desk.printData.matches.map(m => [m.id, m] as const)), [desk.printData.matches]);
+  const tablesOf = (m: Match) => { const t = printById.get(m.id)?.tables; return t && t.length ? t : m.table === null ? [] : [m.table]; };
+  const membersFor = (m: Match, id: string) => { const pm = printById.get(m.id); return (pm?.p1.id === id ? pm.p1 : pm?.p2?.id === id ? pm.p2 : null)?.members.map(x => x.name) ?? []; };
   const name = useCallback((id: string) => byId.get(id)?.name ?? "Unknown", [byId]);
   const round = rounds.find(r => r.number === viewRound);
   const records = useMemo(() => recordsBefore(state, viewRound), [state, viewRound]);
   const isCurrent = round?.number === current?.number;
 
-  const matchByTable = useMemo(() => new Map((round?.matches ?? []).filter(m => m.table !== null).map(m => [m.table!, m] as const)), [round]);
+  const matchByTable = useMemo(() => new Map((round?.matches ?? []).flatMap(m => (m.table === null ? [] : (printById.get(m.id)?.tables?.length ? printById.get(m.id)!.tables : [m.table]).map(t => [t, m] as const)))), [round, printById]);
   const slotNumber = slot === "" ? null : Number.parseInt(slot, 10);
   const selected = slotNumber === null ? null : matchByTable.get(slotNumber) ?? null;
 
@@ -112,9 +121,9 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
     }, { retry: true });
     if (!res.ok) { setEcho({ kind: "error", text: res.code === "noop" ? `Table ${match.table} changed. Check the pairings and try again.` : res.message }); return; }
     const was = res.before.state.rounds.flatMap(r => r.matches).find(m => m.id === match.id);
-    const names = new Map(res.desk.state.players.map(p => [p.id, p] as const));
+    const names = playerById(res.desk.state);
     const p1 = names.get(match.p1)?.name ?? "Player 1", p2 = names.get(match.p2)?.name ?? "Player 2";
-    const dropped = res.desk.state.players.filter(p => p.status === "dropped" && res.before.state.players.find(b => b.id === p.id)?.status === "active").map(p => p.id);
+    const dropped = competitors(res.desk.state).filter(p => p.status === "dropped" && competitors(res.before.state).find(b => b.id === p.id)?.status === "active").map(p => p.id);
     let text = describeResult(match.table, kind, p1, p2);
     if (dropped.length) text += ` ${dropped.map(id => names.get(id)?.name ?? "").join(" and ")} drop${dropped.length === 1 ? "s" : ""}.`;
     if (was?.result && was.result !== kind) text += ` Replaces: ${winnerText(was, p1, p2)}.`;
@@ -130,7 +139,7 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
     const res = await send(d => d.state.rounds.some(r => r.matches.some(m => m.id === entry.matchId))
       ? { type: "EnterResult", matchId: entry.matchId, result: entry.prev, drop: "none" } : null, { retry: true });
     if (!res.ok) { setEcho({ kind: "error", text: res.code === "noop" ? "That match was re-paired, so it cannot be undone." : res.message }); return; }
-    for (const id of entry.dropped) await send(d => d.state.players.find(p => p.id === id)?.status === "dropped" ? { type: "UndropPlayer", playerId: id, option: "next_round" } : null);
+    for (const id of entry.dropped) await send(d => playerById(d.state).get(id)?.status === "dropped" ? undropCommand(isTeamEvent(d.state), id, "next_round") : null);
     setSlot(entry.table === null ? "" : String(entry.table)); reselect();
     setEcho({ kind: "info", text: `Undone · Table ${entry.table} is back to ${entry.prev ? STAMP_TEXT[entry.prev] : "Unreported"}` });
   }, [stack, send, notify, reselect]);
@@ -158,10 +167,10 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  const toggleDrop = (p: Player) => {
-    if (p.status === "dropped") void send({ type: "UndropPlayer", playerId: p.id, option: "next_round" }).then(r => !r.ok && setEcho({ kind: "error", text: r.message }));
-    else void send({ type: "DropPlayer", playerId: p.id }).then(r => !r.ok && setEcho({ kind: "error", text: r.message }));
+  const toggleDrop = (p: Competitor) => {
+    void send(p.status === "dropped" ? undropCommand(team, p.id, "next_round") : dropCommand(team, p.id)).then(r => !r.ok && setEcho({ kind: "error", text: r.message }));
   };
+  const dropRight = (p: Competitor) => can(role, p.status === "dropped" ? (team ? "UndropTeam" : "UndropPlayer") : (team ? "DropTeam" : "DropPlayer"));
 
   const remaining = current?.endsAt ? Date.parse(current.endsAt) - now : null;
   const total = current?.endsAt && current.startedAt ? Date.parse(current.endsAt) - Date.parse(current.startedAt) : null;
@@ -193,7 +202,7 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
         </Field>
         <div className="dk-checks">
           <Checkbox label="Hide Completed Matches" checked={hideDone} onChange={e => setHideDone(e.target.checked)} />
-          <Checkbox label="View by Player" checked={byPlayer} onChange={e => setByPlayer(e.target.checked)} />
+          <Checkbox label={team ? "View by Team" : "View by Player"} checked={byPlayer} onChange={e => setByPlayer(e.target.checked)} />
         </div>
         {isCurrent && current && (remaining === null
           ? <button type="button" className="dk-timer dk-timer--idle" onClick={onTimer} disabled={!can(role, "StartTimer")}>Start round timer</button>
@@ -224,7 +233,7 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
           <Button size="sm" onClick={() => setDismissed(d => [...d, a.key])}>Keep pairing</Button>
         </div>)}
         <div className="dd-scroll-x"><div className="dk-grid">
-          <div aria-hidden="true" className="dk-gh dd-caps"><span>Table</span><span>Player 1</span><span>Player 2</span><span>Result</span></div>
+          <div aria-hidden="true" className="dk-gh dd-caps"><span>Table</span><span>{team ? "Team 1" : "Player 1"}</span><span>{team ? "Team 2" : "Player 2"}</span><span>Result</span></div>
           {rows.length === 0 && <p className="dk-empty">{rounds.length === 0 ? "No round has been paired yet. Press F9 to pair round 1." : hideDone ? "Every match is reported." : "No matches."}</p>}
           <ol aria-label={round ? `${roundTitle(round)} matches` : "Matches"} className="dk-list">
             {rows.map(({ match: m, left, right, flipped }) => {
@@ -234,15 +243,15 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
               const sel = !bye && m.id === selected?.id;
               const leftWin = shown === "p1" || shown === "bye_win", rightWin = shown === "p2";
               const content = <>
-                <span className="dk-tnum">{m.table ?? "—"}</span>
-                <span className="dk-pname"><b data-win={leftWin}>{left.name}</b><span className="dk-rec">{records.get(left.id)}</span>{left.status === "dropped" && <span className="dk-tag">Drop</span>}</span>
-                <span className="dk-pname">{right ? <><b data-win={rightWin}>{right.name}</b><span className="dk-rec">{records.get(right.id)}</span>{right.status === "dropped" && <span className="dk-tag">Drop</span>}</> : <span className="dk-rec">Bye</span>}</span>
+                <span className="dk-tnum" data-multi={tablesOf(m).length > 1}>{m.table === null ? "—" : span(tablesOf(m))}</span>
+                <span className="dk-pname"><b data-win={leftWin}>{left.name}</b><span className="dk-rec">{records.get(left.id)}</span>{left.status === "dropped" && <span className="dk-tag">Drop</span>}{team && <MemberLine names={membersFor(m, left.id)} />}</span>
+                <span className="dk-pname">{right ? <><b data-win={rightWin}>{right.name}</b><span className="dk-rec">{records.get(right.id)}</span>{right.status === "dropped" && <span className="dk-tag">Drop</span>}{team && <MemberLine names={membersFor(m, right.id)} />}</> : <span className="dk-rec">Bye</span>}</span>
                 <span className="dk-res">
                   {shown !== null ? <Stamp kind={stampKind(shown)} size="sm" key={`${m.id}:${shown}`}>{shown === "bye_win" ? "Bye" : shown === "bye_loss" ? "Bye (loss)" : STAMP_TEXT[shown]}</Stamp>
                     : <><EmptyStamp /><span style={{ whiteSpace: "nowrap" }}>Unreported</span>{pend && <span className="dk-res-note" data-bad={pend.disagree}>{pend.disagree && "⚠ "}· {pend.text}</span>}</>}
                 </span>
               </>;
-              const label = `Table ${m.table ?? "bye"}, ${left.name} versus ${right?.name ?? "bye"}, ${shown ? STAMP_TEXT[shown] : "unreported"}`;
+              const label = `Table ${m.table === null ? "bye" : span(tablesOf(m))}, ${left.name} versus ${right?.name ?? "bye"}, ${shown ? STAMP_TEXT[shown] : "unreported"}`;
               return <li key={`${m.id}:${flipped ? "b" : "a"}`}>
                 {bye ? <div className="dk-mrow dk-mrow--bye" aria-label={label}>{content}</div>
                   : <button type="button" className="dk-mrow" aria-pressed={sel} aria-label={label} onClick={() => { setSlot(String(m.table)); reselect(); }}>{content}</button>}
@@ -281,8 +290,8 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
               {([["p1", `${s1.name} Wins ( - )`, "-"], ["p2", `${s2?.name ?? "Player 2"} Wins ( + )`, "+"], ["draw", "Draw ( * )", "*"], ["double_loss", "Double Loss ( / )", "/"], [null, "Unreported ( $ )", "$"]] as const).map(([kind, label, key]) =>
                 <label key={key} className="dk-opt"><input type="radio" className="dd-rad" name="match-result" checked={selected.result === kind} disabled={round?.stage === "playoff" && (kind === "draw" || kind === "double_loss")} onChange={() => void commit(kind, false, selected)} /><span className="dk-grow">{label}</span><Keycap>{key}</Keycap></label>)}
               <div className="dk-drops">
-                <Checkbox label={`${s1.name} Drops`} checked={s1.status === "dropped"} disabled={!can(role, s1.status === "dropped" ? "UndropPlayer" : "DropPlayer") || finished} onChange={() => toggleDrop(s1)} />
-                {s2 && <Checkbox label={`${s2.name} Drops`} checked={s2.status === "dropped"} disabled={!can(role, s2.status === "dropped" ? "UndropPlayer" : "DropPlayer") || finished} onChange={() => toggleDrop(s2)} />}
+                <Checkbox label={`${s1.name} Drops`} checked={s1.status === "dropped"} disabled={!dropRight(s1) || finished} onChange={() => toggleDrop(s1)} />
+                {s2 && <Checkbox label={`${s2.name} Drops`} checked={s2.status === "dropped"} disabled={!dropRight(s2) || finished} onChange={() => toggleDrop(s2)} />}
               </div>
               <div className="dk-perf" aria-hidden="true" />
               <p className="dk-hist">History: {selNote.length ? selNote.join(" · ") : "no reports yet"}</p>

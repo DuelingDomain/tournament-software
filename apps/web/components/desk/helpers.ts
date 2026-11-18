@@ -1,4 +1,4 @@
-import type { DeskView, EventState, Match, MatchResult, Player, Round, Standing } from "@dd-tournament/engine";
+import type { Command, DeskView, EventState, Match, MatchResult, Player, Round, Standing, Team, UndropOption } from "@dd-tournament/engine";
 
 export type ResultKind = "p1" | "p2" | "draw" | "double_loss";
 export type Entry = ResultKind | null;
@@ -11,16 +11,32 @@ export const STAMP_TEXT: Record<MatchResult, string> = {
 };
 export const PENALTY_LABEL = { caution: "Caution", warning: "Warning", game_loss: "Game Loss", match_loss: "Match Loss", disqualification: "Disqualification" } as const;
 
-export const playerById = (state: EventState) => new Map(state.players.map(p => [p.id, p] as const));
+/** True when the competitors are teams (Tag Dueling and the larger team structures). */
+export const isTeamEvent = (state: EventState) => state.settings.playerStructure > 1;
+/** The things that sit in matches and standings: teams in a team event, people otherwise. */
+export const competitors = (state: EventState): (Player | Team)[] => isTeamEvent(state) ? state.teams : state.players;
+export const competitorLabel = (state: EventState) => isTeamEvent(state) ? "Team" : "Player";
+/** Names for match sides: people and teams share one lookup because their IDs never collide. */
+export const playerById = (state: EventState) => new Map<string, Player | Team>([...state.players, ...state.teams].map(p => [p.id, p] as const));
 export const currentRound = (state: EventState): Round | undefined => state.rounds.at(-1);
-export const activePlayers = (state: EventState) => state.players.filter(p => p.status === "active");
+export const activePlayers = (state: EventState) => competitors(state).filter(p => p.status === "active");
+export const membersOf = (state: EventState, team: Team): Player[] => {
+  const byId = new Map(state.players.map(p => [p.id, p] as const));
+  return team.memberIds.map(id => byId.get(id)).filter((p): p is Player => !!p);
+};
+/** Commands differ between a person and a team; these pick the right one for the event. */
+export const dropCommand = (team: boolean, id: string): Command => team ? { type: "DropTeam", teamId: id } : { type: "DropPlayer", playerId: id };
+export const reEnrollCommand = (team: boolean, id: string): Command => team ? { type: "ReEnrollTeam", teamId: id } : { type: "ReEnroll", playerId: id };
+export const removeCommand = (team: boolean, id: string): Command => team ? { type: "RemoveTeam", teamId: id } : { type: "RemovePlayer", playerId: id };
+export const undropCommand = (team: boolean, id: string, option: UndropOption, swapWith?: string): Command =>
+  team ? { type: "UndropTeam", teamId: id, option, ...(swapWith ? { swapWith } : {}) } : { type: "UndropPlayer", playerId: id, option, ...(swapWith ? { swapWith } : {}) };
 export const firstWord = (name: string) => name.trim().split(/\s+/)[0] ?? name;
 export const byName = (a: Player, b: Player) => a.name.localeCompare(b.name);
 export const isBye = (m: Match) => m.p2 === null;
 
 /** Wins-losses-draws counted over rounds before `round`, shown beside names like the old grid. */
 export function recordsBefore(state: EventState, round: number) {
-  const records = new Map<string, [number, number, number]>(state.players.map(p => [p.id, [0, 0, 0]]));
+  const records = new Map<string, [number, number, number]>(competitors(state).map(p => [p.id, [0, 0, 0]]));
   for (const r of state.rounds) {
     if (r.number >= round) continue;
     for (const m of r.matches) {
@@ -65,7 +81,7 @@ export function roundStats(state: EventState, round: Round | undefined) {
 }
 export const allResultsIn = (state: EventState) => state.rounds.every(r => r.matches.every(m => m.result !== null));
 export const hasEnteredResult = (round: Round | undefined) => !!round && round.matches.some(m => m.p2 !== null && m.result !== null);
-export const formatLabel = (state: EventState) => state.settings.format === "swiss" ? "Swiss" : "Single elimination";
+export const formatLabel = (state: EventState) => state.settings.format === "open_dueling" || state.settings.style === "open_dueling" ? "Open Dueling" : state.settings.format === "swiss" ? "Swiss" : "Single elimination";
 export const roundTitle = (r: Round) => r.stage === "playoff" ? `Round ${r.number} (Playoffs)` : `Round ${r.number}`;
 
 export function pendingReport(m: Match, names: (id: string) => string): { text: string; disagree: boolean } | null {

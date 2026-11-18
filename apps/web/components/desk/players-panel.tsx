@@ -6,6 +6,7 @@ import { Button, ConfirmDialog, Field, Input } from "../ui";
 import { saveMemberId, useAccountSearch, type Account } from "./accounts";
 import { CheckIcon, DashIcon, RingIcon, WarnIcon } from "./icons";
 import { byName, nextTempId, statusText } from "./helpers";
+import { PointsControl } from "./points-control";
 import { can } from "./roles";
 import type { SendFn } from "./use-desk";
 
@@ -148,6 +149,7 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
     return list.filter(p => p.name.toLowerCase().includes(q) || (p.memberId && pad(p.memberId).includes(q.replace(/\D/g, "") || "\u0000")) || desk.accounts[p.id]?.discordUsername?.toLowerCase().includes(q) || desk.accounts[p.id]?.username?.toLowerCase().includes(q));
   }, [state.players, filter, desk.accounts]);
 
+  const open = state.settings.format === "open_dueling" || state.settings.style === "open_dueling";
   const problem = idProblem(idText);
   const formName = [first, last].filter(Boolean).join(" ");
   const enrollLabel = selected ? "Update" : "Enroll";
@@ -156,7 +158,7 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
   const dropDisabled = busy || !selected || !canDrop || selected.status === "cut" || state.phase === "complete";
   const lateNote = !registration && !lateBlocked && !closed ? `Late entry: a new player gets a loss bye for ${state.rounds.length === 1 ? "round 1" : `rounds 1 to ${state.rounds.length}`}.` : "";
 
-  return <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+  return <div className="dk-pane">
     <form className="dk-slip dk-field-row" aria-label="Enroll a player" onSubmit={e => { e.preventDefault(); if (enrollDisabled) return; void (selected ? update(selected) : enroll(account, idText)); }}>
       <Field label="COSSY ID" className="dd-field--id"><Input ref={idRef} mono inputMode="numeric" autoComplete="off" value={idText} onChange={e => onId(e.target.value)} aria-describedby="enroll-note" aria-invalid={problem !== null && idText.length >= 10 ? true : undefined} /></Field>
       <Field label="First & Middle"><Input autoComplete="off" value={first} readOnly={!!account && !selected} onChange={e => onName(setFirst)(e.target.value)} /></Field>
@@ -179,8 +181,8 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
       </p>
     </form>
 
-    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start" }}>
-      <section aria-labelledby="enrolled-h" style={{ flex: "999 1 640px", minWidth: 0, display: "flex", flexDirection: "column", gap: 10, paddingRight: 32 }}>
+    <div className="dk-split">
+      <section aria-labelledby="enrolled-h" className="dk-split-main">
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
           <h2 id="enrolled-h" className="dk-h2">Enrolled Players:</h2>
           <span className="dd-meta">{stats.total} enrolled · {stats.active} active ({stats.checked} checked in){stats.dropped ? ` · ${stats.dropped} dropped` : ""}{stats.cut ? ` · ${stats.cut} cut` : ""}</span>
@@ -188,14 +190,14 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
         <Field label={<>Filter players <span className="dk-mono" style={{ textTransform: "none" }}>Ctrl+F</span></>}>
           <Input ref={filterRef} type="search" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Name, COSSY ID or Discord" autoComplete="off" />
         </Field>
-        <div className="dd-scroll-x"><div className="dk-table" style={{ "--w": "660px" } as React.CSSProperties}>
-          <div aria-hidden="true" className="dk-ph dd-caps"><span>Name</span><span>COSSY ID</span><span>Discord</span><span>Status</span></div>
+        <div className="dd-scroll-x dk-scroll"><div className="dk-table" style={{ "--w": open ? "760px" : "660px" } as React.CSSProperties}>
+          <div aria-hidden="true" className="dk-ph dd-caps" data-pts={open}><span>Name</span><span>COSSY ID</span><span>Discord</span><span>Status</span>{open && <span>Points</span>}</div>
           {shown.length === 0 && <p className="dk-empty">{state.players.length ? "No player matches that filter." : "No players yet. Search accounts on the right and press Enroll."}</p>}
           <ul className="dk-plist">{shown.map(p => {
             const warn = warnings.get(p.id);
             const acc = desk.accounts[p.id];
             const temp = p.memberId !== null && isTemporaryMemberId(p.memberId);
-            return <li key={p.id} className="dk-prow" data-selected={p.id === selectedId}>
+            return <li key={p.id} className="dk-prow" data-selected={p.id === selectedId} data-pts={open}>
               <button type="button" className="dk-prow-main" aria-pressed={p.id === selectedId} onClick={() => pick(p)}>
                 <span style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   <span>{p.name}{p.userId === null && <span className="dd-meta"> · no account yet</span>}</span>
@@ -210,6 +212,7 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
                 ? <button type="button" className="dk-status" data-state={p.checkedIn ? "in" : "idle"} role="switch" aria-checked={p.checkedIn} disabled={!can(role, "SetCheckedIn") || state.phase === "complete"} aria-label={`${p.name}: ${p.checkedIn ? "checked in" : "not checked in"}`}
                   onClick={() => void send({ type: "SetCheckedIn", playerId: p.id, checkedIn: !p.checkedIn })}>{p.checkedIn ? <CheckIcon size={12} /> : <RingIcon />}{statusText(p)}</button>
                 : <span className="dk-status" data-state="out"><DashIcon />{statusText(p)}</span>}
+              {open && <PointsControl name={p.name} points={p.openDuelingPoints ?? 0} disabled={!can(role, "AdjustPoints") || state.phase === "complete"} onAdjust={d => void send({ type: "AdjustPoints", playerId: p.id, delta: d })} />}
             </li>;
           })}</ul>
         </div></div>
@@ -223,8 +226,8 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
           <Button type="submit" variant="violet">Search</Button>
           <Button onClick={() => { search.setQuery(""); void search.run(""); }}>Show All</Button>
         </form>
-        <AccountList accounts={search.results} state={search.state} error={search.error} query={search.query} enrolled={enrolledIds}
-          canEnroll={canAdd && !closed && !lateBlocked} onPick={fillFromAccount} onEnroll={a => void enroll(a, "", true)} />
+        <div className="dk-scroll"><AccountList accounts={search.results} state={search.state} error={search.error} query={search.query} enrolled={enrolledIds}
+          canEnroll={canAdd && !closed && !lateBlocked} onPick={fillFromAccount} onEnroll={a => void enroll(a, "", true)} /></div>
       </section>
     </div>
     <ConfirmDialog open={confirmDrop} title={selected ? `${registration ? "Remove" : "Drop"} ${selected.name}?` : "Drop player?"}

@@ -122,7 +122,11 @@ function Joined({ code, view, note, send }: { code: string; view: PlayerView; no
   const [busy, setBusy] = useState(false);
   const live = event.phase === "swiss" || event.phase === "playoff";
 
-  const mySide: "p1" | "p2" | null = match ? (match.p1Id === me.id ? "p1" : "p2") : null;
+  const myId = me.teamId ?? me.id; // in a team event matches are between teams
+  const mySide: "p1" | "p2" | null = match ? (match.p1Id === myId ? "p1" : "p2") : null;
+  const teamMatch = !!match && match.tables.length > 1;
+  const oppMembers = match ? (mySide === "p1" ? match.p2Members : match.p1Members) : [];
+  const myMembers = match ? (mySide === "p1" ? match.p1Members : match.p2Members) : [];
   const opponent = match ? (mySide === "p1" ? match.p2 : match.p1) : null;
   const iWon: MatchResult = mySide ?? "p1";
   const oppWon: MatchResult = mySide === "p1" ? "p2" : "p1";
@@ -165,7 +169,7 @@ function Joined({ code, view, note, send }: { code: string; view: PlayerView; no
     heading = <h1 className="pl-big pl-big--sm">{event.phase === "registration" ? "You're in" : event.phase === "complete" ? "Event over" : "No match yet"}</h1>;
     status = <p style={{ margin: 0 }}>{event.phase === "registration" ? "Your table shows here when round 1 is paired." : event.phase === "complete" ? "Thanks for playing. Final standings are on the public page." : live ? "You are not paired this round. Check with a judge." : ""}</p>;
   } else {
-    heading = <h1 className="pl-big">{bye ? "Bye" : `Table ${match.table ?? "?"}`}</h1>;
+    heading = <h1 className="pl-big">{bye ? "Bye" : `Table ${match.myTable ?? match.table ?? "?"}`}</h1>;
   }
 
   return <Frame strip={strip}>
@@ -173,6 +177,8 @@ function Joined({ code, view, note, send }: { code: string; view: PlayerView; no
       <span className="dd-caps">{phaseLabel(event)}</span>
       {heading}
       {match && !bye && <div className="pl-opp"><span style={{ color: "var(--text-2)" }}>vs</span><span className="pl-opp-name">{opponent}</span></div>}
+      {match && !bye && oppMembers.length > 0 && <p className="pl-members" style={{ margin: 0 }}>{oppMembers.map(m => m.name).join(", ")}</p>}
+      {teamMatch && !bye && <p className="dd-meta" style={{ margin: 0 }}>Your team plays on tables {match.tables[0]}–{match.tables.at(-1)}{myMembers.length > 0 ? `: ${myMembers.map((m, i) => `${m.name} (table ${match.tables[i] ?? "?"})`).join(", ")}` : ""}.</p>}
       {bye && <p style={{ margin: 0 }}>You have a bye this round. It scores as a win.</p>}
       {(match || status) && <Perforation />}
       <div role="status" className="pl-status">
