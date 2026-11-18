@@ -386,19 +386,31 @@ export function ImportGlobalDialog({ onClose, onDone }: Close & { onDone: (t: st
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [bad, setBad] = useState<{ count: number; csv: string } | null>(null);
   async function run() {
     if (!file) { setErr("Choose a file."); return; }
     setBusy(true); setErr(null);
     const form = new FormData(); form.set("file", file);
     try {
       const res = await fetch("/api/players/import", { method: "POST", body: form });
-      const body = (await res.json().catch(() => ({}))) as { added?: number; skipped?: number; invalid?: number; total?: number; error?: string; message?: string };
+      const body = (await res.json().catch(() => ({}))) as { added?: number; skipped?: number; invalid?: number; overLimit?: number; total?: number; badCheckDigit?: { count: number; csv: string | null }; error?: string; message?: string };
       if (!res.ok) { setErr(MESSAGES[body.error ?? ""] ?? body.message ?? "That file could not be imported."); setBusy(false); return; }
-      onDone(`Added ${body.added ?? 0} to the global player list. ${body.skipped ?? 0} already listed${body.invalid ? `, ${body.invalid} skipped as not valid` : ""}. ${body.total ?? 0} in total.`);
+      onDone(`Added ${body.added ?? 0} to the global player list. ${body.skipped ?? 0} already listed${body.invalid ? `, ${body.invalid} skipped as not valid` : ""}${body.badCheckDigit?.count ? `, ${body.badCheckDigit.count} not added (invalid ID)` : ""}${body.overLimit ? `, ${body.overLimit} not added (list is full)` : ""}. ${body.total ?? 0} in total.`);
       window.dispatchEvent(new Event("dk:global-players"));
+      if (body.badCheckDigit?.csv) { setBad({ count: body.badCheckDigit.count, csv: body.badCheckDigit.csv }); setBusy(false); return; }
       onClose();
     } catch { setErr("Could not reach the server."); setBusy(false); }
   }
+  function saveInvalid() {
+    if (!bad) return;
+    const url = URL.createObjectURL(new Blob([bad.csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url; link.download = `Invalid IDs ${new Date().toISOString().slice(0, 10).replaceAll("-", "")}.csv`;
+    document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+  }
+  if (bad) return <Dialog open onClose={onClose} title="Import Player List" actions={<><Button onClick={saveInvalid}>Save list of invalid IDs</Button><Button variant="violet" autoFocus onClick={onClose}>Close</Button></>}>
+    <p style={{ margin: 0 }}>The other players are added. {bad.count} {bad.count === 1 ? "player has an ID that is" : "players have IDs that are"} not valid, so {bad.count === 1 ? "it was" : "they were"} not added to the list.</p>
+  </Dialog>;
   return <Dialog open onClose={onClose} title="Import Player List" actions={<><Button onClick={onClose}>Cancel</Button><Button variant="violet" disabled={busy || !file} onClick={() => void run()}>Import</Button></>}>
     <p className="dd-meta" style={{ margin: 0 }}>Adds players to your global player list. A player ID that is already listed is not changed.</p>
     <FilePicker label="File" accept={GLOBAL_ACCEPT} file={file} onChange={f => { setFile(f); setErr(null); }}
