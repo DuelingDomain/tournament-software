@@ -4,8 +4,8 @@ import { MESSAGES } from "./use-desk";
 
 export interface Account { userId: number; username: string; displayName: string; discordUserId: string | null; discordUsername: string | null; memberId: string | null }
 
-/** Account search for one event (staff only). Typing searches after a short pause; run("") is "Show All". */
-export function useAccountSearch(code: string) {
+/** Account search for one event (staff only); `null` searches before an event exists (any signed-in organizer). Typing searches after a short pause; run("") is "Show All". */
+export function useAccountSearch(code: string | null) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Account[] | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
@@ -16,7 +16,7 @@ export function useAccountSearch(code: string) {
     const id = ++seq.current;
     setState("loading"); setError(null);
     try {
-      const response = await fetch(`/api/accounts/search?event=${encodeURIComponent(code)}&q=${encodeURIComponent(q)}`, { cache: "no-store" });
+      const response = await fetch(`/api/accounts/search?${code === null ? "" : `event=${encodeURIComponent(code)}&`}q=${encodeURIComponent(q)}`, { cache: "no-store" });
       const body = (await response.json().catch(() => ({}))) as { users?: Account[]; error?: string };
       if (id !== seq.current) return;
       if (!response.ok) { setState("error"); setError(MESSAGES[body.error ?? ""] ?? "Search failed."); return; }

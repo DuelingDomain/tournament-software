@@ -251,3 +251,22 @@
   .dk-tray-col { flex: 0 0 auto; }
 }
 @media print { .dk-spine, .dk-tray, .dk-binder, .dk-status-bar { display: none !important; } }
+
+/* New / Update Tournament dialog */
+.dk-tdlg { display: flex; flex-direction: column; gap: 10px; }
+.dk-tdlg-set { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.dk-tdlg-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.dk-tdlg-row--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dk-tdlg-box { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-surface); }
+.dk-tdlg-line { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.dk-tdlg-line > .dd-field--grow { flex: 1 1 220px; }
+.dk-tdlg-editor { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px dashed var(--border-dash); border-radius: var(--r-md); background: var(--bg-elevated); }
+.dk-tdlg-staff, .dk-tdlg-find { list-style: none; margin: 0; padding: 0; flex: 1 1 260px; max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg-elevated); min-width: 0; }
+.dk-tdlg-staff li, .dk-tdlg-find li { display: flex; }
+.dk-tdlg-staff li:only-child:not(:has(button)), .dk-tdlg-find li:not(:has(button)) { padding: 8px 10px; }
+.dk-tdlg-staff button, .dk-tdlg-find button { flex: 1; display: flex; justify-content: space-between; gap: 12px; padding: 6px 10px; min-height: 32px; background: none; border: 0; color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.dk-tdlg-staff button[data-selected="true"], .dk-tdlg-find button[data-selected="true"] { background: var(--violet-soft, rgb(139 92 246 / 0.22)); }
+.dk-tdlg-more > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; font-weight: 600; }
+.dk-tdlg-checks { display: flex; flex-wrap: wrap; gap: 2px 24px; margin-top: 6px; }
+@media (max-width: 560px) { .dk-tdlg-row, .dk-tdlg-row--3 { grid-template-columns: minmax(0, 1fr); } }
+.dd-dialog:has(.dk-tdlg) { max-height: calc(100vh - 24px); overflow-y: auto; }

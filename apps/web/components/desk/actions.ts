@@ -78,7 +78,7 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
     a("export-matches-csv", "Export Matches (CSV)", "File", () => h.download("matches.csv")),
 
     // Tournament
-    a("settings", "Tournament Settings…", "Tournament", () => h.open("settings")),
+    a("settings", "Update Settings…", "Tournament", () => h.open("settings")),
     a("print-batch", "Batch Printing…", "Tournament", () => h.open("print"), { keys: "Ctrl+P" }),
     a("cut", "Cut to Playoffs…", "Tournament", () => h.open("cut"), { keys: "F11", reason: cutWhy, separatorBefore: true }),
     a("timer", "Round Timer…", "Tournament", () => h.open("timer"), { reason: reason("StartTimer", !hasRounds && "Pair a round first.") }),

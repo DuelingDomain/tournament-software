@@ -14,7 +14,8 @@ import { JudgingPanel } from "./judging-panel";
 import { Palette } from "./palette";
 import { PairingsPanel } from "./pairings-panel";
 import { PlayersPanel } from "./players-panel";
-import { SettingsPanel } from "./settings-panel";
+import { SharingSections } from "./settings-panel";
+import { TournamentDialog } from "./tournament-dialog";
 import { StandingsPanel } from "./standings-panel";
 import { roundStats } from "./helpers";
 import { can } from "./roles";
@@ -150,8 +151,8 @@ export function Desk({ code }: { code: string }) {
     {dialog === "integrity" && <IntegrityDialog desk={desk} onClose={close} />}
     {dialog === "notes" && <PlayerNotesDialog desk={desk} role={role} send={send} onClose={close} />}
     {dialog === "dummy-players" && <AddTestPlayersDialog code={code} desk={desk} replaceDesk={replaceDesk} onClose={close} onDone={t => notify(t)} />}
-    {dialog === "settings" && <Dialog open onClose={close} title="Tournament Settings" actions={<Button onClick={close}>Close</Button>}><span className="dk-dlg-wide" hidden />
-      <SettingsPanel code={code} desk={desk} role={role} send={send} onImport={k => { close(); setImportKind(k); }} /></Dialog>}
+    {dialog === "settings" && <TournamentDialog mode="update" desk={desk} role={role} send={send} onClose={close} onDone={done}
+      extra={<SharingSections code={code} desk={desk} role={role} onNote={(t, bad) => notify(t, bad)} />} />}
     {dialog === "judging" && <Dialog open onClose={close} title="Judging: Penalties" actions={<Button onClick={close}>Close</Button>}><span className="dk-dlg-wide" hidden />
       <JudgingPanel desk={desk} role={role} send={send} /></Dialog>}
     {dialog === "drop" && <DropPlayerDialog desk={desk} send={send} onClose={close} onDone={done} />}

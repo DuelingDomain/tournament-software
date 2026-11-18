@@ -1,9 +1,10 @@
 "use client";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
-import { Button, ButtonLink, Field, Input, LogoMark, Perforation, Sheet, Slip, Wordmark } from "./ui";
+import { Button, ButtonLink, LogoMark, Perforation, Sheet, Slip, Wordmark } from "./ui";
+import { TournamentDialog } from "./desk/tournament-dialog";
 
-const meSchema = z.object({ user: z.object({ displayName: z.string(), username: z.string().optional() }).nullable(), canCreate: z.boolean() });
+const meSchema = z.object({ user: z.object({ displayName: z.string(), username: z.string().optional() }).nullable(), canCreate: z.boolean(), createCodeRequired: z.boolean().default(false) });
 const eventsSchema = z.object({ events: z.array(z.object({
   code: z.string(), name: z.string(), phase: z.string(), role: z.string().nullable().optional(), joined: z.boolean().optional(), startsAt: z.string().nullable().optional(),
 })) });
@@ -11,7 +12,6 @@ type EventRow = z.infer<typeof eventsSchema>["events"][number];
 
 const PHASE: Record<string, string> = { registration: "Registration", swiss: "Swiss rounds", playoff: "Playoffs", complete: "Complete" };
 const ROLE: Record<string, string> = { organizer: "Organizer", head_judge: "Head judge", judge: "Judge", scorekeeper: "Scorekeeper", staff: "Staff" };
-const ERRORS: Record<string, string> = { invalid_create_code: "That create code is not right.", invalid_body: "Check the event name and try again.", unauthorized: "Sign in again to continue." };
 
 function when(iso: string | null | undefined) {
   if (!iso) return null;
@@ -24,7 +24,7 @@ export function Landing() {
   const [loaded, setLoaded] = useState(false);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const [signinError, setSigninError] = useState("");
 
@@ -52,17 +52,10 @@ export function Landing() {
     return () => { alive = false; };
   }, []);
 
-  async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true); setMessage("");
-    const form = new FormData(event.currentTarget);
-    try {
-      const response = await fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: String(form.get("name") ?? "").trim(), createCode: String(form.get("createCode") ?? "") }) });
-      const data: unknown = await response.json();
-      if (!response.ok) { setMessage(ERRORS[(data as { error?: string }).error ?? ""] ?? "Could not create the event."); setBusy(false); return; }
-      window.location.assign(`/e/${z.object({ code: z.string() }).parse(data).code}/desk`);
-    } catch { setMessage("Could not create the event."); setBusy(false); }
+  /** The new tournament opens on the Players panel; team events open there too, on the team enroll form. */
+  function created(code: string) {
+    try { localStorage.setItem(`dk:panel:${code}`, "players"); } catch { /* storage unavailable */ }
+    window.location.assign(`/e/${encodeURIComponent(code)}/desk`);
   }
 
   async function signOut() {
@@ -99,15 +92,14 @@ export function Landing() {
           </Slip></li>)}
         </ul>
       </Sheet>
-      {me.canCreate && <form className="dd-sheet" onSubmit={create} aria-labelledby="create-h" style={{ display: "grid", gap: 16, alignContent: "start" }}>
+      {me.canCreate && <Sheet aria-labelledby="create-h" style={{ display: "grid", gap: 16, alignContent: "start" }}>
         <h2 id="create-h" className="dd-display" style={{ margin: 0, fontSize: 20 }}>Create event</h2>
-        <Field label="Event name"><Input name="name" required maxLength={200} placeholder="Weekly Duel Night #12" autoComplete="off" /></Field>
-        <Field label="Create code" hint="Only if your community asked for one."><Input name="createCode" type="password" autoComplete="off" /></Field>
-        <Button type="submit" variant="rose" disabled={busy} block>{busy ? "Creating..." : "Create event"}</Button>
-        <p role="alert" className="dd-error" style={{ margin: 0 }}>{message}</p>
-      </form>}
+        <p className="dd-meta" style={{ margin: 0 }}>Set the name, date, location, staff and format, then run the tournament from the desk.</p>
+        <Button variant="rose" block onClick={() => setCreating(true)}>Create event</Button>
+      </Sheet>}
     </div>
-    {!me.canCreate && <p role="alert" className="dd-error">{message}</p>}
+    {message && <p role="alert" className="dd-error">{message}</p>}
+    {creating && <TournamentDialog mode="create" createCodeRequired={me.createCodeRequired} onClose={() => setCreating(false)} onCreated={created} />}
   </div></div>;
 }
 
