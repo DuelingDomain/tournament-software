@@ -97,8 +97,25 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
   }, [search.results, idText, selected, account]);
   const onName = (setter: (v: string) => void) => (value: string) => { setter(value); if (!selected) { setAccount(null); search.setQuery(value.trim()); } };
 
+  /** No account: enroll by name and ID like the original. With no ID typed, the player gets the next temp ID. */
+  async function enrollByName(typedId: string) {
+    const name = [first.trim(), last.trim()].filter(Boolean).join(" ");
+    if (!name) { setMessage({ bad: true, text: "Type a first and last name, or pick an account." }); return; }
+    const normalized = typedId.trim() ? normalizeMemberId(typedId) : null;
+    if (typedId.trim() && normalized === null) { setMessage({ bad: true, text: "A COSSY ID is one to ten digits." }); return; }
+    const memberId = normalized ?? nextTempId(state.players);
+    setBusy(true); setMessage(null);
+    const result = await send({ type: "AddPlayers", players: [{ userId: null, name, memberId }] });
+    setBusy(false);
+    if (!result.ok) { setMessage({ bad: true, text: result.message }); return; }
+    setMessage({ bad: false, text: `${name} enrolled with ${isTemporaryMemberId(memberId) ? "temp ID " : "ID "}${pad(memberId)}.` });
+    notify(`${name} enrolled`);
+    setSelectedId(null); setIdText(""); setFirst(""); setLast(""); setAccount(null); search.setQuery(""); search.clear();
+    idRef.current?.focus();
+  }
+
   async function enroll(target: Account | null, typedId: string, keepResults = false) {
-    if (!target) { setMessage({ bad: true, text: "Pick a Dueling Domain account first. Players enter with an account." }); return; }
+    if (!target) { await enrollByName(typedId); return; }
     setBusy(true); setMessage(null);
     const normalized = typedId.trim() ? normalizeMemberId(typedId) : null;
     if (typedId.trim() && normalized === null) { setBusy(false); setMessage({ bad: true, text: "A COSSY ID is one to ten digits." }); return; }
@@ -129,7 +146,10 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
       const saved = await saveMemberId(code, player.userId, normalized);
       if (!saved.ok) { setBusy(false); setMessage({ bad: true, text: saved.message }); return; }
     }
-    const result = await send({ type: "UpdatePlayer", playerId: player.id, name, memberId: normalized });
+    // Send only what changed: after the event is finalized the server accepts an ID-only change.
+    const nameChanged = name !== player.name, idChanged = normalized !== player.memberId;
+    if (!nameChanged && !idChanged) { setBusy(false); setMessage({ bad: false, text: `${name} is unchanged.` }); return; }
+    const result = await send({ type: "UpdatePlayer", playerId: player.id, ...(nameChanged ? { name } : {}), ...(idChanged ? { memberId: normalized } : {}) });
     setBusy(false);
     setMessage(result.ok ? { bad: false, text: `${name} updated.` } : { bad: true, text: result.message });
   }
@@ -157,7 +177,8 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
   const problem = idProblem(idText);
   const formName = [first, last].filter(Boolean).join(" ");
   const enrollLabel = selected ? "Update" : "Enroll";
-  const enrollDisabled = busy || closed || lateBlocked || (selected ? !canEdit : !canAdd || !account);
+  // Updating a name or ID works in every phase; only new entries stop after the cut.
+  const enrollDisabled = busy || (selected ? !canEdit : closed || lateBlocked || !canAdd || (!account && !formName.trim()));
   const dropLabel = selected?.status === "dropped" ? "Re-enroll" : "Drop";
   const dropDisabled = busy || !selected || !canDrop || selected.status === "cut" || state.phase === "complete";
   const lateNote = !registration && !lateBlocked && !closed ? `Late entry: a new player gets a loss bye for ${state.rounds.length === 1 ? "round 1" : `rounds 1 to ${state.rounds.length}`}.` : "";
@@ -176,11 +197,12 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
       <p id="enroll-note" className={`dk-note${message?.bad ? " dk-note--bad" : ""}`} role="status">
         {message && <span>{message.text}</span>}
         {!message && account && !selected && <span>Filled from Name lookup: {account.displayName}, account <span className="dk-mono" style={{ color: "var(--text)" }}>{account.username}</span>. Enroll adds them{state.rounds.length ? ` to round ${round?.number} pairings` : " to the tournament"}.</span>}
-        {!message && !account && !selected && <span>Type a COSSY ID or a name to find an account, or search on the right.</span>}
+        {!message && !account && !selected && !formName.trim() && <span>Type a COSSY ID or a name to find an account, or search on the right.</span>}
+        {!message && !account && !selected && formName.trim() && <span>No account picked. Enroll adds {formName.trim()} by name with {idText.trim() ? "the ID you typed" : "a temp ID"}. Pick an account on the right to link one.</span>}
         {!message && selected && <span>{selected.name} selected. Edit the name or ID and press Update.</span>}
         {problem && <span className="dk-idwarn"><WarnIcon size={13} />{problem}</span>}
-        {lateBlocked && <span>Late entry is off for this tournament. Turn it on in Settings.</span>}
-        {lateNote && <span>{lateNote}</span>}
+        {lateBlocked && !selected && <span>Late entry is off for this tournament. Turn it on in Settings.</span>}
+        {lateNote && !selected && <span>{lateNote}</span>}
         {selected && registration && <span>Dropping before round 1 removes the player.</span>}
       </p>
     </form>

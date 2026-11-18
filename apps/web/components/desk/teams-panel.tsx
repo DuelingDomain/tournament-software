@@ -134,7 +134,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
 
   const rowReady = (i: number) => taken(slots[i]!) !== null || nameOf(drafts[i]!) !== "";
   const filled = slots.every((_, i) => rowReady(i));
-  const enrollDisabled = busy || closed || lateBlocked || !name.trim() || !filled || (selected ? !canEdit : !canAdd);
+  const enrollDisabled = busy || !name.trim() || !filled || (selected ? !canEdit : closed || lateBlocked || !canAdd);
 
   /**
    * One run of the enroll steps. `apply` runs a command and returns the state after it, so the same steps can run first
@@ -200,7 +200,19 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
       if (!u.ok) return fail(u.message, u.code);
       latest = u.state;
     }
+    // A typed ID that differs from the one a member already has corrects it. This works in every phase.
+    for (const r of picks) {
+      const id = ownerOf.get(r.i);
+      if (!id || !r.typed || !r.slot.playerId) continue;
+      const person = latest.players.find(p => p.id === id);
+      if (!person || person.memberId === null || person.memberId === r.typed) continue;
+      const u = await apply({ type: "UpdatePlayer", playerId: id, memberId: r.typed });
+      if (!u.ok) return fail(u.message, u.code);
+      latest = u.state;
+    }
     const memberIds = picks.map(r => ownerOf.get(r.i)).filter((v): v is string => !!v);
+    // The team itself is saved only when its name or members changed (a finalized event accepts ID corrections only).
+    if (selected && selected.name === name.trim() && selected.memberIds.length === memberIds.length && selected.memberIds.every((m, k) => m === memberIds[k])) return { ok: true as const };
     const team: Command = selected ? { type: "UpdateTeam", teamId: selected.id, name: name.trim(), memberIds } : { type: "AddTeams", teams: [{ name: name.trim(), memberIds }] };
     const t = await apply(team);
     if (!t.ok) return fail(t.message, t.code);
@@ -312,7 +324,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
         {message && <span>{message.text}</span>}
         {!message && !selected && <span>{label}: name the team, then fill {size} members in playing order. Press Enter in a row to look up an account, or click one in Name lookup. No account yet? Type a name and use Temp ID.</span>}
         {!message && selected && <span>{selected.name} selected. Change the name or members and press Update.</span>}
-        {lateBlocked && <span>Late entry is off for this tournament. Turn it on in Update Settings.</span>}
+        {lateBlocked && !selected && <span>Late entry is off for this tournament. Turn it on in Update Settings.</span>}
         {selected && registration && <span>Dropping before round 1 removes the team. Its members stay enrolled.</span>}
       </p>
     </form>
