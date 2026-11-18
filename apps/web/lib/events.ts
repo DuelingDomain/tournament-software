@@ -141,17 +141,20 @@ async function matchLegacyPlayers(players: readonly LegacyPlayer[]) {
   }
   return byMemberId;
 }
-export async function importEvent(code: string, user: TournamentUser, kind: "tournament" | "players", xml: string) {
+export async function importEvent(code: string, user: TournamentUser, kind: "tournament" | "players" | "team-players", xml: string) {
   const before = eventRecord(code);
   requireImport(before, user.id);
-  if (kind === "players" && before.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
-  const parsed = kind === "tournament" ? parseLegacyTournament(xml, context(user)) : null;
-  const players = parsed ? parsed.players : parseLegacyPlayerList(xml);
+  if (kind !== "tournament" && before.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
+  const source = kind !== "players" ? parseLegacyTournament(xml, context(user)) : null;
+  const parsed = kind === "tournament" ? source : null;
+  if (kind === "team-players" && ((source?.state.settings.playerStructure ?? 1) === 1 || before.state.settings.playerStructure !== 1)) throw new HttpError(422, "INVALID_PLAYER_STRUCTURE");
+  const players = source ? source.players : parseLegacyPlayerList(xml);
   const matches = await matchLegacyPlayers(players);
   return database().transaction(() => {
     const event = eventRecord(code);
     requireImport(event, user.id);
     if (event.version !== before.version) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id)) });
+    if (kind !== "tournament" && event.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
     let state: EventState;
     let imported = 0;
     let unmatched = 0;
@@ -170,9 +173,8 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
       for (const player of players) {
         const account = player.memberId ? matches.get(player.memberId) : undefined;
         if (state.players.some(p => (player.memberId !== null && p.memberId === player.memberId) || (account && p.userId === account.id))) continue;
-        state.players.push({ id: randomBytes(12).toString("hex"), userId: account?.id ?? null,
-          name: [player.firstName, player.lastName].filter(Boolean).join(" ") || "Imported player", memberId: player.memberId,
-          status: "active", droppedAfterRound: null, enteredRound: 1, fixedTable: null, checkedIn: false, notes: null });
+        state = applyCommand(state, { type: "AddPlayers", players: [{ userId: account?.id ?? null,
+          name: [player.firstName, player.lastName].filter(Boolean).join(" ") || "Imported player", memberId: player.memberId }] }, context(user));
         imported++; if (!account) unmatched++;
       }
     }

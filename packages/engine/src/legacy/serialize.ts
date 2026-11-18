@@ -1,5 +1,7 @@
 import { CommandError, type EventState, type Penalty, type Player } from "../types.js";
 import { normalizeMemberId, padMemberId } from "../member-id.js";
+import { teamSize } from "../competitors.js";
+import { ROLE_POSITIONS, staffPositionCode } from "../staff.js";
 import { standings } from "../standings.js";
 import type { LegacyPlayer } from "./parse.js";
 import { buildXml } from "./xml.js";
@@ -52,6 +54,7 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     assigned.add(normalizeMemberId(id) ?? id);
     ids.set(p.id, id);
   }
+  for (const t of state.teams ?? []) ids.set(t.id, t.id);
   function idFor(playerId: string): string {
     const id = ids.get(playerId);
     if (!id) throw new CommandError("PLAYER_NOT_FOUND", "A legacy match or penalty references an unknown event player.");
@@ -70,14 +73,37 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
     return lost?.number ?? Math.max(1, current);
   }
   const staffIds = new Map(state.staff.map(s => [s.id, temporaryId()]));
-  const roleCodes = { organizer: "01", head_judge: "02", judge: "05", scorekeeper: "06", staff: "08" };
+  const staffEntries = [
+    ...state.staff.map(s => ({ Player: playerXml(staffIds.get(s.id)!, names(s.name)), XmlStaffPositionCode: staffPositionCode(s.position ?? ROLE_POSITIONS[s.role]) })),
+    ...(state.legacyStaff ?? []).map(s => ({ Player: playerXml(s.memberId && !used.has(s.memberId) ? padMemberId(s.memberId) : temporaryId(), names(s.name)), XmlStaffPositionCode: staffPositionCode(s.position) })),
+  ];
+  function rosterFields(p: Player) {
+    const row = rows.get(p.id);
+    return { DropRound: dropRound(p), Rank: row?.rank ?? 0,
+      PlayoffPoints: state.rounds.filter(r => r.stage === "playoff").flatMap(r => r.matches).filter(m => (m.p1 === p.id && (m.result === "p1" || m.result === "bye_win")) || (m.p2 === p.id && m.result === "p2")).length,
+      Wins: row?.matchPoints ?? 0, Points: row ? row.matchPoints * 1000000 + Math.round(row.omw * 10) * 1000 + Math.round(row.oomw * 10) : 0, OpenDueling: p.openDuelingPoints ?? 0,
+      DropReason: p.status === "active" ? "Active" : p.status === "dropped" ? "Drop" : state.cut.includes(p.id) ? "PlayoffCut" : "Cut",
+      AssignedSeat: p.fixedTable ?? 0, Notes: p.notes ?? "" };
+  }
+  const roster = teamSize(state) === 1 ? { TournPlayer: [...state.players].sort((a, b) => idFor(a.id).localeCompare(idFor(b.id))).map(p => ({
+    Player: playerXml(idFor(p.id), opts.playerNames?.[p.id] ?? names(p.name)), ...rosterFields(p),
+  })) } : { TournamentTeam: (state.teams ?? []).map(t => ({ Team: { ID: t.id, FirstName: t.name, LastName: "", PlayerList: { Player: t.memberIds.map((id, index) => {
+    const member = state.players.find(p => p.id === id);
+    if (!member) throw new CommandError("PLAYER_NOT_FOUND", "The team references an unknown member.");
+    return { ...playerXml(idFor(id), opts.playerNames?.[id] ?? names(member.name)), TeamPosition: index };
+  }) } }, ...rosterFields(t) })) };
+  if (teamSize(state) > 1) {
+    const enrolled = new Set((state.teams ?? []).flatMap(t => t.memberIds));
+    Object.assign(roster, { TournPlayer: state.players.filter(p => !enrolled.has(p.id)).map(p => ({ Player: playerXml(idFor(p.id), opts.playerNames?.[p.id] ?? names(p.name)), ...rosterFields(p) })) });
+  }
+  const location = state.settings.locationDetails;
   const date = state.settings.startsAt && Number.isFinite(Date.parse(state.settings.startsAt)) ? new Date(state.settings.startsAt).toISOString() : state.createdAt;
   return buildXml("Tournament", {
-    Name: state.settings.name, ID: opts.eventId ?? "X99-000000", TournamentStyleCode: "01",
-    StructureCode: state.settings.format === "single_elim" ? "02" : "01", EventTypeCode: "01", PlayerStructure: "01",
+    Name: state.settings.name, ID: opts.eventId ?? "X99-000000", TournamentStyleCode: ({ advanced: "01", traditional: "02", sealed: "03", open_dueling: "04" } as const)[state.settings.style ?? "advanced"],
+    StructureCode: state.settings.format === "single_elim" ? "02" : state.settings.format === "open_dueling" ? "03" : "01", EventTypeCode: "01", PlayerStructure: String(teamSize(state)).padStart(2, "0"),
     ReferenceDateTime: "2003-01-02", Date: date.slice(0, 10), Time: date.slice(11, 16), CurrentRound: current,
     TableOffset: state.settings.startingTable, PlayoffRound: firstPlayoff?.number ?? 0, SoftwareVersion: "3.0.0.0", Finalized: state.phase === "complete" ? "True" : "False",
-    Staff: { XmlStaffArray: { XmlStaff: state.staff.map(s => ({ Player: playerXml(staffIds.get(s.id) ?? "0000000000", names(s.name)), XmlStaffPositionCode: roleCodes[s.role] })) } },
+    Staff: { XmlStaffArray: { XmlStaff: staffEntries } },
     PenaltyList: { PlayerPenalty: state.penalties.map(p => {
       const infraction = state.settings.infractions.find(i => i.id === p.infractionId);
       const label = infraction?.label ?? p.infractionId;
@@ -87,15 +113,8 @@ export function serializeLegacyTournament(state: EventState, opts: LegacyExportO
         Judge: judge ? staffIds.get(judge.id) : "0000000000", Round: p.round ?? 0,
         Notes: legacyName === "None" && label !== "None" ? `[Infraction: ${label}]${p.notes ? ` ${p.notes}` : ""}` : p.notes ?? "" };
     }) },
-    Location: { Id: "00000000-0000-0000-0000-000000000000", Name: state.settings.location ?? "", Address1: "", Address2: "", City: "", State: "", Country: "", Zip: "", Phone: "", WebSite: "" },
-    TournamentPlayers: { TournPlayer: [...state.players].sort((a, b) => idFor(a.id).localeCompare(idFor(b.id))).map(p => {
-      const row = rows.get(p.id);
-      return { Player: playerXml(idFor(p.id), opts.playerNames?.[p.id] ?? names(p.name)), DropRound: dropRound(p), Rank: row?.rank ?? 0,
-        PlayoffPoints: state.rounds.filter(r => r.stage === "playoff").flatMap(r => r.matches).filter(m => (m.p1 === p.id && (m.result === "p1" || m.result === "bye_win")) || (m.p2 === p.id && m.result === "p2")).length,
-        Wins: row?.matchPoints ?? 0, Points: row ? row.matchPoints * 1000000 + Math.round(row.omw * 10) * 1000 + Math.round(row.oomw * 10) : 0, OpenDueling: 0,
-        DropReason: p.status === "active" ? "Active" : p.status === "dropped" ? "Drop" : state.cut.includes(p.id) ? "PlayoffCut" : "Cut",
-        AssignedSeat: p.fixedTable ?? 0, Notes: p.notes ?? "" };
-    }) },
+    Location: { Id: location?.id ?? "00000000-0000-0000-0000-000000000000", Name: location?.name ?? state.settings.location ?? "", Address1: location?.address1 ?? "", Address2: location?.address2 ?? "", City: location?.city ?? "", State: location?.state ?? "", Country: location?.country ?? "", Zip: location?.postal ?? "", Phone: location?.phone ?? "", WebSite: location?.website ?? "" },
+    TournamentPlayers: roster,
     Matches: { TournMatch: state.rounds.flatMap(r => r.matches.map(m => ({ Player: [idFor(m.p1), m.p2 === null ? "0000000000" : idFor(m.p2)], Round: r.number,
       Status: m.result === null ? "Incomplete" : m.result === "draw" ? "Draw" : m.result === "double_loss" ? "DoubleLoss" : "Winner",
       Table: m.table ?? 0, Winner: m.result === "p1" || m.result === "bye_win" ? idFor(m.p1) : m.result === "p2" && m.p2 !== null ? idFor(m.p2) : "0000000000",

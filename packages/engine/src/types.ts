@@ -129,6 +129,7 @@ export interface EventState {
     roundPairedAfter?: boolean }[];
   penalties: PenaltyEntry[];
   staff: StaffMember[];
+  legacyStaff?: { memberId: string | null; name: string; position: StaffPosition }[];
   createdAt: string;
   completedAt: string | null;
 }

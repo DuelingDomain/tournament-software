@@ -1,6 +1,8 @@
-import { CommandError, type CommandContext, type EventState, type MatchResult, type Penalty, type Player, type Round } from "../types.js";
+import { CommandError, type CommandContext, type EventState, type MatchResult, type Penalty, type Player, type PlayerStructure, type Round, type StaffPosition, type Team } from "../types.js";
 import { createEvent } from "../reducer.js";
 import { normalizeMemberId } from "../member-id.js";
+import { syncTeamMembers, teamSize, validateTeamMembers } from "../competitors.js";
+import { STAFF_POSITIONS } from "../staff.js";
 import { integrity } from "../integrity.js";
 import { Element, parseXml } from "./xml.js";
 
@@ -73,28 +75,43 @@ function isBye(id: string): boolean { return id === "" || normalizeMemberId(id) 
 export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyTournamentImport {
   const root = parseXml(xml, "Tournament");
   const structure = root.get("Structure") || root.get("StructureCode");
-  if (/^(open|opendueling)$/i.test(root.get("Format")) || root.int("TournamentStyleCode") === 4 || /^(opendueling|0?3)$/i.test(structure)) {
-    throw new CommandError("unsupported_legacy_event", "Legacy Open Dueling events cannot be imported.");
-  }
   const roster = root.child("TournamentPlayers");
-  const playerStructure = root.get("PlayerStructure");
-  if ((playerStructure && !/^(individual|0?1)$/i.test(playerStructure)) || roster.has("TournamentTeam")) {
-    throw new CommandError("unsupported_legacy_event", "Legacy team events cannot be imported; choose an individual event.");
-  }
+  const namedSizes: Record<string, number> = { individual: 1, twoplayers: 2, threeplayers: 3, fourplayers: 4, fiveplayers: 5 };
+  const rawSize = root.get("PlayerStructure").toLowerCase();
+  const inferredSize = roster.has("TournamentTeam") ? Math.max(2, roster.child("TournamentTeam").child("Team").child("PlayerList").all("Player").length) : 1;
+  const size = rawSize ? namedSizes[rawSize] ?? Number(rawSize) : inferredSize;
+  if (![1, 2, 3, 4, 5].includes(size)) throw new CommandError("unsupported_legacy_event", "The legacy player structure must have one through five members.");
+  const styleCode = root.int("TournamentStyleCode");
+  const oldFormat = root.get("Format").toLowerCase();
+  const style = styleCode === 4 || /^(open|opendueling)$/.test(oldFormat) ? "open_dueling"
+    : styleCode === 3 || oldFormat === "limited" ? "sealed" : styleCode === 2 ? "traditional" : "advanced";
   const warnings: string[] = [];
-  const state = createEvent({ name: root.get("Name") || "Imported event", format: /^(singleelimination|0?2)$/i.test(structure) ? "single_elim" : "swiss",
-    startsAt: timestamp(root, warnings), location: root.child("Location").get("Name") || null,
+  const location = root.child("Location");
+  const locationDetails = location.has("Name") ? { id: location.get("Id") || "imported-location", name: location.get("Name"),
+    address1: location.get("Address1"), address2: location.get("Address2"), city: location.get("City"), state: location.get("State"),
+    postal: location.get("Zip"), country: location.get("Country"), phone: location.get("Phone"), website: location.get("WebSite") } : null;
+  const state = createEvent({ name: root.get("Name") || "Imported event", format: /^(singleelimination|0?2)$/i.test(structure) ? "single_elim" : /^(opendueling|0?3)$/i.test(structure) ? "open_dueling" : "swiss",
+    style, playerStructure: size as PlayerStructure, locationDetails,
+    startsAt: timestamp(root, warnings), location: location.get("Name") || null,
     startingTable: Math.max(1, root.int("TableOffset", 1)) }, ctx);
   const imported: LegacyTournamentImport["players"] = [];
   const byLegacyId = new Map<string, Player>();
   const staffNames = new Map<string, string>();
-  const staffNodes = root.child("Staff").child("XmlStaffArray").all("XmlStaff").map(s => s.child("Player"));
-  for (const field of ["HeadJudge", "Organizer", "ScoreKeeper"]) staffNodes.push(...root.child(field).all("Player"));
-  staffNodes.push(...root.child("Judges").child("PlayerList").all("Player"));
-  for (const node of staffNodes) {
+  const staffNodes: { node: Element; position: StaffPosition }[] = root.child("Staff").child("XmlStaffArray").all("XmlStaff").map(s => {
+    const code = s.int("XmlStaffPositionCode");
+    const named = s.get("XmlStaffPosition").toLowerCase();
+    const oldPositions: Record<string, StaffPosition> = { organizer: "organizer", headjudge: "head_judge", assistantheadjudge: "assistant_head_judge", judgeteamlead: "floor_judge_team_lead", judge: "floor_judge", scorekeeper: "scorekeeper", eventmanager: "event_manager", eventstaff: "event_staff" };
+    return { node: s.child("Player"), position: STAFF_POSITIONS[code - 1] ?? oldPositions[named] ?? "event_staff" };
+  });
+  for (const [field, position] of [["HeadJudge", "head_judge"], ["Organizer", "organizer"], ["ScoreKeeper", "scorekeeper"]] as const)
+    staffNodes.push(...root.child(field).all("Player").map(node => ({ node, position })));
+  staffNodes.push(...root.child("Judges").child("PlayerList").all("Player").map(node => ({ node, position: "floor_judge" as const })));
+  state.legacyStaff = [];
+  for (const { node, position } of staffNodes) {
     const p = readPlayer(node);
     const name = [p.firstName, p.lastName].filter(Boolean).join(" ") || "Unknown staff member";
     staffNames.set(key(node.get("ID")), name);
+    state.legacyStaff.push({ memberId: p.memberId, name, position });
     warnings.push(`Legacy staff member ${name} was not imported; select a staff account to add them.`);
   }
   function addPlayer(node: Element, sourceId: string, missing: boolean): Player {
@@ -110,24 +127,47 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
     if (missing) warnings.push(`Legacy player ${sourceId} was missing from the roster; imported as a dropped placeholder.`);
     return p;
   }
-  for (const node of roster.all("TournPlayer")) {
-    const nested = node.child("Player");
-    const rawId = nested.get("ID");
-    if (isBye(rawId)) { warnings.push("A legacy roster entry with no player ID was ignored."); continue; }
-    // Score/drop fields are outside the nested Player element.
-    const p = addPlayer(nested, rawId, false);
+  function scoringFields(p: Player, node: Element): void {
     const reason = node.get("DropReason").toLowerCase();
     const dropRound = node.int("DropRound");
-    if (dropRound > 0 && reason !== "active" && reason !== "0") {
+    if ((dropRound > 0 || reason === "drop") && reason !== "active" && reason !== "0") {
       p.status = /^(cut|playoffcut|topx|2|3|4)$/.test(reason) ? "cut" : "dropped";
       p.droppedAfterRound = dropRound;
     }
     p.fixedTable = node.int("AssignedSeat") > 0 ? node.int("AssignedSeat") : null;
+    p.openDuelingPoints = node.int("OpenDueling");
     p.notes = node.get("Notes") || null;
   }
-  function resolve(rawId: string, round: number): Player {
-    const p = byLegacyId.get(key(rawId)) ?? addPlayer(new Element(undefined), rawId, true);
-    if (p.name === "(n/a)" && p.status === "dropped") p.droppedAfterRound = Math.max(p.droppedAfterRound ?? 0, round);
+  for (const node of roster.all("TournPlayer")) {
+    const nested = node.child("Player");
+    const rawId = nested.get("ID");
+    if (isBye(rawId)) { warnings.push("A legacy roster entry with no player ID was ignored."); continue; }
+    scoringFields(addPlayer(nested, rawId, false), node);
+  }
+  function addTeam(node: Element, sourceId: string, missing: boolean): Team {
+    const id = key(sourceId);
+    if (byLegacyId.has(id)) throw new CommandError("invalid_legacy_xml", "Team IDs must be unique and separate from member IDs.");
+    if (!/^\d{10}$/.test(id) || Number(id) < 9988000000 || Number(id) > 9998999999)
+      throw new CommandError("invalid_legacy_xml", "A team ID is outside the reserved team range.");
+    const nested = node.child("Team");
+    const members = nested.child("PlayerList").all("Player").sort((a, b) => a.int("TeamPosition") - b.int("TeamPosition"));
+    const memberIds = members.map(m => addPlayer(m, m.get("ID"), false).id);
+    if (!missing) validateTeamMembers(state, memberIds, id);
+    const team: Team = { id, userId: null, memberId: id, name: [nested.get("FirstName"), nested.get("LastName")].filter(Boolean).join(" ") || "Unknown team", memberIds,
+      status: missing ? "dropped" : "active", droppedAfterRound: missing ? 0 : null, enteredRound: 1, fixedTable: null, checkedIn: false, notes: null };
+    scoringFields(team, node);
+    state.teams.push(team); byLegacyId.set(id, team);
+    if (missing) warnings.push(`Legacy team ${sourceId} was missing from the roster; imported as a dropped placeholder.`);
+    return team;
+  }
+  for (const node of roster.all("TournamentTeam")) {
+    const rawId = node.child("Team").get("ID");
+    if (isBye(rawId)) { warnings.push("A legacy team entry with no ID was ignored."); continue; }
+    addTeam(node, rawId, false);
+  }
+  function resolve(rawId: string, round: number, member = false): Player {
+    const p = byLegacyId.get(key(rawId)) ?? (teamSize(state) > 1 && !member ? addTeam(new Element(undefined), rawId, true) : addPlayer(new Element(undefined), rawId, true));
+    if ((p.name === "(n/a)" || p.name === "Unknown team") && p.status === "dropped") p.droppedAfterRound = Math.max(p.droppedAfterRound ?? 0, round);
     return p;
   }
   const rounds = new Map<number, Round>();
@@ -161,7 +201,7 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
   }
   for (const node of root.child("PenaltyList").all("PlayerPenalty")) {
     const rawId = node.get("Player");
-    const p = resolve(rawId, node.int("Round"));
+    const p = resolve(rawId, node.int("Round"), true);
     const penalty = readPenalty(node);
     const label = node.get("Infraction") || "Unknown legacy infraction";
     let infraction = state.settings.infractions.find(i => i.label === label);
@@ -174,6 +214,8 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
   }
   state.phase = root.bool("Finalized") ? "complete" : firstPlayoff ? "playoff" : state.rounds.length ? "swiss" : "registration";
   state.completedAt = state.phase === "complete" ? ctx.now : null;
+  syncTeamMembers(state);
+  state.playerStructureLocked = state.players.length > 0 || state.teams.length > 0;
   const issues = integrity(state);
   for (const warning of issues.memberIdWarnings) warnings.push(`Legacy member ID ${warning.memberId}: ${warning.problem} (${warning.playerId}).`);
   if (issues.unpairedActive.length) warnings.push(`${issues.unpairedActive.length} active players are unpaired in the current round.`);

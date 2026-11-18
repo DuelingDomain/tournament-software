@@ -15,3 +15,6 @@ export function staffAssignment(entry: Pick<StaffAssignment, "role" | "position"
   if (entry.role !== undefined && role !== entry.role) throw new CommandError("INVALID_POSITION", "The staff position and role must agree.");
   return { role, position };
 }
+
+export const STAFF_POSITIONS: StaffPosition[] = ["organizer", "head_judge", "assistant_head_judge", "floor_judge_team_lead", "floor_judge", "scorekeeper", "event_manager", "event_staff"];
+export function staffPositionCode(position: StaffPosition): string { return String(STAFF_POSITIONS.indexOf(position) + 1).padStart(2, "0"); }

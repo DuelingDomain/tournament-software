@@ -635,3 +635,27 @@ describe("team HTTP workflow", () => {
     expect(dropped.state.teams.find(t => t.id === "9988000000")?.status).toBe("dropped");
   });
 });
+
+describe("team file interchange", () => {
+  it("expands CSV by member with tag cross-pairs and enrolls a team file roster into an individual event", async () => {
+    const cookie = await login();
+    const code = await create(cookie, { playerStructure: 2 });
+    const people = deskSchema.parse(await (await command(code, cookie, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) })).json());
+    await command(code, cookie, 2, { type: "AddTeams", teams: [{ name: "Left", memberIds: people.state.players.slice(0, 2).map(p => p.id) }, { name: "Right", memberIds: people.state.players.slice(2).map(p => p.id) }] });
+    await command(code, cookie, 3, { type: "PairNextRound" });
+    const csv = await (await api(`events/${code}/export/matches.csv`, cookie)).text();
+    const lines = csv.trim().split("\r\n").map(line => line.split(",").map(cell => cell.slice(1, -1)));
+    expect(lines).toHaveLength(3);
+    const pairs = lines.slice(1).map(row => [row[3], row[4]]);
+    const p = people.state.players;
+    expect(pairs.every(([a, b]) => (a === p[0].id && b === p[3].id) || (a === p[1].id && b === p[2].id) || (a === p[2].id && b === p[1].id) || (a === p[3].id && b === p[0].id))).toBe(true);
+    expect((await (await api(`events/${code}/export/standings.csv`, cookie)).text()).trim().split("\r\n")).toHaveLength(5);
+    const xmlResponse = await api(`events/${code}/export/tournament`, cookie);
+    expect(xmlResponse.status).toBe(200);
+    const xml = await xmlResponse.text();
+    const target = await create(cookie);
+    const imported = await upload(target, cookie, "team-players", xml);
+    expect(imported.status).toBe(200);
+    expect(await imported.json()).toMatchObject({ imported: 4, desk: { state: { settings: { playerStructure: 1 } } } });
+  });
+});

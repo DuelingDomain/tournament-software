@@ -34,14 +34,10 @@ describe("legacy tournament files", () => {
     expect(state.settings.infractions.find(i => i.id === state.penalties[0].infractionId)?.label).toBe("UnrecognizedMinor");
   });
 
-  it.each([
-    ["<PlayerStructure>02</PlayerStructure>", "team"],
-    ["<TournamentPlayers><TournamentTeam/></TournamentPlayers>", "team"],
-    ["<TournamentStyleCode>04</TournamentStyleCode>", "Open Dueling"],
-    ["<Structure>OpenDueling</Structure>", "Open Dueling"],
-    ["<Format>Open</Format>", "Open Dueling"],
-  ])("refuses unsupported event %s", (fields, message) => {
-    expect(() => parseLegacyTournament(`<Tournament>${fields}</Tournament>`, context)).toThrow(expect.objectContaining({ code: "unsupported_legacy_event", message: expect.stringContaining(message) }));
+  it("accepts team and Open Dueling headers while rejecting unknown player structures", () => {
+    for (const fields of ["<PlayerStructure>02</PlayerStructure>", "<TournamentStyleCode>04</TournamentStyleCode>", "<Structure>OpenDueling</Structure>", "<Format>Open</Format>"])
+      expect(parseLegacyTournament(`<Tournament>${fields}</Tournament>`, context).state).toBeDefined();
+    expect(() => parseLegacyTournament("<Tournament><PlayerStructure>06</PlayerStructure></Tournament>", context)).toThrow(expect.objectContaining({ code: "unsupported_legacy_event" }));
   });
 
   it("accepts old staff wrappers and date field ordering without importing staff accounts", () => {

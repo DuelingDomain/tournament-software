@@ -133,7 +133,7 @@ export function handleApi(request: Request, path: string[]) {
       try { form = await new Response(Buffer.from(bytes), { headers: { "Content-Type": request.headers.get("content-type") ?? "" } }).formData(); }
       catch { throw new HttpError(400, "invalid_body"); }
       const file = form.get("file");
-      const kind = z.enum(["tournament", "players"]).parse(form.get("kind"));
+      const kind = z.enum(["tournament", "players", "team-players"]).parse(form.get("kind"));
       if (!(file instanceof File)) throw new HttpError(400, "invalid_file");
       const fileBytes = new Uint8Array(await file.arrayBuffer());
       const encoding = fileBytes[0] === 255 && fileBytes[1] === 254 ? "utf-16le" : fileBytes[0] === 254 && fileBytes[1] === 255 ? "utf-16be" : "utf-8";
