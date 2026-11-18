@@ -1,9 +1,9 @@
 /* Organizer desk. Builds on the dd-* components and tokens in app/globals.css; everything here is dk-* and desk-only. */
-.dk { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg-deep); color: var(--text); }
+.dk { --dk-pad: max(16px, calc((100vw - 1400px) / 2)); min-height: 100vh; display: flex; flex-direction: column; background: var(--bg-deep); color: var(--text); }
 .dk .dk-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* Spine: menu bar */
-.dk-spine { position: relative; z-index: 30; min-height: 36px; display: flex; align-items: center; gap: 16px; padding: 0 16px; background: var(--bg-surface); border-bottom: 1px solid var(--border); }
+.dk-spine { position: relative; z-index: 30; min-height: 36px; display: flex; align-items: center; gap: 16px; padding: 0 var(--dk-pad); background: var(--bg-surface); border-bottom: 1px solid var(--border); }
 .dk-brand { display: flex; align-items: center; gap: 8px; padding-right: 8px; color: var(--text); text-decoration: none; }
 .dk-menus { display: flex; align-items: center; gap: 2px; flex: 1 1 auto; min-width: 0; overflow: visible; }
 .dk-menu-wrap { position: relative; }
@@ -21,7 +21,7 @@
 .dk-palette-hint:hover { color: var(--text); }
 
 /* Shortcuts tray */
-.dk-tray { padding: 8px 16px 10px; background: var(--bg-deep); border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.dk-tray { padding: 6px var(--dk-pad) 8px; background: var(--bg-deep); border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
 .dk-tray-col { display: flex; flex-direction: column; gap: 5px; }
 .dk-tray-grp { display: flex; gap: 4px; padding: 4px; border-radius: var(--r-md); background: var(--bg-recess); box-shadow: var(--shadow-inset); border: 1px solid #1a2038; }
 .dk-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; height: 44px; padding: 0 8px; border-radius: var(--r-md); background: var(--bg-elevated); border: 1px solid var(--border); border-top-color: var(--border-hi); color: var(--text); font: 600 12px/1 var(--font-body); cursor: pointer; white-space: nowrap; text-decoration: none; }
@@ -36,16 +36,16 @@
 .dk-tile .dk-nokey { visibility: hidden; }
 
 /* Binder tabs and panel */
-.dk-binder { padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
+.dk-binder { padding: 6px var(--dk-pad) 0; border-bottom: 1px solid var(--border); }
 .dk-binder .dd-tab--narrow { padding: 0 12px; }
-.dk-main { flex: 1 0 auto; padding: 0 16px 16px; }
-.dk-sheet { background: var(--bg-surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 var(--r-lg) var(--r-lg); box-shadow: var(--shadow-sheet); padding: 0 24px 20px; display: flex; flex-direction: column; gap: 12px; }
-.dk-panel-tabs { margin: 0 -24px 4px; padding: 0 24px; }
+.dk-main { flex: 1 0 auto; padding: 0 var(--dk-pad) 12px; }
+.dk-sheet { background: var(--bg-surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 var(--r-lg) var(--r-lg); box-shadow: var(--shadow-sheet); padding: 0 20px 14px; display: flex; flex-direction: column; gap: 10px; }
+.dk-panel-tabs { margin: 0 -20px 2px; padding: 0 20px; }
 .dk-sheet .dd-tabs--index { overflow-x: auto; }
 .dk-h2 { margin: 0; font: 20px/1 var(--font-display); }
 .dk-slip { padding: 12px 16px; background: var(--bg-elevated); border: 1px solid var(--border); border-top-color: var(--border-hi); border-radius: var(--r-md); }
 .dk-cols { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
-.dk-col-main { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.dk-col-main { flex: 999 1 600px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .dk-col-side { flex: 1 1 360px; min-width: 0; max-width: 100%; display: flex; flex-direction: column; gap: 12px; }
 
 /* Pairings: entry slip */
@@ -80,7 +80,7 @@
 .dk-gh { padding: 0 12px 4px 0; }
 .dk-gh span:first-child { text-align: center; }
 .dk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.dk-mrow { width: 100%; height: 40px; padding: 0 12px 0 0; border-radius: var(--r-md); background: var(--bg-elevated); border: 1px solid var(--border); border-top-color: var(--border-hi); color: var(--text); text-align: left; cursor: pointer; font: 500 15px/1.2 var(--font-body); transition: transform 180ms var(--ease), box-shadow 180ms var(--ease); }
+.dk-mrow { width: 100%; min-height: 36px; padding-block: 2px; padding: 0 12px 0 0; border-radius: var(--r-md); background: var(--bg-elevated); border: 1px solid var(--border); border-top-color: var(--border-hi); color: var(--text); text-align: left; cursor: pointer; font: 500 15px/1.2 var(--font-body); transition: transform 180ms var(--ease), box-shadow 180ms var(--ease); }
 .dk-mrow:hover { border-color: var(--border-hi); }
 .dk-mrow[aria-pressed="true"] { transform: translateY(-2px); box-shadow: var(--shadow-card); border-color: var(--violet-2); }
 .dk-mrow--bye { cursor: default; background: var(--bg-surface); }
@@ -127,13 +127,13 @@
 
 /* Players panel */
 .dk-field-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
-.dk-field-row > .dd-field { flex: 1 1 200px; }
-.dk-field-row > .dd-field--id { flex: 0 1 200px; }
+.dk-field-row > .dd-field { flex: 0 1 240px; }
+.dk-field-row > .dd-field--id { flex: 0 1 170px; }
 .dk-btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .dk-note { flex: 1 0 100%; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--text-2); }
 .dk-note--bad { color: var(--rose-2); }
 .dk-plist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.dk-prow { display: grid; grid-template-columns: minmax(0, 1.3fr) 150px minmax(0, 1fr) 160px; gap: 12px; align-items: center; min-height: 48px; padding: 0 14px 0 0; border-radius: var(--r-md); background: var(--bg-elevated); border: 1px solid var(--border); border-top-color: var(--border-hi); }
+.dk-prow { display: grid; grid-template-columns: minmax(0, 1.3fr) 150px minmax(0, 1fr) 160px; gap: 12px; align-items: center; min-height: 42px; padding: 0 14px 0 0; border-radius: var(--r-md); background: var(--bg-elevated); border: 1px solid var(--border); border-top-color: var(--border-hi); }
 .dk-prow[data-selected="true"] { transform: translateY(-2px); box-shadow: var(--shadow-card); border-color: var(--violet-2); }
 .dk-prow-pick { display: contents; }
 .dk-prow-main { display: grid; grid-column: 1 / 4; grid-template-columns: subgrid; gap: 12px; align-items: center; padding: 6px 0 6px 14px; width: 100%; background: transparent; border: 0; color: var(--text); text-align: left; cursor: pointer; font: 500 15px/1.2 var(--font-body); border-radius: var(--r-md); }
@@ -147,7 +147,7 @@
 .dk-status[data-state="in"] svg { color: var(--success); }
 .dk-status[data-state="out"] { border-style: dashed; color: var(--text-2); cursor: default; }
 .dk-status:disabled { cursor: default; }
-.dk-lookup { flex: 1 1 380px; min-width: 0; margin-left: -8px; margin-top: 36px; padding: 20px; border-radius: var(--r-lg); background: var(--bg-surface); border: 1px solid var(--border); border-top-color: var(--border-hi); box-shadow: var(--shadow-card); display: flex; flex-direction: column; gap: 14px; position: relative; }
+.dk-lookup { flex: 0 1 380px; min-width: 0; margin-top: 0; padding: 16px; border-radius: var(--r-lg); background: var(--bg-surface); border: 1px solid var(--border); border-top-color: var(--border-hi); box-shadow: var(--shadow-card); display: flex; flex-direction: column; gap: 14px; position: relative; }
 .dk-acc { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .dk-acc li { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: var(--r-md); background: var(--bg-elevated); border: 1px solid var(--border); border-top-color: var(--border-hi); }
 .dk-acc-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -177,7 +177,7 @@
 .dk-copy code { font: 500 13px/1 var(--font-mono); color: var(--text-3); overflow-wrap: anywhere; }
 
 /* Status bar */
-.dk-status-bar { position: sticky; bottom: 0; z-index: 10; min-height: 36px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 16px; background: var(--bg-surface); border-top: 1px solid var(--border); font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.dk-status-bar { position: sticky; bottom: 0; z-index: 10; min-height: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px var(--dk-pad); background: var(--bg-surface); border-top: 1px solid var(--border); font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .dk-status-bar b { font-weight: 400; color: var(--text); }
 .dk-sq { width: 4px; height: 4px; background: var(--border-strong); flex: 0 0 auto; }
 .dk-saved { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
@@ -270,3 +270,58 @@
 .dk-tdlg-checks { display: flex; flex-wrap: wrap; gap: 2px 24px; margin-top: 6px; }
 @media (max-width: 560px) { .dk-tdlg-row, .dk-tdlg-row--3 { grid-template-columns: minmax(0, 1fr); } }
 .dd-dialog:has(.dk-tdlg) { max-height: calc(100vh - 24px); overflow-y: auto; }
+
+/* Team enroll, Open Dueling points, member lines */
+.dk-pane { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1 1 auto; }
+.dk-split { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; min-height: 0; flex: 1 1 auto; }
+.dk-split-main { flex: 999 1 560px; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.dk-scroll { min-height: 0; }
+.dk-team-form { display: flex; flex-direction: column; gap: 8px; }
+.dk-team-slots { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
+.dk-team-slots > .dk-team-name { flex: 0 1 240px; }
+.dk-team-slots > .dk-team-slot { flex: 0 1 230px; }
+.dk-team-pick { display: flex; gap: 6px; align-items: center; }
+.dk-team-pick > select, .dk-team-pick > .dd-select { flex: 1 1 auto; min-width: 0; }
+.dk-plist > .dk-trow { grid-template-columns: minmax(0, 1fr) 160px; padding: 0 12px 0 0; gap: 12px; min-height: 48px; }
+.dk-plist > .dk-trow[data-pts="true"] { grid-template-columns: minmax(0, 1fr) 160px 150px; }
+.dk-plist > .dk-trow[data-selected="true"] { transform: translateY(-2px); box-shadow: var(--shadow-card); border-color: var(--violet-2); }
+.dk-th[data-pts] { grid-template-columns: minmax(0, 1fr) 160px; padding: 0 12px 4px 14px; }
+.dk-th[data-pts="true"] { grid-template-columns: minmax(0, 1fr) 160px 150px; }
+.dk-trow-main { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 6px 0 6px 14px; background: transparent; border: 0; color: var(--text); text-align: left; cursor: pointer; font: inherit; min-width: 0; }
+.dk-team-title { font: 600 15px/1.2 var(--font-body); }
+.dk-team-members { display: flex; flex-wrap: wrap; gap: 2px 18px; font-size: 13px; color: var(--text-2); }
+.dk-members { display: block; font-size: 12px; line-height: 1.3; color: var(--text-2); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-tnum[data-multi="true"] { font-size: 15px; }
+.dk-prow[data-pts="true"], .dk-ph[data-pts="true"] { grid-template-columns: minmax(0, 1.3fr) 150px minmax(0, 1fr) 160px 150px; }
+.dk-prow[data-pts="true"] > .dk-prow-main { grid-column: 1 / 4; }
+.dk-srow[data-pts="true"], .dk-sh[data-pts="true"] { grid-template-columns: 56px minmax(0, 1fr) 72px 88px 80px 80px 150px; }
+.dk-pts { display: inline-flex; align-items: center; gap: 6px; justify-self: end; }
+.dk-pts .dd-btn { min-width: 32px; padding: 0 8px; }
+.dk-pts-val { min-width: 34px; text-align: center; font: 600 16px/1 var(--font-body); }
+
+/* Recent log entries */
+.dk-log { display: flex; flex-direction: column; max-height: 52vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-sm); }
+.dk-log-row { display: grid; grid-template-columns: 170px minmax(0, 200px) minmax(0, 1fr); gap: 12px; padding: 6px 10px; font-size: 13.5px; border-bottom: 1px solid var(--border); }
+.dk-log-row:last-child { border-bottom: 0; }
+.dk-log-head { position: sticky; top: 0; background: var(--bg-elevated); color: var(--text-2); }
+.dk-log-row span { min-width: 0; overflow-wrap: anywhere; }
+
+/* Fit the window like the old desktop program: panels fill the height and the lists scroll inside. */
+@media (min-width: 900px) and (min-height: 600px) {
+  .dk { height: 100vh; min-height: 0; }
+  .dk > :not(.dk-main) { flex-shrink: 0; }
+  .dk-sheet > :not(.dk-sec[role="tabpanel"]) { flex-shrink: 0; }
+  .dk-panel-tabs { flex: 0 0 auto; }
+  .dk-main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .dk-sheet { flex: 1 1 auto; min-height: 0; }
+  .dk-sheet > .dk-sec[role="tabpanel"] { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .dk-pane { overflow: hidden; }
+  .dk-split { flex-wrap: nowrap; overflow: hidden; align-items: stretch; }
+  .dk-split-main { flex: 1 1 0; }
+  .dk-split-main > .dk-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: auto; }
+  .dk-lookup { flex: 0 0 380px; overflow: hidden; display: flex; flex-direction: column; }
+  .dk-lookup > .dk-scroll { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+}
+
+
+.dk-team-members > span { display: inline-flex; align-items: center; gap: 6px; }
