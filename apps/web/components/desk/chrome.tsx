@@ -112,7 +112,7 @@ export function Binder({ code, view, setView, nav }: { code: string; view: "all"
       const here = t.code === code;
       return <div key={t.code} className="dd-tab dk-tab" data-code={t.code} data-current={here && view === "event" ? "" : undefined}
         onAuxClick={e => { if (e.button === 1) { e.preventDefault(); nav.close(t.code); } }}>
-        <a className="dk-tab-link" href={`/e/${encodeURIComponent(t.code)}/desk`} aria-current={here && view === "event" ? "page" : undefined} aria-busy={nav.pending === t.code || undefined}
+        <a className="dk-tab-link" title={t.name} href={`/e/${encodeURIComponent(t.code)}/desk`} aria-current={here && view === "event" ? "page" : undefined} aria-busy={nav.pending === t.code || undefined}
           onClick={e => {
             if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
             e.preventDefault();
