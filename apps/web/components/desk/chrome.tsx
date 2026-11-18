@@ -71,7 +71,7 @@ const GROUPS: { name: string; tiles: Tile[] }[] = [
   { name: "Pair", tiles: [{ action: "pair", label: "Pair Round", key: "F9", tone: "rose" }, { action: "repair", label: "Re-pair Round", key: "F10" }, { action: "cut", label: "Pair Playoffs", key: "F11" }, { action: "cancel", label: "Cancel Round", key: "F12", tone: "rose-outline" }] },
   { name: "Wizards", tiles: [{ action: "print-batch", label: "Batch Print", key: "Ctrl+P" }, { action: "undrop", label: "Undrop Player" }, { action: "change", label: "Change Result" }] },
 ];
-export function Tray({ actions, panel }: { actions: Action[]; panel: Panel }) {
+export function Tray({ actions, panel, team }: { actions: Action[]; panel: Panel; team?: boolean }) {
   const byId = new Map(actions.map(a => [a.id, a] as const));
   const viewOf: Record<string, Panel> = { "go-players": "players", "go-pairings": "pairings", "go-standings": "standings" };
   return <div className="dk-tray" role="toolbar" aria-label="Shortcuts">
@@ -81,7 +81,7 @@ export function Tray({ actions, panel }: { actions: Action[]; panel: Panel }) {
         {g.tiles.map(t => {
           const a = byId.get(t.action);
           if (!a) return null;
-          const label = t.label;
+          const label = team && t.action === "undrop" ? "Undrop Team" : t.label;
           return <button key={t.action} type="button" className={`dk-tile${t.tone ? ` dk-tile--${t.tone}` : ""}`} aria-disabled={!a.enabled || undefined}
             aria-pressed={viewOf[t.action] ? viewOf[t.action] === panel : undefined} title={!a.enabled ? a.reason : t.action === "pair" ? a.label : undefined}
             aria-keyshortcuts={t.key} onClick={() => { if (a.enabled) a.run(); }}>

@@ -42,6 +42,7 @@ export function Landing() {
         const data = meSchema.parse(await (await fetch("/api/me")).json());
         if (!alive) return;
         setMe(data);
+        if (data.user && data.canCreate && params.has("new")) { setCreating(true); params.delete("new"); window.history.replaceState(null, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`); }
         if (data.user) {
           const list = eventsSchema.parse(await (await fetch("/api/events")).json()).events;
           if (alive) setEvents(list);

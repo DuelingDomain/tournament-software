@@ -38,7 +38,7 @@ export function StandingsPanel({ desk, role, send, notify, includeDropped, setIn
           {last === 0 && <option value={0}>No rounds yet</option>}
         </Select>
       </Field>
-      <Checkbox label="Include Dropped Players" checked={includeDropped} onChange={e => setIncludeDropped(e.target.checked)} />
+      <Checkbox label={team ? "Include Dropped Teams" : "Include Dropped Players"} checked={includeDropped} onChange={e => setIncludeDropped(e.target.checked)} />
       <span className="dd-meta" style={{ marginLeft: "auto" }}>{partial ? "Round in progress: standings include only reported matches." : state.settings.tiebreak === "floor33" ? "Tiebreaks: opponent win % floored at 33.3%." : "Tiebreaks: legacy opponent win %."}</span>
     </div>
     <div className="dd-scroll-x"><div className="dk-table" style={{ "--w": open ? "760px" : "640px" } as React.CSSProperties}>

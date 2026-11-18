@@ -79,7 +79,7 @@ export function Desk({ code }: { code: string }) {
     go, open: setDialog, confirm: setConfirm,
     print: (k: PrintKind) => { window.open(`/e/${encodeURIComponent(code)}/print/${k === "pairings-by-player" ? "pairings?by=player" : k}`, "_blank", "noopener"); },
     download: (k: ExportKind) => { void downloadExport(code, k, notify); },
-    importFile: setImportKind, pair: () => void doPair(), palette: () => setPalette(true), home: () => { window.location.assign("/"); },
+    importFile: setImportKind, pair: () => void doPair(), palette: () => setPalette(true), home: () => { window.location.assign("/"); }, newTournament: () => { window.location.assign("/?new=1"); },
     dummyResults: () => { void (async () => {
       const r = await postDummy(code, desk, { action: "results" });
       if (!r.ok) { if (r.desk) replaceDesk(r.desk); notify(r.message, true); return; }
@@ -136,7 +136,7 @@ export function Desk({ code }: { code: string }) {
 
   return <div className="dk">
     <MenuBar actions={actions} onPalette={() => setPalette(true)} brandHref="/" />
-    <Tray actions={actions} panel={active} />
+    <Tray actions={actions} panel={active} team={isTeamEvent(desk.state)} />
     <Binder code={code} desk={desk} view={view} setView={setView} />
     <main className="dk-main" id="main">
       <div className="dk-sheet">

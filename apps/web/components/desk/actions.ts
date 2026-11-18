@@ -19,7 +19,7 @@ export interface Action {
 export interface Handlers {
   go: (panel: Panel) => void; open: (dialog: DialogKind) => void; confirm: (kind: ConfirmKind) => void;
   print: (kind: PrintKind) => void; download: (kind: ExportKind) => void; importFile: (kind: "tournament" | "players" | "team-players") => void;
-  pair: () => void; palette: () => void; home: () => void; dummyResults: () => void;
+  pair: () => void; palette: () => void; home: () => void; newTournament: () => void; dummyResults: () => void;
 }
 
 /** Everything the F9 button needs: label, whether it can run now, and a one-line why when it cannot. */
@@ -70,15 +70,15 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
   const playoffRounds = rounds.some(r => r.stage === "playoff");
   const noPlayers = state.players.length === 0 ? "No players yet." : undefined;
   const noCompetitors = all.length === 0 ? (team ? "No teams yet." : "No players yet.") : undefined;
-  const teamOnly = team ? undefined : "This tournament is not a team event.";
   const list: Action[] = [
     // File
+    a("new", "New Tournament…", "File", h.newTournament, { keys: "Ctrl+N" }),
     a("open", "Open Tournament…", "File", () => h.importFile("tournament"), { keys: "Ctrl+O", reason: reason("UpdateSettings") }),
     a("home", "Close Tournament", "File", h.home),
     a("log", "Show Recent Log Entries…", "File", () => h.open("log")),
     a("save", "Save Tournament", "File", () => h.download("tournament"), { keys: "Ctrl+S", separatorBefore: true }),
     a("import-players", "Import Players (AllPlayers XML)…", "File", () => h.importFile("players"), { reason: reason("AddPlayers", state.phase !== "registration" && "Players import during registration only.") }),
-    a("import-team-players", "Import Team Player List…", "File", () => h.importFile("team-players"), { reason: reason("AddPlayers", team ? "Team player lists import into a tournament with individual players." : state.phase !== "registration" && "Players import during registration only.") }),
+    a("import-team-players", "Enroll Team Player List into Player Event", "File", () => h.importFile("team-players"), { reason: reason("AddPlayers", team ? "Team player lists import into a tournament with individual players." : state.phase !== "registration" && "Players import during registration only.") }),
     a("export-players", "Export Players (XML)", "File", () => h.download("players-xml"), { separatorBefore: true }),
     a("export-players-csv", "Export Players (CSV)", "File", () => h.download("players.csv")),
     a("export-standings-csv", "Export Standings (CSV)", "File", () => h.download("standings.csv")),
@@ -120,9 +120,9 @@ export function buildActions(desk: DeskView, role: StaffRole, h: Handlers): Acti
     a("cancel", "Cancel Round", "Pairings", () => h.confirm("cancel"), { keys: "F12", reason: reason("CancelRound", !hasRounds && "Nothing to cancel.") }),
     a("change", "Change Match Result Wizard…", "Pairings", () => h.open("change"), { reason: reason("EnterResult", !hasRounds && "Pair a round first.") }),
     a("integrity", "Verify Pairings…", "Pairings", () => h.open("integrity")),
-    a("print-pairings", team ? "Print Pairings (by team)" : "Print Pairings (by player)", "Pairings", () => h.print("pairings-by-player"), { keys: "F5", separatorBefore: true, reason: hasRounds ? undefined : "Pair a round first." }),
-    a("print-pairings-table", "Print Pairings (by table)", "Pairings", () => h.print("pairings"), { reason: hasRounds ? undefined : "Pair a round first." }),
-    a("print-pairings-team", "Print Pairings by Team", "Pairings", () => h.print("pairings-by-team"), { reason: teamOnly ?? (hasRounds ? undefined : "Pair a round first.") }),
+    a("print-pairings", "Print Pairings by Player", "Pairings", () => h.print("pairings-by-player"), { keys: "F5", separatorBefore: true, reason: hasRounds ? undefined : "Pair a round first." }),
+    a("print-pairings-table", "Print Pairings by Table", "Pairings", () => h.print("pairings"), { reason: hasRounds ? undefined : "Pair a round first." }),
+    ...(team ? [a("print-pairings-team", "Print Pairings by Team", "Pairings", () => h.print("pairings-by-team"), { reason: hasRounds ? undefined : "Pair a round first." })] : []),
     a("print-unreported", "Print Unreported Matches", "Pairings", () => h.print("unreported"), { reason: hasRounds ? (unreportedAny === 0 ? "Every match has a result." : undefined) : "Pair a round first." }),
     a("print-paired-down", "Print Paired-down Players", "Pairings", () => h.print("paired-down"), { reason: hasRounds ? undefined : "Pair a round first." }),
     a("print-brackets", "Print Brackets", "Pairings", () => h.print("brackets"), { keys: "F6", reason: playoffRounds ? undefined : "No playoff has been paired yet." }),
