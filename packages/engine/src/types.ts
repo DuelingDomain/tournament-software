@@ -67,6 +67,11 @@ export interface Player {
   notes: string | null;
 }
 
+/** Team IDs occupy the reserved numeric team range; member IDs remain person IDs. */
+export interface Team extends Player { memberIds: PlayerId[] }
+export interface TeamEntry { teamId?: string; name: string; memberIds: PlayerId[] }
+export type UndropOption = "bye_loss" | "bye_win" | "next_round" | "swap_with_dropped" | "take_bye";
+
 export interface Match {
   id: MatchId;
   round: number;
@@ -112,6 +117,8 @@ export interface EventState {
   settings: EventSettings;
   phase: EventPhase;
   players: Player[];
+  teams: Team[];
+  playerStructureLocked?: boolean;
   rounds: Round[];
   /** Players who made the cut, in seed order. Empty until CutToPlayoff. */
   cut: PlayerId[];
@@ -153,6 +160,12 @@ export type Command =
   | { type: "SetStaffPosition"; staffId: string; position: StaffPosition }
   | { type: "SetStaffRole"; staffId: string; role: StaffRole }
   | { type: "RemoveStaff"; staffId: string }
+  | { type: "AddTeams"; teams: TeamEntry[] }
+  | { type: "UpdateTeam"; teamId: string; name?: string; memberIds?: PlayerId[]; fixedTable?: number | null }
+  | { type: "RemoveTeam"; teamId: string }
+  | { type: "DropTeam"; teamId: string }
+  | { type: "ReEnrollTeam"; teamId: string }
+  | { type: "UndropTeam"; teamId: string; option: UndropOption; swapWith?: PlayerId }
   // Rounds
   | { type: "PairNextRound" } // Swiss round, first playoff round is via CutToPlayoff, later playoff rounds advance the bracket
   | { type: "RepairRound"; round?: number } // deletes current results and re-pairs; an explicit earlier round is refused
@@ -169,7 +182,7 @@ export type Command =
   | { type: "EnterResult"; matchId: MatchId; result: MatchResult | null; drop?: "loser" | "both" | "none" } // null clears; works on any round (correction); playoff refuses draw/double_loss
   | { type: "ReportResult"; playerId: PlayerId; matchId: MatchId; result: MatchResult } // player self-report: applied when both agree; a disagreement stays pending for staff
   | { type: "DropPlayer"; playerId: PlayerId }
-  | { type: "UndropPlayer"; playerId: PlayerId; option: "bye_loss" | "bye_win" | "next_round" | "swap_with_dropped" | "take_bye"; swapWith?: PlayerId } // legacy 5 options, current round only
+  | { type: "UndropPlayer"; playerId: PlayerId; option: UndropOption; swapWith?: PlayerId } // legacy 5 options, current round only
   // Cut and finish
   | { type: "CutToPlayoff"; size?: number; tieOrder?: PlayerId[] } // tieOrder lets the organizer override the seeded tie-break at the cut line
   | { type: "SwissCut"; mode: "min_points" | "top"; value: number; tieOrder?: PlayerId[]; pairNext?: true } // Day-2 cut; optionally pairs the next round atomically
@@ -191,12 +204,15 @@ export class CommandError extends Error {
 export interface PublicMatchView {
   id: MatchId; table: number | null; p1: string; p2: string | null; // display names (initials if publicNames = initials)
   p1Id: PlayerId; p2Id: PlayerId | null;
+  tables: number[];
+  p1Members: { id: PlayerId; name: string }[]; p2Members: { id: PlayerId; name: string }[];
   result: MatchResult | null; p1Points: number; p2Points: number | null;
 }
 
 export interface PublicView {
   name: string; format: EventFormat; phase: EventPhase; location: string | null; startsAt: string | null;
   plannedRounds: number | null; topCut: number; tiebreak: TiebreakMode;
+  playerStructure: PlayerStructure; style: EventStyle; teamCount: number;
   playerCount: number;
   currentRound: { number: number; stage: "swiss" | "playoff"; startedAt: string | null; endsAt: string | null; matches: PublicMatchView[] } | null;
   standings: Standing[]; // names already public-formatted
@@ -223,7 +239,7 @@ export interface DeskView {
 
 export interface PlayerView {
   event: PublicView;
-  me: { id: PlayerId; name: string; status: Player["status"]; standing: Standing | null };
+  me: { id: PlayerId; name: string; status: Player["status"]; standing: Standing | null; teamId: string | null };
   currentMatch: (PublicMatchView & { myReport: MatchResult | null; opponentReport: MatchResult | null }) | null;
   history: { round: number; opponent: string | null; result: "win" | "loss" | "draw" | "double_loss" | "bye_win" | "bye_loss" | null }[];
 }

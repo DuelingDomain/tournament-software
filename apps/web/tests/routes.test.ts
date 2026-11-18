@@ -609,3 +609,29 @@ describe("tournament configuration", () => {
       command: { type: "SetStaffPosition", staffId: "missing", position: "organizer" } })).status).toBe(403);
   });
 });
+
+describe("team HTTP workflow", () => {
+  it("enrolls teams, versions roster edits and lets members report their team match", async () => {
+    const cookie = await login();
+    const memberCookie = await login(2);
+    const code = await create(cookie, { playerStructure: 2 });
+    const people = await command(code, cookie, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) });
+    expect(people.status).toBe(200);
+    const enrolled = deskSchema.parse(await people.json());
+    const teamResponse = await command(code, cookie, 2, { type: "AddTeams", teams: [
+      { name: "North", memberIds: enrolled.state.players.slice(0, 2).map(p => p.id) },
+      { name: "South", memberIds: enrolled.state.players.slice(2).map(p => p.id) },
+    ] });
+    expect(teamResponse.status).toBe(200);
+    expect((await command(code, cookie, 2, { type: "DropTeam", teamId: "9988000000" })).status).toBe(409);
+    const paired = await command(code, cookie, 3, { type: "PairNextRound" });
+    expect(paired.status).toBe(200);
+    const view = await (await api(`events/${code}/me`, memberCookie)).json() as { view: { currentMatch: { id: string; tables: number[] }; me: { teamId: string } } };
+    expect(view.view.me.teamId).toBe("9988000000");
+    expect(view.view.currentMatch.tables).toEqual([1, 2]);
+    expect((await api(`events/${code}/report`, memberCookie, "POST", { matchId: view.view.currentMatch.id, result: "p1" })).status).toBe(200);
+    expect((await api(`events/${code}/drop`, memberCookie, "POST")).status).toBe(200);
+    const dropped = await (await api(`events/${code}/desk`, cookie)).json() as { state: { teams: { id: string; status: string }[] } };
+    expect(dropped.state.teams.find(t => t.id === "9988000000")?.status).toBe("dropped");
+  });
+});

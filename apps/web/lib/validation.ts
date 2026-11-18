@@ -32,6 +32,8 @@ export const settingsSchema = z.strictObject({
 export const partialSettings = settingsSchema.partial();
 const playerId = { playerId: id };
 const matchId = { matchId: id };
+const undropOption = z.enum(["bye_loss", "bye_win", "next_round", "swap_with_dropped", "take_bye"]);
+const teamEntry = z.strictObject({ teamId: id.optional(), name, memberIds: z.array(id).min(2).max(5) });
 export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("UpdateSettings"), settings: partialSettings, staff: z.array(staffSchema).max(100).optional() }),
   z.strictObject({ type: z.literal("AddPlayers"), players: z.array(z.strictObject({ userId, name, memberId: memberId.optional() })).min(1).max(500) }),
@@ -44,6 +46,12 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("SetStaffPosition"), staffId: id, position }),
   z.strictObject({ type: z.literal("SetStaffRole"), staffId: id, role }),
   z.strictObject({ type: z.literal("RemoveStaff"), staffId: id }),
+  z.strictObject({ type: z.literal("AddTeams"), teams: z.array(teamEntry).min(1).max(500) }),
+  z.strictObject({ type: z.literal("UpdateTeam"), teamId: id, name: name.optional(), memberIds: z.array(id).min(2).max(5).optional(), fixedTable: z.number().int().positive().nullable().optional() }),
+  z.strictObject({ type: z.literal("RemoveTeam"), teamId: id }),
+  z.strictObject({ type: z.literal("DropTeam"), teamId: id }),
+  z.strictObject({ type: z.literal("ReEnrollTeam"), teamId: id }),
+  z.strictObject({ type: z.literal("UndropTeam"), teamId: id, option: undropOption, swapWith: id.optional() }),
   z.strictObject({ type: z.literal("PairNextRound") }),
   z.strictObject({ type: z.literal("RepairRound"), round: z.number().int().positive().optional() }),
   z.strictObject({ type: z.literal("CancelRound") }),
@@ -58,7 +66,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("EnterResult"), ...matchId, result: result.nullable(), drop: z.enum(["loser", "both", "none"]).optional() }),
   z.strictObject({ type: z.literal("ReportResult"), ...playerId, ...matchId, result }),
   z.strictObject({ type: z.literal("DropPlayer"), ...playerId }),
-  z.strictObject({ type: z.literal("UndropPlayer"), ...playerId, option: z.enum(["bye_loss", "bye_win", "next_round", "swap_with_dropped", "take_bye"]), swapWith: id.optional() }),
+  z.strictObject({ type: z.literal("UndropPlayer"), ...playerId, option: undropOption, swapWith: id.optional() }),
   z.strictObject({ type: z.literal("CutToPlayoff"), size: z.number().int().min(2).max(64).optional(), tieOrder: z.array(id).max(10000).optional() }),
   z.strictObject({ type: z.literal("SwissCut"), mode: z.enum(["min_points", "top"]), value: z.number().int().nonnegative(), tieOrder: z.array(id).max(10000).optional(), pairNext: z.literal(true).optional() }),
   z.strictObject({ type: z.literal("UndoSwissCut") }),

@@ -1,3 +1,4 @@
+import { competitors, teamSize } from "./competitors.js";
 import type { EventState, Match, Standing } from "./types.js";
 
 export function matchPoints(result: Match["result"]): [number, number] {
@@ -19,7 +20,7 @@ interface RecordStats {
 }
 
 function swissStats(state: EventState, through: number): Map<string, RecordStats> {
-  const stats = new Map<string, RecordStats>(state.players.map(p => [p.id, { points: 0, played: 0, wins: 0, losses: 0, draws: 0, opponents: [] }]));
+  const stats = new Map<string, RecordStats>(competitors(state).map(p => [p.id, { points: 0, played: 0, wins: 0, losses: 0, draws: 0, opponents: [] }]));
   for (const round of state.rounds) {
     if (round.stage !== "swiss" || round.number > through) continue;
     for (const m of round.matches) {
@@ -101,7 +102,7 @@ export function standings(state: EventState): Standing[] {
       : (s.opponents.length ? floored / s.opponents.length : 0));
   }
   const finishes = playoffFinishes(state);
-  const rows: Standing[] = state.players.map(p => {
+  const rows: Standing[] = competitors(state).map(p => {
     const s = stats.get(p.id);
     const record = full.get(p.id);
     let numerator = 0, denominator = 0, floored = 0;

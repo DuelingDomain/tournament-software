@@ -39,6 +39,7 @@ function decode(row: EventRow): EventRecord {
   const parsed: unknown = JSON.parse(row.state);
   z.object({ schemaVersion: z.literal(1) }).parse(parsed);
   const state = parsed as EventState;
+  state.teams ??= [];
   state.settings = { ...createEvent({ name: state.settings.name }, { now: state.createdAt, seed: 0, actor: "migration" }).settings, ...state.settings };
   return { code: row.code, ownerUserId: row.owner_user_id, state, version: row.version };
 }

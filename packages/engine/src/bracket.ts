@@ -1,3 +1,4 @@
+import { competitors, teamSize } from "./competitors.js";
 import { CommandError, type EventState, type Round } from "./types.js";
 import { assignTables, makeMatch } from "./pairing.js";
 import { winner } from "./standings.js";
@@ -24,7 +25,7 @@ export function initialBracket(state: EventState, entrants: string[], seed: numb
     if (a === null && b === null) continue;
     matches.push(makeMatch(a ?? b!, a === null ? null : b, number, random, ids));
   }
-  assignTables(matches, state.players, state.settings.startingTable, false);
+  assignTables(matches, competitors(state), state.settings.startingTable, false, teamSize(state));
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
 }
 
@@ -41,7 +42,7 @@ export function advanceBracket(state: EventState, seed: number, random: () => nu
     if (a === null && b === null) continue;
     matches.push(makeMatch(a ?? b!, a === null ? null : b, number, random, ids));
   }
-  assignTables(matches, state.players, state.settings.startingTable, false);
+  assignTables(matches, competitors(state), state.settings.startingTable, false, teamSize(state));
   return { number, stage: "playoff", seed, matches, startedAt: null, endsAt: null, warnings: [] };
 }
 
@@ -52,7 +53,7 @@ export function refreshEliminations(state: EventState): void {
     const won = winner(m);
     if (won && m.p2 !== null) eliminated.add(won === m.p1 ? m.p2 : m.p1);
   }
-  for (const p of state.players) if (state.cut.includes(p.id) && p.status !== "dropped") {
+  for (const p of competitors(state)) if (state.cut.includes(p.id) && p.status !== "dropped") {
     p.status = eliminated.has(p.id) ? "cut" : "active";
   }
 }

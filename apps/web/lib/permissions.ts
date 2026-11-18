@@ -17,6 +17,7 @@ const permissions: Record<Command["type"], readonly StaffRole[]> = {
   UpdateSettings: roundAndPlayer, AddPlayers: [...roundAndPlayer, "staff"], UpdatePlayer: roundAndPlayer,
   LinkPlayerAccount: roundAndPlayer, ReEnroll: roundAndPlayer, RemovePlayer: roundAndPlayer,
   SetCheckedIn: [...roundAndPlayer, "staff"], AddStaff: staffAdmin, SetStaffRole: staffAdmin, SetStaffPosition: staffAdmin, RemoveStaff: staffAdmin,
+  AddTeams: roundAndPlayer, UpdateTeam: roundAndPlayer, RemoveTeam: roundAndPlayer, ReEnrollTeam: roundAndPlayer, UndropTeam: roundAndPlayer, DropTeam: [...roundAndPlayer, "judge"],
   PairNextRound: roundAndPlayer, RepairRound: roundAndPlayer, CancelRound: roundAndPlayer, SwapPlayers: roundAndPlayer,
   SetPairing: roundAndPlayer, SplitMatch: roundAndPlayer, CreateMatch: roundAndPlayer, AddByeMatch: roundAndPlayer,
   StartTimer: roundAndPlayer, AdjustTimer: roundAndPlayer, ExtendMatch: [...roundAndPlayer, "judge"],

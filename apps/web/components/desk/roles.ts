@@ -9,6 +9,7 @@ const PERMISSIONS: Record<Command["type"], readonly StaffRole[]> = {
   UpdateSettings: manage, AddPlayers: [...manage, "staff"], UpdatePlayer: manage, LinkPlayerAccount: manage,
   ReEnroll: manage, RemovePlayer: manage, SetCheckedIn: [...manage, "staff"],
   AddStaff: staffAdmin, SetStaffRole: staffAdmin, SetStaffPosition: staffAdmin, RemoveStaff: staffAdmin,
+  AddTeams: manage, UpdateTeam: manage, RemoveTeam: manage, ReEnrollTeam: manage, UndropTeam: manage, DropTeam: [...manage, "judge"],
   PairNextRound: manage, RepairRound: manage, CancelRound: manage, SwapPlayers: manage, SetPairing: manage,
   SplitMatch: manage, CreateMatch: manage, AddByeMatch: manage, StartTimer: manage, AdjustTimer: manage,
   ExtendMatch: [...manage, "judge"], EnterResult: [...manage, "judge"], ReportResult: manage,

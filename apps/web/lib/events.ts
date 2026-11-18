@@ -1,5 +1,5 @@
 import { randomBytes, randomInt } from "node:crypto";
-import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole, type StaffAssignment } from "@dd-tournament/engine";
+import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole, type StaffAssignment, competitors } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { isTemporaryMemberId, normalizeMemberId } from "@dd-tournament/engine";
 import { lookupAccounts, searchAccounts } from "./bridge";
@@ -13,7 +13,7 @@ export function context(user: TournamentUser): CommandContext {
   return { now: new Date().toISOString(), seed: randomInt(0, 2 ** 48 - 1), actor: String(user.id) };
 }
 export function deskView(event: EventRecord, role: StaffRole): DeskView {
-  return { state: event.state, standings: standings(event.state), suggestedRounds: suggestRounds(event.state.players.length),
+  return { state: event.state, standings: standings(event.state), suggestedRounds: suggestRounds(competitors(event.state).length),
     version: event.version, integrity: integrity(event.state), viewerRole: role,
     links: { public: `/e/${event.code}`, desk: `/e/${event.code}/desk`, join: `/e/${event.code}/me` },
     accounts: Object.fromEntries(event.state.players.map(player => {

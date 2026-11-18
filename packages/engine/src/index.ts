@@ -9,5 +9,6 @@ export * from "./member-id.js";
 export { DEFAULT_INFRACTIONS } from "./defaults.js";
 export * from "./types.js";
 export * from "./staff.js";
+export * from "./competitors.js";
 
 export const engine: ScorekeeperEngine = { createEvent, applyCommand, standings, suggestRounds, publicView, playerView, integrity };
