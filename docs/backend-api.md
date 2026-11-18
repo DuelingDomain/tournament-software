@@ -100,3 +100,7 @@ Finalization requires every result and active pairing, and replacement of tempor
 - Existing CSV endpoints remain. Team players/standings expand per person; matches expand per playing position. Two-member matches cross-pair the ordered rosters. Team CSV columns include team IDs and account user IDs; standings additionally includes openDuelingPoints. Individual match columns remain unchanged.
 
 Legacy files do not encode account IDs or timezone offsets. Dates use the existing UTC interpretation and minute precision. Automated synthetic round-trips establish representable data behavior; compatibility with an original desktop installation has not been executed.
+
+## Event list
+
+`GET /api/events` returns `{ events: EventListItem[] }` for events the signed-in account staffs or has entered, newest created first. Each item has `{ code, name, phase, role, joined, startsAt, createdAt, format, playerStructure, playerCount, teamCount, round, plannedRounds }`. `createdAt` is the creation time; `round` is the latest round number or null before pairing; `plannedRounds` is the planned Swiss round count, or the suggested count when none is set; `playerCount` counts enrolled people and `teamCount` counts teams (0 for individual events). The last seven fields are additions; earlier clients that ignore them keep working.

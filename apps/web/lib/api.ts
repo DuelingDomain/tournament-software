@@ -1,5 +1,5 @@
 import { timingSafeEqual, createHash } from "node:crypto";
-import { publicView, printData } from "@dd-tournament/engine";
+import { competitors, publicView, printData, suggestRounds } from "@dd-tournament/engine";
 import { z } from "zod";
 import { currentUser, signedIn } from "./auth";
 import { lookupAccounts, searchAccounts, setMemberId } from "./bridge";
@@ -57,7 +57,15 @@ export function handleApi(request: Request, path: string[]) {
       if (method === "GET") return json({ events: eventRecords().flatMap(event => {
         const role = viewerRole(event, user.id);
         const joined = event.state.players.some(p => p.userId === user.id);
-        return role || joined ? [{ code: event.code, name: event.state.settings.name, phase: event.state.phase, role, joined, startsAt: event.state.settings.startsAt }] : [];
+        if (!role && !joined) return [];
+        const { settings, rounds, players, teams } = event.state;
+        // The listing needs no standings or match data: round progress and counts come straight from the stored state.
+        return [{
+          code: event.code, name: settings.name, phase: event.state.phase, role, joined, startsAt: settings.startsAt,
+          createdAt: event.state.createdAt, format: settings.format, playerStructure: settings.playerStructure,
+          playerCount: players.length, teamCount: teams.length, round: rounds.at(-1)?.number ?? null,
+          plannedRounds: settings.plannedRounds ?? suggestRounds(competitors(event.state).length),
+        }];
       }) });
       if (method === "POST") {
         const data = await body(request, z.strictObject({ name: z.string().trim().min(1).max(200), createCode: z.string(), settings: partialSettings.optional(), staff: z.array(staffSchema).max(100).optional() }));
