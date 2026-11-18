@@ -151,47 +151,64 @@ function addManualMatch(state: EventState, round: Round, match: Match, table?: n
   round.matches.push(match);
 }
 
-/** Insert an unseated returnee into score groups while preserving played matches. */
-function repairUndrop(state: EventState, round: Round, returning: Player, random: () => number, ids: Set<string>): void {
-  const field = competitors(state);
+function convertBye(state: EventState, round: Round, match: Match, opponent: string): void {
+  const index = round.matches.indexOf(match);
+  const paired = { ...match, p2: opponent, result: null, reports: [] };
+  if (match.table === null) {
+    round.matches.splice(index, 1);
+    addManualMatch(state, round, paired);
+    round.matches.pop();
+  }
+  round.matches.splice(index, match.table === null ? 0 : 1, paired);
+}
 
-  // Current results (including automatic byes) must not change the pairing groups.
+function repairUndrop(state: EventState, round: Round, returning: Player, random: () => number, ids: Set<string>): void {
   const points = new Map(standings({ ...state, rounds: state.rounds.filter(r => r.number < round.number) })
-    .map(s => [s.playerId, s.matchPoints]));
-  const score = (id: string) => points.get(id) ?? 0;
-  const byId = new Map(field.map(p => [p.id, p]));
-  const available = round.matches.filter(m => m.p2 !== null && m.result === null && m.reports.length === 0
-    && byId.get(m.p1)?.status === "active" && byId.get(m.p2)?.status === "active");
-  const group = (m: Match) => Math.max(score(m.p1), score(m.p2!));
-  available.sort((a, b) => group(b) - group(a) || (a.table ?? Infinity) - (b.table ?? Infinity));
-  let carried = returning;
-  for (const match of available) {
-    if (group(match) > score(carried.id)) continue;
-    // Keep all existing tables, including team table blocks and fixed seats.
-    if (carried.fixedTable !== null && carried.fixedTable !== match.table) continue;
-    const fixedA = byId.get(match.p1)!.fixedTable === match.table;
-    const fixedB = byId.get(match.p2!)!.fixedTable === match.table;
-    if (fixedA && fixedB) continue;
-    const a = score(match.p1), b = score(match.p2!);
-    const seat = fixedA ? "p2" : fixedB ? "p1" : a < b || (a === b && random() < 0.5) ? "p1" : "p2";
-    const displaced = byId.get(match[seat]!)!;
-    match[seat] = carried.id;
+    .map(row => [row.playerId, row.matchPoints]));
+  const score = (id: string | null) => id === null ? 0 : points.get(id) ?? 0;
+  const group = (m: Match) => Math.max(score(m.p1), score(m.p2));
+  const total = (m: Match) => score(m.p1) + score(m.p2);
+  const eligible = round.matches.filter(m => group(m) <= score(returning.id) && (m.result !== null || m.reports.length === 0));
+  const selected = eligible.filter(m => m.p2 === null || score(m.p1) !== score(m.p2));
+  const represented = new Set(selected.map(group));
+  const fallback = new Map<number, Match[]>();
+  for (const match of eligible) {
+    const points = group(match);
+    if (represented.has(points)) continue;
+    const choices = fallback.get(points) ?? [];
+    choices.push(match);
+    fallback.set(points, choices);
+  }
+  for (const [, choices] of [...fallback].sort(([a], [b]) => a - b)) {
+    selected.push(choices[Math.floor(random() * (choices.length - 1))]);
+  }
+  selected.sort((a, b) => total(b) - total(a));
+
+  const roster = new Map(competitors(state).map((p, index) => [p.id, { index, memberId: p.memberId }]));
+  let carried: string | null = returning.id;
+  for (const match of selected) {
+    if (match.p2 === null) {
+      if (carried !== null) convertBye(state, round, match, carried);
+      carried = null;
+      continue;
+    }
+    const a = roster.get(match.p1)!;
+    const b = roster.get(match.p2)!;
+    const firstById = a.memberId !== null && b.memberId !== null
+      ? Number(a.memberId) <= Number(b.memberId) : a.index < b.index;
+    const replaceFirst = score(match.p1) < score(match.p2) || (score(match.p1) === score(match.p2) && firstById);
+    const displaced = replaceFirst ? match.p1 : match.p2;
+    if (carried === null) {
+      match.p1 = replaceFirst ? match.p2 : match.p1;
+      match.p2 = null;
+      match.table = null;
+    } else if (replaceFirst) match.p1 = carried;
+    else match.p2 = carried;
+    match.result = null;
+    match.reports = [];
     carried = displaced;
   }
-  // End at an eligible bye recipient, including an automatically scored bye win.
-  for (const match of round.matches) {
-    if (match.p2 !== null || (match.result !== null && match.result !== "bye_win") || match.reports.length > 0
-      || byId.get(match.p1)?.status !== "active" || score(match.p1) > score(carried.id)) continue;
-    const fixed = byId.get(match.p1)!.fixedTable;
-    if (fixed !== null && carried.fixedTable !== null && fixed !== carried.fixedTable) continue;
-    const table = fixed ?? carried.fixedTable;
-    const width = teamSize(state);
-    if (table !== null && round.matches.some(m => m.table !== null && table < m.table + width && m.table < table + width)) continue;
-    round.matches = round.matches.filter(m => m.id !== match.id);
-    addManualMatch(state, round, { ...match, p2: carried.id, result: null });
-    return;
-  }
-  addManualMatch(state, round, makeMatch(carried.id, null, round.number, random, ids));
+  if (carried !== null) round.matches.push(makeMatch(carried, null, round.number, random, ids));
 }
 
 function orderAtCut(state: EventState, size: number, tieOrder: string[] | undefined, random: () => number) {
@@ -541,21 +558,23 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
       requireCondition(state.phase !== "playoff", "PLAYOFF_ORDER_LOCKED", "Dropped playoff players cannot re-enter the bracket.");
       if (command.option !== "next_round") {
         const round = currentRound(state);
-        requireCondition(!round.matches.some(m => m.p1 === p.id || m.p2 === p.id), "PLAYER_ALREADY_PAIRED", "This player already has a current-round match. Use next round or correct that result.");
+        const alreadyPaired = round.matches.some(m => m.p1 === p.id || m.p2 === p.id);
+        requireCondition(!alreadyPaired || command.option === "bye_win" || command.option === "bye_loss",
+          "PLAYER_ALREADY_PAIRED", "This player already has a current-round match. Use next round or correct that result.");
         if (command.option === "repair") {
           repairUndrop(state, round, p, random, ids);
         } else if (command.option === "swap_previous_opponent") {
-          const former = [...state.rounds].reverse().filter(r => r !== round).flatMap(r => r.matches).find(m => m.p2 !== null && (m.p1 === p.id || m.p2 === p.id));
+          const former = state.rounds.find(r => r.number === round.number - 1)?.matches.find(m => m.p2 !== null && (m.p1 === p.id || m.p2 === p.id));
           requireCondition(former, "NO_FORMER_OPPONENT", "The returning player has no previous opponent.");
           const other = player(state, former.p1 === p.id ? former.p2! : former.p1);
           requireCondition(other.status === "active", "INVALID_SWAP", "The former opponent must still be active.");
           const match = round.matches.find(m => m.p1 === other.id || m.p2 === other.id);
           requireCondition(match, "PLAYER_NOT_PAIRED", "The former opponent has no current-round match.");
-          editable(match);
-          drop(state, other.id);
+          other.status = "dropped";
+          other.droppedAfterRound = round.number - 1;
           if (match.p1 === other.id) match.p1 = p.id; else match.p2 = p.id;
+          match.result = null;
           match.reports = [];
-          assignTables(round.matches, competitors(state), state.settings.startingTable, true, teamSize(state));
         } else if (command.option === "swap_with_dropped") {
           const other = player(state, command.swapWith ?? "");
           requireCondition(other.status === "dropped" && other.id !== p.id, "INVALID_SWAP", "Choose another dropped player with an unscored current-round seat.");
@@ -566,11 +585,10 @@ export function applyCommand(input: EventState, command: Command, ctx: CommandCo
           match.reports = [];
           assignTables(round.matches, competitors(state), state.settings.startingTable, true, teamSize(state));
         } else if (command.option === "take_bye") {
-          const bye = round.matches.find(m => m.p2 === null && m.result === "bye_win" && player(state, m.p1).status === "active");
-          requireCondition(bye, "NO_BYE", "There is no active player's bye to take in the current round.");
-          round.matches = round.matches.filter(m => m.id !== bye.id);
-          addManualMatch(state, round, makeMatch(p.id, bye.p1, round.number, random, ids));
-        } else round.matches.push(makeMatch(p.id, null, round.number, random, ids, command.option));
+          const bye = round.matches.find(m => m.p2 === null && m.result === "bye_win");
+          requireCondition(bye, "NO_BYE", "There is no awarded bye to take in the current round.");
+          convertBye(state, round, bye, p.id);
+        } else if (!alreadyPaired) round.matches.push(makeMatch(p.id, null, round.number, random, ids, command.option));
       }
       p.status = "active"; p.droppedAfterRound = null;
       break;

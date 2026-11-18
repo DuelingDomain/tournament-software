@@ -87,15 +87,14 @@ describe("re-entry and manual seats", () => {
     expect(() => run(scored, { type: "UndropPlayer", playerId: returning.id, option: "swap_with_dropped", swapWith: a.id })).toThrow(expect.objectContaining({ code: "RESULT_ALREADY_ENTERED" }));
   });
 
-  it("replaces a current bye with a new two-player table and removes its automatic points", () => {
+  it("converts a current bye in place and removes its automatic points", () => {
     let s = event(4);
     const p = s.players[0];
     s = run(s, { type: "DropPlayer", playerId: p.id });
     s = run(s, { type: "PairNextRound" });
     const bye = s.rounds[0].matches.find(m => m.p2 === null)!;
     s = run(s, { type: "UndropPlayer", playerId: p.id, option: "take_bye" });
-    expect(s.rounds[0].matches.some(m => m.id === bye.id)).toBe(false);
-    expect(s.rounds[0].matches.at(-1)).toMatchObject({ p1: p.id, p2: bye.p1, result: null, table: 2 });
+    expect(s.rounds[0].matches.find(m => m.id === bye.id)).toMatchObject({ p1: bye.p1, p2: p.id, result: null, table: 2 });
     expect(standings(s).every(r => r.matchPoints === 0)).toBe(true);
   });
 
