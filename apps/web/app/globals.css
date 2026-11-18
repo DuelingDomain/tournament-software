@@ -418,6 +418,7 @@ html { scrollbar-color: var(--border-hi) transparent; }
 .ev-name:hover { color: var(--violet-2); }
 .ev-c-n { text-align: right; font-variant-numeric: tabular-nums; }
 .ev-hint { color: var(--text-2); }
+.ev-due { color: var(--violet-2); }
 .ev-actions { display: inline-flex; gap: 6px; justify-content: flex-end; }
 .ev-c-act { text-align: right; }
 .ev-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 48px 16px; height: 100%; text-align: center; }
@@ -438,6 +439,7 @@ html { scrollbar-color: var(--border-hi) transparent; }
   .ev-row .ev-c-name { order: 0; flex: 1 0 100%; width: auto; max-width: none; font-size: 15px; }
   .ev-row .ev-c-act { order: 9; flex: 1 0 100%; text-align: left; padding-top: 4px; }
   .ev-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .ev-pager .dd-btn { min-height: 44px; }
   .ev-table td.ev-c-n { text-align: left; }
   .ev-table td.ev-c-n::after { content: " players"; }
   .ev-row:hover td { background: none; }
