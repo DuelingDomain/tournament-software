@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { DeskView, EventSettings, Location, Penalty, StaffAssignment, StaffPosition, StaffRole } from "@dd-tournament/engine";
-import { Button, Checkbox, Dialog, Field, Input, Select } from "../ui";
+import { Button, Checkbox, Dialog, Field, Input, Select, DatePicker, TimePicker } from "../ui";
 import "./desk.css";
 import { useAccountSearch, type Account } from "./accounts";
 import { PENALTY_LABEL } from "./helpers";
@@ -128,8 +128,8 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
       <fieldset disabled={!editable} className="dk-tdlg-set">
         <Field label="Name"><Input value={name} onChange={e => setName(e.target.value)} maxLength={200} required autoComplete="off" autoFocus placeholder="Weekly Duel Night #12" /></Field>
         <div className="dk-tdlg-row">
-          <Field label="Date"><Input type="date" value={date} onChange={e => setDate(e.target.value)} /></Field>
-          <Field label="Time"><Input type="time" value={time} onChange={e => setTime(e.target.value)} /></Field>
+          <Field label="Date"><DatePicker value={date} onChange={setDate} /></Field>
+          <Field label="Time"><TimePicker value={time} onChange={setTime} /></Field>
         </div>
         <LocationPicker value={locationId} onChange={setLocationId} onEdited={() => setLocationEdited(true)} disabled={!editable} code={update ? props.desk.links.desk.split("/")[2] ?? null : null} />
         <StaffEditor rows={staff} setRows={setStaff} disabled={!canStaff} viewerRole={role} code={update ? props.desk.links.desk.split("/")[2] ?? null : null} playerIds={playerIds} creatorId={creatorId} />

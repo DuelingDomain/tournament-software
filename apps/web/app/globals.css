@@ -170,6 +170,72 @@ html { scrollbar-color: var(--border-hi) transparent; }
   background: linear-gradient(45deg, transparent 43%, var(--text-2) 43%, var(--text-2) 57%, transparent 57%), linear-gradient(-45deg, transparent 43%, var(--text-2) 43%, var(--text-2) 57%, transparent 57%); }
 .dd-input:disabled, .dd-select:disabled { opacity: 0.55; cursor: not-allowed; }
 .dd-select option, .dd-select optgroup { background: var(--bg-elevated); color: var(--text); }
+/* Autofill keeps the dark field instead of the browser's pale yellow or blue */
+.dd-input:-webkit-autofill, .dd-input:-webkit-autofill:hover, .dd-input:-webkit-autofill:focus { -webkit-text-fill-color: var(--text); caret-color: var(--text); -webkit-box-shadow: 0 0 0 100px var(--bg-deep) inset; transition: background-color 9999s; }
+
+/* Select: the closed field is a button; the open list is .dd-listbox in a popup */
+button.dd-select { display: block; text-align: left; overflow: hidden; }
+.dd-select__label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-select[data-empty="true"] { color: var(--text-2); }
+.dd-select[aria-expanded="true"] { border-color: var(--violet-2); }
+
+/* Popup panel shared by the listbox, the calendar and the time list */
+.dd-pop { position: fixed; inset: auto; margin: 0; padding: 4px; width: max-content; max-width: calc(100vw - 16px); overflow: auto; z-index: 1000;
+  border: 1px solid var(--border-hi); border-radius: var(--r-md); background: var(--bg-elevated); color: var(--text); box-shadow: var(--shadow-card); font: 500 14px/1.25 var(--font-body); }
+.dd-listbox { max-width: min(480px, calc(100vw - 16px)); }
+.dd-listbox__opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; padding: 6px 10px; border-radius: var(--r-sm); cursor: pointer; }
+.dd-listbox__text { min-width: 0; overflow-wrap: anywhere; }
+.dd-listbox__check { flex: 0 0 auto; }
+.dd-listbox__opt[data-active] { background: var(--bg-slip-hover); }
+.dd-listbox__opt[aria-selected="true"] { color: var(--violet-2); background: rgb(124 58 237 / 0.16); }
+.dd-listbox__opt[aria-selected="true"][data-active] { background: rgb(124 58 237 / 0.3); }
+.dd-listbox__opt[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+.dd-listbox__opt[aria-disabled="true"][data-active] { background: transparent; }
+.dd-listbox__group { padding: 8px 10px 4px; font: 600 11px/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+@media (pointer: coarse) { .dd-listbox__opt { min-height: 44px; } }
+
+/* Typed date and time with a button that opens the popup */
+.dd-picker { position: relative; display: block; width: 100%; }
+.dd-picker__input { padding-right: 42px; }
+.dd-picker__btn { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); width: 30px; height: 30px; display: grid; place-items: center; padding: 0;
+  border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-2); cursor: pointer; }
+.dd-picker__btn:hover:not(:disabled) { color: var(--text); background: var(--bg-slip-hover); }
+.dd-picker__btn[aria-expanded="true"] { color: var(--violet-2); }
+.dd-picker__btn:disabled { cursor: not-allowed; }
+.dd-cal { width: 292px; padding: 10px; }
+.dd-cal__head { display: flex; align-items: center; gap: 2px; margin-bottom: 8px; }
+.dd-cal__title { flex: 1 1 auto; text-align: center; font: 600 14px/1 var(--font-body); }
+.dd-cal__nav { width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-3); font: 400 20px/1 var(--font-body); cursor: pointer; }
+.dd-cal__nav:hover { background: var(--bg-slip-hover); color: var(--text); }
+.dd-cal__grid { display: flex; flex-direction: column; gap: 2px; }
+.dd-cal__row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.dd-cal__dow { padding: 4px 0 6px; text-align: center; font: 600 11px/1 var(--font-body); letter-spacing: 0.04em; color: var(--text-2); }
+.dd-cal__day { height: 34px; padding: 0; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--text); font: 500 14px/1 var(--font-body); cursor: pointer; }
+.dd-cal__day:hover { background: var(--bg-slip-hover); }
+.dd-cal__day[data-out="true"] { color: var(--text-2); opacity: 0.7; }
+.dd-cal__day[aria-current="date"] { border-color: var(--violet-2); }
+.dd-cal__day[aria-selected="true"] { background: var(--violet); border-color: var(--violet-2); color: var(--text); opacity: 1; }
+.dd-cal__foot { display: flex; justify-content: space-between; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+.dd-cal__link { padding: 6px 8px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--violet-2); font: 600 13px/1 var(--font-body); cursor: pointer; }
+.dd-cal__link:hover:not(:disabled) { background: var(--bg-slip-hover); color: var(--text); }
+.dd-cal__link:disabled { opacity: 0.4; cursor: not-allowed; }
+.dd-timepop { padding: 8px; }
+.dd-timepop__cols { display: flex; gap: 8px; }
+.dd-timepop__col { position: relative; display: flex; flex-direction: column; gap: 2px; width: 68px; max-height: 224px; overflow-y: auto; }
+.dd-timepop__opt { flex: 0 0 auto; height: 32px; padding: 0; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--text); font: 500 14px/1 var(--font-body); cursor: pointer; }
+.dd-timepop__opt:focus-visible, .dd-cal__day:focus-visible { outline-offset: -2px; }
+.dd-timepop__opt:hover { background: var(--bg-slip-hover); }
+.dd-timepop__opt[aria-selected="true"] { background: var(--violet); border-color: var(--violet-2); }
+
+/* Number field: typing stays, native spinners are hidden above, small step buttons sit inside the right edge */
+.dd-num { position: relative; display: block; width: 100%; }
+.dd-num__input { padding-right: 36px; }
+.dd-num__steps { position: absolute; top: 4px; right: 4px; bottom: 4px; width: 24px; display: flex; flex-direction: column; gap: 2px; }
+.dd-num__steps button { flex: 1 1 0; min-height: 0; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 3px; background: var(--bg-surface); color: var(--text-2); cursor: pointer; touch-action: manipulation; }
+.dd-num__steps button:hover:not(:disabled) { background: var(--bg-slip-hover); color: var(--text); border-color: var(--border-hi); }
+.dd-num__steps button:active:not(:disabled) { color: var(--violet-2); }
+.dd-num__steps button:disabled { opacity: 0.4; cursor: not-allowed; }
+fieldset:disabled .dd-num__steps button { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
 
 /* File picker: slip-styled drop zone over a visually hidden input */
 .dd-file { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 12px; border-radius: var(--r-md);
