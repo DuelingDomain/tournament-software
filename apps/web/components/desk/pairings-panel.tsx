@@ -152,7 +152,7 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
       if (document.querySelector("dialog[open]")) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest("[role='menu']")) return;
-      const inField = !!target && target !== slotRef.current && (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable);
+      const inField = !!target && target !== slotRef.current && (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.getAttribute("role") === "combobox" || target.isContentEditable);
       if (inField) return;
       const ctrl = e.ctrlKey || e.metaKey;
       if (e.altKey) return;
