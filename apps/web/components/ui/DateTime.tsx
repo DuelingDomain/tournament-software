@@ -6,11 +6,15 @@ import { cx } from "./cx";
 const pad = (n: number) => String(n).padStart(2, "0");
 const isoOf = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
 
-/** Date text as the code expects it (yyyy-mm-dd). Also takes "/" and "." separators and short months or days. */
+/** Date text as the code expects it (yyyy-mm-dd). Also takes yyyy/m/d, m/d/yyyy (slashes) and d.m.yyyy (dots), with short months or days. */
 export function parseDate(text: string): string | null {
-  const m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(text.trim());
-  if (!m) return null;
-  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const t = text.trim();
+  let y: number, mo: number, d: number;
+  const iso = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(t), us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t), eu = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(t);
+  if (iso) { y = Number(iso[1]); mo = Number(iso[2]); d = Number(iso[3]); }
+  else if (us) { mo = Number(us[1]); d = Number(us[2]); y = Number(us[3]); }
+  else if (eu) { d = Number(eu[1]); mo = Number(eu[2]); y = Number(eu[3]); }
+  else return null;
   const date = new Date(y, mo - 1, d);
   return date.getFullYear() === y && date.getMonth() === mo - 1 && date.getDate() === d ? isoOf(y, mo - 1, d) : null;
 }
@@ -69,13 +73,14 @@ interface PickerProps {
 interface PopupApi { value: string; pick: (value: string, keepOpen?: boolean) => void; close: (refocus?: boolean) => void }
 
 /** A text box you can type in, and a button that opens a themed popup. The typed text commits to `value` once it is a full, valid entry. */
-function PickerField({ value, onChange, disabled, id, autoFocus, required, name, className, placeholder, kind, parse, live, shape, popup, ...aria }: PickerProps & {
-  kind: "date" | "time"; parse: (text: string) => string | null; live: (text: string) => string | null; shape: (raw: string, grew: boolean) => string;
+function PickerField({ value, onChange, disabled, id, autoFocus, required, name, className, placeholder, kind, parse, live, shape, popup, hint, ...aria }: PickerProps & {
+  kind: "date" | "time"; hint: string; parse: (text: string) => string | null; live: (text: string) => string | null; shape: (raw: string, grew: boolean) => string;
   popup: (api: PopupApi) => ReactNode;
 }) {
   const [text, setText] = useState(value);
   const sent = useRef(value);
   const [open, setOpen] = useState(false);
+  const [bad, setBad] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const wrap = useRef<HTMLSpanElement>(null);
   const pop = useRef<HTMLDivElement>(null);
@@ -88,41 +93,45 @@ function PickerField({ value, onChange, disabled, id, autoFocus, required, name,
 
   const emit = (next: string) => { if (next !== sent.current) { sent.current = next; onChange(next); } };
   const close = (refocus = false) => { setOpen(false); if (refocus) input.current?.focus(); };
-  const pick = (next: string, keepOpen = false) => { setText(next); emit(next); if (!keepOpen) close(true); };
+  const pick = (next: string, keepOpen = false) => { setText(next); setBad(false); emit(next); if (!keepOpen) close(true); };
 
+  // A press outside closes the popup and finishes the typed entry (the blur was skipped while the popup was open).
+  const settleNow = useRef<() => void>(() => {});
   useEffect(() => {
     if (!open) return;
-    const away = (e: PointerEvent) => { const t = e.target as Node; if (!wrap.current?.contains(t) && !pop.current?.contains(t)) setOpen(false); };
+    const away = (e: PointerEvent) => { const t = e.target as Node; if (!wrap.current?.contains(t) && !pop.current?.contains(t)) { setOpen(false); settleNow.current(); } };
     document.addEventListener("pointerdown", away, true);
     return () => document.removeEventListener("pointerdown", away, true);
   }, [open]);
 
-  const invalid = text.trim() !== "" && parse(text) === null;
+  // Finish the typed entry: a valid one is normalized. Invalid text stays on screen with a hint, and the value is cleared so the form never holds a date that is not shown.
   const settle = () => {
     const ok = parse(text);
-    if (ok !== null) { setText(ok); emit(ok); }
-    else if (text.trim() === "") emit("");
-    else setText(sent.current);
+    if (ok !== null) { setText(ok); emit(ok); setBad(false); }
+    else if (text.trim() === "") { emit(""); setBad(false); }
+    else { emit(""); setBad(true); }
   };
+  settleNow.current = settle;
 
-  return <span ref={wrap} className="dd-picker">
+  return <>
+  <span ref={wrap} className="dd-picker">
     <input ref={input} id={id} type="text" className={cx("dd-input", "dd-picker__input", className)} value={text} placeholder={placeholder} disabled={disabled} required={required}
-      autoComplete="off" spellCheck={false} inputMode="numeric" aria-invalid={invalid && text.length >= 5 ? true : undefined}
+      autoComplete="off" spellCheck={false} inputMode="numeric" aria-invalid={bad ? true : undefined} aria-describedby={bad ? `${uid}-hint` : undefined}
       aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? `${uid}-pop` : undefined} aria-label={aria["aria-label"]}
       onChange={e => {
         const raw = e.target.value, shaped = shape(raw, raw.length > text.length);
-        setText(shaped);
+        setText(shaped); setBad(false);
         const ok = live(shaped);
         if (ok !== null) emit(ok); else if (shaped.trim() === "") emit("");
       }}
       onBlur={() => { if (!open) settle(); }}
       onKeyDown={e => {
-        if (e.key === "Enter") { const ok = parse(text); if (ok !== null) { setText(ok); emit(ok); } else if (text.trim() === "") emit(""); else setText(sent.current); }
+        if (e.key === "Enter") settle();
         else if (e.key === "ArrowDown" && !disabled) { e.preventDefault(); setOpen(true); }
         else if (e.key === "Escape" && open) { e.preventDefault(); e.stopPropagation(); close(); }
       }} />
-    <button type="button" className="dd-picker__btn" tabIndex={-1} disabled={disabled} aria-label={kind === "date" ? "Open calendar" : "Open time list"} aria-expanded={open}
-      onMouseDown={e => e.preventDefault()} onClick={() => { if (open) close(true); else { const ok = parse(text); if (ok !== null) emit(ok); setOpen(true); } }}>
+    <button type="button" className="dd-picker__btn" tabIndex={-1} disabled={disabled} aria-hidden="true" aria-expanded={open}
+      onMouseDown={e => e.preventDefault()} onClick={() => { if (open) close(true); else { const ok = parse(text); if (ok !== null) emit(ok); setBad(false); setOpen(true); } }}>
       {kind === "date" ? <CalendarIcon /> : <ClockIcon />}
     </button>
     {name && <input type="hidden" name={name} value={value} />}
@@ -133,7 +142,10 @@ function PickerField({ value, onChange, disabled, id, autoFocus, required, name,
       }}>
       {popup({ value, pick, close })}
     </Popup>
-  </span>;
+  </span>
+  {/* aria-hidden keeps the hint out of the field's name (it sits inside the label); the input points to it with aria-describedby. */}
+  {bad && <span id={`${uid}-hint`} className="dd-error" aria-hidden="true">{hint}</span>}
+  </>;
 }
 
 // ---- Date ----
@@ -201,8 +213,11 @@ function Calendar({ value, pick, close }: PopupApi) {
 /** Date entry in the DD theme. `value` is yyyy-mm-dd or an empty string; typing works, and so does the calendar button or the Down arrow. */
 export function DatePicker(props: PickerProps) {
   return <PickerField {...props} kind="date" placeholder={props.placeholder ?? "yyyy-mm-dd"}
-    parse={parseDate} live={t => (/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(t.trim()) ? parseDate(t) : null)}
-    shape={(raw, grew) => {
+    parse={parseDate} live={t => (/^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[/.]\d{1,2}[/.]\d{4})$/.test(t.trim()) ? parseDate(t) : null)}
+    hint="Use yyyy-mm-dd, for example 2026-12-25."
+    shape={(input, grew) => {
+      // A separator typed after the automatic dash replaces it.
+      const raw = input.replace(/[-/.]{2,}/g, run => run.slice(-1));
       if (!grew || !/^[\d-]*$/.test(raw)) return raw;
       let out = raw.includes("-") ? raw : [raw.slice(0, 4), raw.slice(4, 6), raw.slice(6, 8)].filter(Boolean).join("-");
       const parts = out.split("-"), at = parts.length - 1;
@@ -277,7 +292,7 @@ function TimeList({ value, pick, close }: PopupApi) {
 /** Time entry in the DD theme. `value` is HH:mm (24-hour) or an empty string; typing works ("1830", "6:30 pm"), and so does the clock button or the Down arrow. */
 export function TimePicker(props: PickerProps) {
   return <PickerField {...props} kind="time" placeholder={props.placeholder ?? "HH:mm"}
-    parse={t => parseTime(t)} live={t => parseTime(t, true)}
+    parse={t => parseTime(t)} live={t => parseTime(t, true)} hint="Use hh:mm, for example 18:30."
     shape={(raw, grew) => { const t = raw.replace(/:{2,}/g, ":"); return grew && /^\d{2}$/.test(t) && Number(t) < 24 ? `${t}:` : t; }}
     popup={api => <TimeList {...api} />} />;
 }
