@@ -1,7 +1,8 @@
-import { CommandError, isReservedMemberId, memberIdCheckDigitOk, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
+import { CommandError, isReservedMemberId, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { database } from "./db";
 import { HttpError } from "./http";
+import { memberIdAccepted } from "./special-member-ids";
 
 export interface GlobalPlayer { memberId: string; firstName: string; lastName: string }
 
@@ -25,7 +26,7 @@ function cleanName(value: string) {
   return value.replace(/["]/g, "'").replace(/\\/g, "/").replace(/[\r\n\t]+/g, " ").trim().slice(0, 100);
 }
 
-/** Existing IDs are never changed, as in the original. IDs that fail the check digit are not added; they are returned apart, as the original did. */
+/** Preserves existing entries and reports unaccepted check digits for review. */
 export function mergeGlobalPlayers(ownerId: number, players: readonly { memberId: string | null; firstName: string; lastName: string }[]) {
   const insert = database().prepare("INSERT INTO global_players(owner_user_id,member_id,first_name,last_name) VALUES (?,?,?,?)");
   const has = database().prepare("SELECT 1 FROM global_players WHERE owner_user_id=? AND member_id=?");
@@ -36,7 +37,7 @@ export function mergeGlobalPlayers(ownerId: number, players: readonly { memberId
     const id = realId(player.memberId);
     const firstName = cleanName(player.firstName), lastName = cleanName(player.lastName);
     if (!id || !(firstName || lastName)) { invalid++; continue; }
-    if (!memberIdCheckDigitOk(id)) { badCheckDigit.push({ memberId: id, firstName, lastName }); continue; }
+    if (!memberIdAccepted(id)) { badCheckDigit.push({ memberId: id, firstName, lastName }); continue; }
     if (has.get(ownerId, id)) skipped++;
     else if (count >= MAX_GLOBAL_PLAYERS) overLimit++;
     else { insert.run(ownerId, id, firstName, lastName); added++; count++; }
@@ -87,7 +88,7 @@ export function importGlobalPlayers(ownerId: number, text: string) {
     if (!/^(<\?xml[^>]*\?>\s*)?<(Tournament|PlayerList)[\s>]/.test(body)) throw new HttpError(422, "invalid_player_file");
     try {
       players = /^(<\?xml[^>]*\?>\s*)?<Tournament[\s>]/.test(body)
-        ? parseLegacyTournament(body, { now: new Date().toISOString(), seed: 1, actor: "import" }).players : parseLegacyPlayerList(body);
+        ? parseLegacyTournament(body, { now: new Date().toISOString(), seed: 1, actor: "import" }, memberIdAccepted).players : parseLegacyPlayerList(body);
     } catch (error) { if (error instanceof HttpError || error instanceof CommandError) throw error; throw new HttpError(422, "invalid_player_file"); }
   } else ({ players, invalid } = parsePlayerCsv(body));
   return database().transaction(() => {

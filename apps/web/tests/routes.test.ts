@@ -79,6 +79,7 @@ beforeAll(() => {
   process.env.PUBLIC_URL = "http://localhost:3000";
   process.env.DD_BRIDGE_SECRET = bridgeSecret;
   process.env.SESSION_SECRET = randomBytes(32).toString("hex");
+  delete process.env.SPECIAL_MEMBER_IDS_PATH;
 });
 beforeEach(() => {
   process.env.DD_APP_URL = "mock";
@@ -88,7 +89,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 afterAll(() => {
   database().close(); rmSync(directory, { recursive: true, force: true });
-  for (const key of ["DATABASE_PATH", "PUBLIC_URL", "DD_APP_URL", "DD_BRIDGE_SECRET", "SESSION_SECRET", "CREATE_CODE"]) {
+  for (const key of ["DATABASE_PATH", "PUBLIC_URL", "DD_APP_URL", "DD_BRIDGE_SECRET", "SESSION_SECRET", "CREATE_CODE", "SPECIAL_MEMBER_IDS_PATH"]) {
     if (originalEnv[key] === undefined) delete process.env[key]; else process.env[key] = originalEnv[key];
   }
 });

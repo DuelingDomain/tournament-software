@@ -1,9 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { normalizeMemberId, memberIdCheckDigitOk } from "@dd-tournament/engine";
+import { normalizeMemberId } from "@dd-tournament/engine";
 import { appUrl, mockEnabled, secret } from "./config";
 import { cacheUser, knownAccounts, rememberAccounts } from "./db";
 import { HttpError } from "./http";
+import { isSpecialMemberId, memberIdAccepted } from "./special-member-ids";
 import { tournamentUserSchema, type TournamentUser } from "./validation";
 
 export function validReturn(path: string) {
@@ -108,11 +109,12 @@ export async function setMemberId(userId: number, value: string | null) {
     if (memberId !== null && fakeUsers.some(user => user.id !== userId && user.memberId === memberId)) throw new HttpError(409, "member_id_taken");
     user.memberId = memberId;
     cacheUser(user);
-    updated = { memberId, checkDigitOk: memberId !== null && memberIdCheckDigitOk(memberId) };
+    updated = { memberId, checkDigitOk: memberId !== null && memberIdAccepted(memberId) };
   } else {
     updated = parseBridge(z.strictObject({ memberId: z.string().nullable(), checkDigitOk: z.boolean() }),
       await bridgeRequest("PUT", `/api/tournament-bridge/users/${userId}/member-id`, { memberId }));
     await lookupAccounts([userId]);
+    if (!updated.checkDigitOk && updated.memberId !== null) updated.checkDigitOk = isSpecialMemberId(updated.memberId);
   }
   return updated;
 }

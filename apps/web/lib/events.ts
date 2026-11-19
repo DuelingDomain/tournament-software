@@ -1,13 +1,15 @@
 import { randomBytes, randomInt } from "node:crypto";
-import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type DeskView, type EventState, type Player, type StaffRole, type StaffAssignment, competitors, printData, recordActivity } from "@dd-tournament/engine";
+import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type EventState, type Player, type StaffRole, type StaffAssignment, competitors, printData, recordActivity } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { isReservedMemberId, normalizeMemberId } from "@dd-tournament/engine";
 import { lookupAccounts, searchAccounts } from "./bridge";
 import { cacheUser, cachedUser, database, eventRecord, saveEvent, type EventRecord } from "./db";
+import type { DeskView } from "./desk-view";
 import { HttpError } from "./http";
 import { mergeGlobalPlayers } from "./global-players";
 import { joinReason, requireCommand, requireDummyData, requireImport, requireStaff } from "./permissions";
 import { locationSettings } from "./locations";
+import { hasSpecialMemberIds, memberIdAccepted } from "./special-member-ids";
 import type { DummyData, TournamentUser } from "./validation";
 
 export function context(user: TournamentUser): CommandContext {
@@ -15,7 +17,8 @@ export function context(user: TournamentUser): CommandContext {
 }
 export function deskView(event: EventRecord, role: StaffRole): DeskView {
   return { state: event.state, standings: standings(event.state), suggestedRounds: suggestRounds(competitors(event.state).length),
-    version: event.version, integrity: integrity(event.state), printData: printData(event.state), viewerRole: role, ownerUserId: event.ownerUserId,
+    version: event.version, integrity: integrity(event.state, memberIdAccepted), printData: printData(event.state), viewerRole: role, ownerUserId: event.ownerUserId,
+    ...(hasSpecialMemberIds() ? { specialMemberIdsEnabled: true } : {}),
     links: { public: `/e/${event.code}`, desk: `/e/${event.code}/desk`, join: `/e/${event.code}/me` },
     accounts: Object.fromEntries(event.state.players.map(player => {
       const user = player.userId === null ? null : cachedUser(player.userId);
@@ -157,7 +160,7 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
   const before = eventRecord(code);
   requireImport(before, user.id);
   if (kind !== "tournament" && before.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
-  const source = kind !== "players" ? parseLegacyTournament(xml, context(user)) : null;
+  const source = kind !== "players" ? parseLegacyTournament(xml, context(user), memberIdAccepted) : null;
   const parsed = kind === "tournament" ? source : null;
   if (kind === "team-players" && ((source?.state.settings.playerStructure ?? 1) === 1 || before.state.settings.playerStructure !== 1)) throw new HttpError(422, "INVALID_PLAYER_STRUCTURE");
   const players = source ? source.players : parseLegacyPlayerList(xml);
@@ -200,7 +203,7 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
 
 /** Open Tournament: the file becomes a new event and the caller becomes its organizer. */
 export async function openTournamentAsNewEvent(user: TournamentUser, xml: string) {
-  const parsed = parseLegacyTournament(xml, context(user));
+  const parsed = parseLegacyTournament(xml, context(user), memberIdAccepted);
   const matches = await matchLegacyPlayers(parsed.players);
   return database().transaction(() => {
     cacheUser(user);

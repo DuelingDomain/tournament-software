@@ -87,7 +87,7 @@ function newerThanSupported(version: string): boolean {
   return false;
 }
 
-export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyTournamentImport {
+export function parseLegacyTournament(xml: string, ctx: CommandContext, memberIdAccepted?: (id: string) => boolean): LegacyTournamentImport {
   const root = parseXml(xml, "Tournament");
   if (newerThanSupported(root.get("SoftwareVersion"))) throw new CommandError("legacy_version_too_new", "This file was saved by a newer version of the program.");
   const structure = root.get("Structure") || root.get("StructureCode");
@@ -244,7 +244,7 @@ export function parseLegacyTournament(xml: string, ctx: CommandContext): LegacyT
   state.completedAt = state.phase === "complete" ? ctx.now : null;
   syncTeamMembers(state);
   state.playerStructureLocked = state.players.length > 0 || state.teams.length > 0;
-  const issues = integrity(state);
+  const issues = integrity(state, memberIdAccepted);
   for (const warning of issues.memberIdWarnings) warnings.push(`Legacy member ID ${warning.memberId}: ${warning.problem} (${warning.playerId}).`);
   if (issues.unpairedActive.length) warnings.push(`${issues.unpairedActive.length} active players are unpaired in the current round.`);
   return { state, players: imported, warnings };

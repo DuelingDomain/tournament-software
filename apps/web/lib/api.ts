@@ -4,11 +4,13 @@ import { z } from "zod";
 import { currentUser, signedIn } from "./auth";
 import { lookupAccounts, searchOrganizerAccounts, setMemberId } from "./bridge";
 import { cachedUser, database, eventRecord, eventRecords } from "./db";
+import { MEMBER_ID_CHECK_BATCH_SIZE } from "./desk-view";
 import { deskView, importEvent, joinEvent, newEvent, openTournamentAsNewEvent, playerCommand, playerResponse, resolveCommand, runCommand, runDummyData } from "./events";
 import { csvDownload, exportEvent } from "./exports";
 import { globalPlayers, globalPlayersCsv, importGlobalPlayers } from "./global-players";
 import { boundary, bodyJson, checkOrigin, HttpError, json, readBody } from "./http";
 import { requireCommand, requireDummyData, requireImport, requireStaff, viewerRole } from "./permissions";
+import { memberIdAccepted } from "./special-member-ids";
 import { commandSchema, dummyDataSchema, partialSettings, result, userId, staffSchema, locationFields } from "./validation";
 
 import { locations, createLocation, changeLocation } from "./locations";
@@ -147,6 +149,11 @@ export function handleApi(request: Request, path: string[]) {
       const { event, role } = staff(request, code);
       await lookupAccounts([...event.state.players.flatMap(p => p.userId === null ? [] : [p.userId]), ...event.state.staff.map(s => s.userId)]);
       return json(deskView(event, role));
+    }
+    if (path.length === 3 && action === "member-id-check" && method === "POST") {
+      staff(request, code);
+      const { memberIds } = await body(request, z.strictObject({ memberIds: z.array(z.string().regex(/^\d{1,10}$/)).max(MEMBER_ID_CHECK_BATCH_SIZE) }));
+      return json({ invalidMemberIds: memberIds.filter(id => !memberIdAccepted(id)) });
     }
     if (path.length === 3 && action === "activity" && method === "GET") {
       const { event } = staff(request, code);
