@@ -40,7 +40,8 @@ async function downloadExport(code: string, kind: ExportKind, notify: (text: str
     window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
   } catch { notify("The export failed. Check your connection. Nothing was saved.", true); }
 }
-const modalOpen = () => !!document.querySelector("dialog[open]");
+// A dialog, or an open dropdown or picker list (those render as .dd-pop), owns the keyboard.
+const modalOpen = () => !!document.querySelector("dialog[open], .dd-pop");
 
 function Centered({ title, children }: { title: string; children?: React.ReactNode }) {
   return <main className="dk dk-center"><h1 className="dk-h2">{title}</h1>{children}</main>;

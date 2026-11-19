@@ -149,7 +149,7 @@ export function PairingsPanel({ desk, role, send, pair, onRepair, onTimer, onMan
   live.current = { commit, undo };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (document.querySelector("dialog[open]")) return;
+      if (document.querySelector("dialog[open], .dd-pop")) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest("[role='menu']")) return;
       const inField = !!target && target !== slotRef.current && (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.getAttribute("role") === "combobox" || target.isContentEditable);
