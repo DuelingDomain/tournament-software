@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useRef, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { cx } from "./cx";
 
 export { Select } from "./Select";
@@ -16,6 +16,12 @@ function NumberInput({ className, mono, slot, ref, ...rest }: ComponentProps<"in
     if (typeof ref === "function") ref(el); else if (ref) ref.current = el;
   }, [ref]);
   const stop = () => { clearTimeout(timer.current.start); clearInterval(timer.current.repeat); timer.current = {}; };
+  // Stop a running repeat when the field goes away or the pointer is released anywhere.
+  useEffect(() => {
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    return () => { window.removeEventListener("pointerup", stop); window.removeEventListener("pointercancel", stop); stop(); };
+  }, []);
   const step = (dir: 1 | -1) => {
     const el = own.current;
     if (!el || el.matches(":disabled") || el.readOnly) return;
@@ -33,7 +39,7 @@ function NumberInput({ className, mono, slot, ref, ...rest }: ComponentProps<"in
   const arrow = (up: boolean) => <svg viewBox="0 0 10 6" width="9" height="6" aria-hidden="true"><path d={up ? "M1 5l4-4 4 4" : "M1 1l4 4 4-4"} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>;
   return <span className="dd-num">
     <input ref={setRef} className={cx("dd-input", "dd-num__input", mono && "dd-input--mono", slot && "dd-input--slot", className)} {...rest} />
-    <span className="dd-num__steps">
+    <span className="dd-num__steps" aria-hidden="true">
       <button type="button" tabIndex={-1} aria-label="Increase" disabled={rest.disabled} onPointerDown={hold(1)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} onContextMenu={e => e.preventDefault()}>{arrow(true)}</button>
       <button type="button" tabIndex={-1} aria-label="Decrease" disabled={rest.disabled} onPointerDown={hold(-1)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} onContextMenu={e => e.preventDefault()}>{arrow(false)}</button>
     </span>
