@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Tournament>
+  <Name>Cloudberry Practice Cup</Name><ID>X99-000101</ID>
+  <StructureCode>01</StructureCode><PlayerStructure>01</PlayerStructure>
+  <ReferenceDateTime>2003-01-02</ReferenceDateTime><Date>2026-11-16</Date><Time>12:00</Time>
+  <CurrentRound>1</CurrentRound><PlayoffRound>0</PlayoffRound><Finalized>False</Finalized>
+  <TournamentPlayers>
+    <TournPlayer><Player><ID>0000000101</ID><FirstName>Mira</FirstName><LastName>Meadow</LastName></Player><DropRound>0</DropRound><DropReason>Active</DropReason></TournPlayer>
+    <TournPlayer><Player><ID>0000000202</ID><FirstName>Oren</FirstName><LastName>Orbit</LastName></Player><DropRound>1</DropRound><DropReason>Drop</DropReason></TournPlayer>
+    <TournPlayer><Player><ID>0000000303</ID><FirstName>Zella</FirstName><LastName>Zephyr</LastName></Player><DropRound>0</DropRound><DropReason>Active</DropReason></TournPlayer>
+  </TournamentPlayers>
+  <Matches>
+    <TournMatch><Player>0000000101</Player><Player>0000000202</Player><Round>1</Round><Status>Winner</Status><Table>1</Table><Winner>0000000101</Winner><PlayoffMatch>False</PlayoffMatch></TournMatch>
+    <TournMatch><Player>0000000303</Player><Player>0000000000</Player><Round>1</Round><Status>Winner</Status><Table>0</Table><Winner>0000000303</Winner><PlayoffMatch>False</PlayoffMatch></TournMatch>
+  </Matches>
+</Tournament>
