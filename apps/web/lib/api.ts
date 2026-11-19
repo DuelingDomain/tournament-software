@@ -29,6 +29,16 @@ function limitOpens(userId: number) {
   openTimes.set(userId, [...recent, now]);
   if (openTimes.size > 1000) for (const [id, times] of openTimes) if (times.every(time => now - time >= 60_000)) openTimes.delete(id);
 }
+/** Per-account budget of member IDs checked per minute, so the private ID list cannot be probed in bulk.
+ *  20,000 covers a full global player list; random probing of the 10-digit space stays useless. */
+const checkTimes = new Map<number, { at: number; count: number }[]>();
+function limitMemberIdChecks(userId: number, count: number) {
+  const now = Date.now();
+  const recent = (checkTimes.get(userId) ?? []).filter(entry => now - entry.at < 60_000);
+  if (recent.reduce((sum, entry) => sum + entry.count, 0) + count > 20_000) throw new HttpError(429, "rate_limited");
+  checkTimes.set(userId, [...recent, { at: now, count }]);
+  if (checkTimes.size > 1000) for (const [id, entries] of checkTimes) if (entries.every(entry => now - entry.at >= 60_000)) checkTimes.delete(id);
+}
 /** Reads one uploaded file from a multipart request; legacy files may be UTF-16. */
 async function uploadedFile(request: Request) {
   const bytes = await readBody(request, 1024 * 1024);
@@ -151,8 +161,9 @@ export function handleApi(request: Request, path: string[]) {
       return json(deskView(event, role));
     }
     if (path.length === 3 && action === "member-id-check" && method === "POST") {
-      staff(request, code);
+      const { user } = staff(request, code);
       const { memberIds } = await body(request, z.strictObject({ memberIds: z.array(z.string().regex(/^\d{1,10}$/)).max(MEMBER_ID_CHECK_BATCH_SIZE) }));
+      limitMemberIdChecks(user.id, memberIds.length);
       return json({ invalidMemberIds: memberIds.filter(id => !memberIdAccepted(id)) });
     }
     if (path.length === 3 && action === "activity" && method === "GET") {

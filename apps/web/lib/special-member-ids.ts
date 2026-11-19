@@ -22,7 +22,9 @@ function loadSpecialMemberIds(): Float64Array | null {
     console.info(`Loaded ${ids.length} special member IDs.`);
     return ids;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("Could not load special member IDs. Ignoring the file.");
+    console.warn((error as NodeJS.ErrnoException).code === "ENOENT"
+      ? "SPECIAL_MEMBER_IDS_PATH is set, but the file is missing. Special member IDs are off."
+      : "Could not load special member IDs. Ignoring the file.");
     return null;
   }
 }

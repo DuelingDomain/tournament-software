@@ -30,7 +30,10 @@ export function useMemberIdWarnings(code: string, memberIds: (string | null)[], 
         const results = await Promise.all(batches);
         if (!controller.signal.aborted) setChecked({ code, invalidMemberIds: results.flat() });
       } catch {
-        if (retry && !controller.signal.aborted) timer = window.setTimeout(() => void check(false), 1000);
+        if (controller.signal.aborted) return;
+        if (retry) timer = window.setTimeout(() => void check(false), 1000);
+        // The server check failed: fall back to the plain check-digit warnings.
+        else setChecked({ code, invalidMemberIds: key.split(",") });
       }
     }
     timer = window.setTimeout(() => void check(true), 200);
