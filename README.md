@@ -47,6 +47,14 @@ The bridge never shares databases or requests account email addresses.
 | `SESSION_SECRET` | Independent runtime cookie-signing secret, at least 32 characters. |
 | `CREATE_CODE` | Required creation code; empty disables this check. |
 
+`SPECIAL_MEMBER_IDS_PATH` optionally points to a private file of little-endian
+int64 member IDs, either plain or gzip-compressed (`.gz`). The server accepts
+listed IDs even when their check digit fails. Keep the file private and never
+commit it to Git. With Compose, place it in the untracked `./data` directory,
+make it readable by UID 1000, and set `SPECIAL_MEMBER_IDS_PATH` in the root `.env`
+to its container path, such as `/app/data/special-member-ids.bin.gz`. Restart the
+server after replacing the file.
+
 Sessions last 30 days. Cookies are HttpOnly and SameSite=Lax, and Secure for
 HTTPS/production. SQLite stores session-token hashes and expiring consumed
 assertion nonces. State mutations use immediate transactions, a fresh random
