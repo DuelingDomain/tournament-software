@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Command, DeskView } from "@dd-tournament/engine";
+import type { Command } from "@dd-tournament/engine";
+import type { DeskView } from "../../lib/desk-view";
 import type { DeskCommandResult } from "./helpers";
 import { cacheDesk, cachedDesk, saveEnded, saveStarted } from "./desk-tabs";
 

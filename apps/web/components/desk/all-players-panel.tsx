@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { DeskView, StaffRole } from "@dd-tournament/engine";
-import { isTemporaryMemberId, memberIdCheckDigitOk, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
+import type { StaffRole } from "@dd-tournament/engine";
+import { isTemporaryMemberId, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
+import type { DeskView } from "../../lib/desk-view";
 import { Button, Field, Input } from "../ui";
 import { saveMemberId, useAccountSearch, type Account } from "./accounts";
 import { WarnIcon } from "./icons";
+import { useMemberIdWarnings } from "./member-id-warnings";
 import { can } from "./roles";
 import type { SendFn } from "./use-desk";
 
@@ -28,6 +30,12 @@ export function AllPlayersPanel({ code, desk, role, send, notify, onExport, onIm
   const canEditId = can(role, "UpdatePlayer");
   const canAdd = can(role, "AddPlayers") && desk.state.phase !== "playoff" && desk.state.phase !== "complete";
   const current = (a: Account) => (a.userId in overrides ? overrides[a.userId] ?? null : a.memberId);
+  const rows = (search.results ?? []).map(account => {
+    const saved = pad(current(account));
+    const value = edits[account.userId] ?? saved;
+    return { account, value, memberId: normalizeMemberId(value), dirty: value !== saved };
+  });
+  const warnings = useMemberIdWarnings(code, rows.map(row => row.memberId), desk.specialMemberIdsEnabled);
 
   async function saveId(a: Account) {
     const raw = edits[a.userId] ?? pad(current(a));
@@ -61,11 +69,7 @@ export function AllPlayersPanel({ code, desk, role, send, notify, onExport, onIm
     {search.results?.length === 0 && <p className="dk-empty">No accounts match.</p>}
     <div className="dd-scroll-x"><div className="dk-table" style={{ "--w": "720px" } as React.CSSProperties}>
       {(search.results?.length ?? 0) > 0 && <div aria-hidden="true" className="dk-th dd-caps" style={{ gridTemplateColumns: "minmax(0,1.2fr) minmax(0,1fr) 260px 110px" }}><span>Account</span><span>Discord</span><span>COSSY ID</span><span /></div>}
-      <ul className="dk-list">{(search.results ?? []).map(a => {
-        const value = edits[a.userId] ?? pad(current(a));
-        const n = value.trim() ? normalizeMemberId(value) : null;
-        const warn = n && !isTemporaryMemberId(n) && !memberIdCheckDigitOk(n);
-        const dirty = value !== pad(current(a));
+      <ul className="dk-list">{rows.map(({ account: a, value, memberId, dirty }) => {
         return <li key={a.userId} className="dk-trow" style={{ gridTemplateColumns: "minmax(0,1.2fr) minmax(0,1fr) 260px 110px", paddingBlock: 8 }}>
           <span style={{ display: "flex", flexDirection: "column" }}><span style={{ fontWeight: 600 }}>{a.displayName}</span><span className="dd-meta">@{a.username}</span></span>
           <span className="dk-mono" style={{ color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis" }}>{a.discordUsername ?? "—"}</span>
@@ -74,7 +78,7 @@ export function AllPlayersPanel({ code, desk, role, send, notify, onExport, onIm
               <Input mono className="dd-input--sm" aria-label={`COSSY ID for ${a.displayName}`} inputMode="numeric" value={value} disabled={!canEditId} onChange={e => setEdits(x => ({ ...x, [a.userId]: e.target.value }))} onKeyDown={e => { if (e.key === "Enter") void saveId(a); }} />
               <Button size="sm" disabled={!canEditId || !dirty} onClick={() => void saveId(a)} aria-label={`Save COSSY ID for ${a.displayName}`}>Save</Button>
             </span>
-            {warn && <span className="dk-idwarn"><WarnIcon size={13} />Check digit does not match.</span>}
+            {memberId !== null && warnings.has(memberId) && <span className="dk-idwarn"><WarnIcon size={13} />Check digit does not match.</span>}
           </span>
           <span>{enrolled.has(a.userId) ? <span className="dd-chip dd-chip--muted">Enrolled</span> : canAdd && <Button size="sm" variant="violet" onClick={() => void enroll(a)}>Enroll</Button>}</span>
         </li>;

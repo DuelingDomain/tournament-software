@@ -1,11 +1,13 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DeskView, Player, StaffRole } from "@dd-tournament/engine";
-import { isTemporaryMemberId, memberIdCheckDigitOk, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
+import type { Player, StaffRole } from "@dd-tournament/engine";
+import { isTemporaryMemberId, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
+import type { DeskView } from "../../lib/desk-view";
 import { Button, ConfirmDialog, Field, Input } from "../ui";
 import { saveMemberId, useAccountSearch, type Account } from "./accounts";
 import { CheckIcon, DashIcon, RingIcon, WarnIcon } from "./icons";
 import { byName, nextTempId, statusText } from "./helpers";
+import { useMemberIdWarnings } from "./member-id-warnings";
 import { PointsControl } from "./points-control";
 import { can } from "./roles";
 import type { SendFn } from "./use-desk";
@@ -15,11 +17,10 @@ function splitName(name: string): [string, string] {
   const parts = name.trim().split(/\s+/);
   return parts.length < 2 ? [name, ""] : [parts.slice(0, -1).join(" "), parts.at(-1)!];
 }
-function idProblem(id: string): string | null {
-  const n = normalizeMemberId(id);
+function idProblem(id: string, n: string | null, warnings: ReadonlySet<string>): string | null {
   if (!id.trim()) return null;
   if (n === null) return "A COSSY ID is one to ten digits.";
-  if (!isTemporaryMemberId(n) && !memberIdCheckDigitOk(n)) return "Check digit does not match. Confirm with the player.";
+  if (warnings.has(n)) return "Check digit does not match. Confirm with the player.";
   return null;
 }
 
@@ -175,7 +176,9 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
   }, [state.players, filter, desk.accounts]);
 
   const open = state.settings.format === "open_dueling" || state.settings.style === "open_dueling";
-  const problem = idProblem(idText);
+  const memberId = normalizeMemberId(idText);
+  const draftWarnings = useMemberIdWarnings(code, [memberId], desk.specialMemberIdsEnabled);
+  const problem = idProblem(idText, memberId, draftWarnings);
   const formName = [first, last].filter(Boolean).join(" ");
   const enrollLabel = selected ? "Update" : "Enroll";
   // Updating a name or ID works in every phase; only new entries stop after the cut.

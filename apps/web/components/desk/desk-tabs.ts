@@ -1,6 +1,6 @@
 "use client";
 import { useSyncExternalStore } from "react";
-import type { DeskView } from "@dd-tournament/engine";
+import type { DeskView } from "../../lib/desk-view";
 
 /** The tournaments this browser has open on the desk, in the order they were opened, and the last desk view of each.
  *  It lives outside React so switching tabs shows the cached view at once and refreshes it in the background. */
