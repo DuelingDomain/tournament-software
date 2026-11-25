@@ -530,7 +530,7 @@ const permissionCases: { label: string; command: (playerId: string) => Command; 
   { label: "penalties", command: playerId => ({ type: "AddPenalty", playerId, infractionId: "slow_play" }), allowed: ["organizer", "head_judge", "judge"] },
   { label: "drops", command: playerId => ({ type: "DropPlayer", playerId }), allowed: ["organizer", "head_judge", "judge", "scorekeeper"] },
   { label: "staff", command: () => ({ type: "AddStaff", userId: 6, name: "Ignored", role: "staff" }), allowed: ["organizer", "head_judge"] },
-  { label: "organizers", command: () => ({ type: "AddStaff", userId: 6, name: "Ignored", role: "organizer" }), allowed: ["organizer"] },
+  { label: "second organizer", command: () => ({ type: "AddStaff", userId: 6, name: "Ignored", role: "organizer" }), allowed: [] },
 ];
 describe("role matrix at the command route", () => {
   it.each(roles.flatMap(role => permissionCases.map(test => ({ role, ...test }))))("$role: $label", async ({ role, command: make, allowed }) => {
@@ -548,10 +548,9 @@ describe("role matrix at the command route", () => {
   it("prevents a head judge from editing/removing organizers and restricts Discord writes", async () => {
     const owner = await login(); const head = await login(2); const code = await create(owner);
     await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Ignored", role: "head_judge" });
-    const state = deskSchema.parse(await (await command(code, owner, 2, { type: "AddStaff", userId: 3, name: "Ignored", role: "organizer" })).json());
-    const target = state.state.staff.find(s => s.userId === 3)!.id;
+    const target = (await desk(code, owner)).state.staff.find(s => s.userId === 1)!.id;
     for (const cmd of [{ type: "SetStaffRole", staffId: target, role: "staff" }, { type: "RemoveStaff", staffId: target }] satisfies Command[])
-      expect((await command(code, head, 3, cmd)).status).toBe(403);
+      expect((await command(code, head, 2, cmd)).status).toBe(403);
     const webhookUrl = "https://discord.com/api/webhooks/123/synthetic-token";
     expect((await api(`events/${code}/discord`, head, "PUT", { webhookUrl, postPairings: true, postStandings: false })).status).toBe(403);
     expect((await api(`events/${code}/discord`, owner, "PUT", { webhookUrl, postPairings: true, postStandings: false })).status).toBe(200);

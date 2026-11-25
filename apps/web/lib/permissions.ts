@@ -47,6 +47,12 @@ export function requireCommand(event: EventRecord, viewerUserId: number, command
     const target = "staffId" in command ? event.state.staff.find(s => s.id === command.staffId) : undefined;
     if (target?.role === "organizer" || (command.type === "AddStaff" && staffAssignment(command).role === "organizer") || (command.type === "SetStaffPosition" && command.position === "organizer") || (command.type === "SetStaffRole" && command.role === "organizer")) throw new HttpError(403, "forbidden_role");
   }
+  // Single-row commands follow the same organizer rule as the bulk list. Adding the owner as anything but organizer is refused too.
+  if (command.type === "AddStaff" && !organizerOk(command.userId, staffAssignment(command).role === "organizer")) throw new HttpError(403, "forbidden_role");
+  if (command.type === "SetStaffPosition" || command.type === "SetStaffRole") {
+    const target = event.state.staff.find(s => s.id === command.staffId);
+    if (target && !organizerOk(target.userId, (command.type === "SetStaffPosition" ? command.position : command.role) === "organizer")) throw new HttpError(403, "forbidden_role");
+  }
   if ("staffId" in command) {
     const target = event.state.staff.find(s => s.id === command.staffId);
     // Only the owner removes the owner's own row; no one edits it. The list never goes empty.

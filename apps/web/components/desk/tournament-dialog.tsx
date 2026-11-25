@@ -135,7 +135,7 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
           <Field label="Time"><TimePicker value={time} onChange={setTime} /></Field>
         </div>
         <LocationPicker value={locationId} onChange={setLocationId} onEdited={() => setLocationEdited(true)} disabled={!editable} code={update ? props.desk.links.desk.split("/")[2] ?? null : null} />
-        <StaffEditor rows={staff} setRows={setStaff} disabled={!canStaff} viewerRole={role} code={update ? props.desk.links.desk.split("/")[2] ?? null : null} playerIds={playerIds} ownerId={ownerId} />
+        <StaffEditor rows={staff} setRows={setStaff} disabled={!canStaff} viewerIsOwner={ownerId !== null && (update ? props.desk.viewerUserId : props.creator.userId) === ownerId} code={update ? props.desk.links.desk.split("/")[2] ?? null : null} playerIds={playerIds} ownerId={ownerId} />
         <div className="dk-tdlg-row dk-tdlg-row--3">
           <Field label="Format / Style"><Select value={style} onChange={e => setStyle(e.target.value as typeof style)}>{STYLES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select></Field>
           <Field label="Pairing structure"><Select value={format} onChange={e => setFormat(e.target.value as typeof format)}>{PAIRINGS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select></Field>
@@ -284,15 +284,15 @@ function SubDialog({ title, onClose, onEnter, dirty = false, actions, children }
 const POSITION_ORDER = (p: StaffPosition) => POSITIONS.indexOf(p);
 
 /** Staff list: Add / Edit / Delete, account search, and the original's position names. */
-function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, ownerId }: { rows: StaffRow[]; setRows: (r: StaffRow[]) => void; disabled: boolean; viewerRole: StaffRole; code: string | null; playerIds: Set<number>; ownerId: number | null }) {
+function StaffEditor({ rows, setRows, disabled, viewerIsOwner, code, playerIds, ownerId }: { rows: StaffRow[]; setRows: (r: StaffRow[]) => void; disabled: boolean; viewerIsOwner: boolean; code: string | null; playerIds: Set<number>; ownerId: number | null }) {
   const search = useAccountSearch(code);
   const [selected, setSelected] = useState<number | null>(null);
   const [editor, setEditor] = useState<{ mode: "add" | "edit"; account: Account | null; position: StaffPosition; confirmPlayer: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const row = rows.find(r => r.userId === selected) ?? null;
-  // Only the owner is the organizer: the owner's account gets that position alone, everyone else gets the rest.
+  // Only the owner is the organizer. Adding never offers it to another account; an old organizer row keeps it while it is edited.
   const positionsFor = (accountId: number | undefined) => accountId !== undefined && accountId === ownerId ? POSITIONS.filter(p => p === "organizer")
-    : POSITIONS.filter(p => p !== "organizer" || (row?.position === "organizer" && row.userId !== ownerId));
+    : POSITIONS.filter(p => p !== "organizer" || (editor?.mode === "edit" && row?.position === "organizer" && row.userId !== ownerId));
   const sorted = [...rows].sort((a, b) => POSITION_ORDER(a.position) - POSITION_ORDER(b.position) || a.name.localeCompare(b.name));
 
   function open(mode: "add" | "edit") {
@@ -306,6 +306,7 @@ function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, own
     if (editor.mode === "edit" && row) { setRows(rows.map(r => (r.userId === row.userId ? { ...r, position: editor.position } : r))); close(); return; }
     const a = editor.account;
     if (!a) { setMessage("Search for an account, then pick it."); return; }
+    if (a.userId === ownerId && !viewerIsOwner) { setMessage("Only the owner can add the owner back to the staff."); return; }
     // The server keeps one position per person, so a second entry for the same account is refused here.
     const dup = rows.find(r => r.userId === a.userId);
     if (dup) { setMessage(dup.position === editor.position ? `${a.displayName} is already on staff at that position.` : `${a.displayName} is already on staff as ${POSITION_LABEL[dup.position]}. Edit that entry to change the position.`); return; }
@@ -323,7 +324,7 @@ function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, own
       <div className="dk-btn-row" style={{ flexDirection: "column" }}>
         <Button size="sm" disabled={disabled} onClick={() => open("add")}>Add</Button>
         <Button size="sm" disabled={disabled || !row || row.locked} onClick={() => open("edit")}>Edit</Button>
-        <Button size="sm" variant="rose-outline" disabled={disabled || !row || (row.locked && viewerRole !== "organizer")} onClick={() => { if (row) { setRows(rows.filter(r => r.userId !== row.userId)); setSelected(null); } }}>Delete</Button>
+        <Button size="sm" variant="rose-outline" disabled={disabled || !row || (row.locked && !viewerIsOwner)} onClick={() => { if (row) { setRows(rows.filter(r => r.userId !== row.userId)); setSelected(null); } }}>Delete</Button>
       </div>
     </div>
     {rows.length === 0 && !disabled && <p role="alert" className="dd-error" style={{ margin: 0 }}>Add at least one staff member.</p>}

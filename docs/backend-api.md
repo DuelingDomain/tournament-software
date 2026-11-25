@@ -15,7 +15,7 @@ All existing authentication, no-store headers, command conflicts, result enums, 
 }
 ```
 
-Returns `201 { code }`. Creation, location selection, owner assignment and staff assignment are atomic. Staff accounts are resolved through the account bridge. The creator remains an organizer.
+Returns `201 { code }`. Creation, location selection, owner assignment and staff assignment are atomic. Staff accounts are resolved through the account bridge. `staff` must hold at least one entry, or the call returns `400 staff_required`. The creator is not added on its own: the creator may be left out, and if listed must be the organizer. No one else may be organizer (`403 forbidden_role`).
 
 `EventSettings` adds these fields alongside the existing name, startsAt, location and round settings:
 
@@ -30,7 +30,7 @@ timeZone?: string;
 
 Defaults are advanced, Swiss, individual and no saved location. `startsAt` is the combined date/time in ISO format with an offset. Player structure locks as soon as anyone enrolls, including after roster removal. Existing stored documents receive missing defaults when loaded. Pairing structure remains editable after rounds begin; existing round stages and any ongoing playoff bracket are preserved.
 
-Update with `{ type: "UpdateSettings", settings: Partial<EventSettings>, staff?: StaffAssignment[] }`. Providing staff replaces assignments, preserves IDs for retained accounts, and must retain the owner as organizer. Scorekeepers may update settings but cannot replace staff. Head judges cannot add, remove or change organizers through either staff commands or bulk settings.
+Update with `{ type: "UpdateSettings", settings: Partial<EventSettings>, staff?: StaffAssignment[] }`. Providing staff replaces assignments and preserves IDs for retained accounts. The list must not be empty (`400 staff_required`). The owner may be absent; if listed, the owner must be organizer, and no other account may become organizer. Only the owner removes the owner from the list (also with `RemoveStaff`). `RemoveStaff` of the last staff member returns `400 staff_required`. `AddStaff`, `SetStaffPosition` and `SetStaffRole` follow the same organizer rule. The owner keeps full access without a staff row. `PairNextRound` fails with `NO_STAFF` while the list is empty. `DeskView` has `ownerUserId` and `viewerUserId`. Scorekeepers may update settings but cannot replace staff. Head judges cannot add, remove or change organizers through either staff commands or bulk settings.
 
 `StaffAssignment` is `{ userId: number, name: string, role?: StaffRole, position?: StaffPosition }`. Supply a role or position; if both are supplied, they must agree. Account names are resolved by the service.
 
