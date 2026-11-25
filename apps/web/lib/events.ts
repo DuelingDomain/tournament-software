@@ -36,12 +36,10 @@ export function newEvent(user: TournamentUser, name: string, settings: Parameter
     cacheUser(user);
     let state = createEvent({ ...locationSettings(user.id, settings), name }, context(user));
     state.legacyEventId = newLegacyEventId();
-    state = applyCommand(state, { type: "AddStaff", userId: user.id, name: user.displayName, role: "organizer" }, context(user));
+    // The creator is only on staff when the list says so; the list is never empty.
+    if (staff.length === 0) throw new HttpError(400, "staff_required");
     for (const entry of staff) {
-      if (entry.userId === user.id) {
-        if ((entry.position ?? entry.role) !== "organizer") throw new HttpError(403, "forbidden_role");
-        continue;
-      }
+      if ((entry.userId === user.id) !== ((entry.position ?? entry.role) === "organizer")) throw new HttpError(403, "forbidden_role");
       state = applyCommand(state, { type: "AddStaff", ...entry }, context(user));
     }
     let code: string;
