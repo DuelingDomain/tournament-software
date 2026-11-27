@@ -33,6 +33,7 @@ export function pairInfo(desk: DeskView, role: StaffRole, run: () => void): Pair
   let note = "";
   if (state.phase === "complete") note = "The tournament is finished.";
   else if (!can(role, "PairNextRound")) note = "Your role cannot pair rounds.";
+  else if (state.staff.length === 0) note = "Add a staff member before you pair a round.";
   else if (unreported > 0) note = `${unreported} unreported ${unreported === 1 ? "match" : "matches"}. Enter every result first.`;
   else if (playoff && rounds.at(-1)?.matches.length === 1) note = "The final is reported. Finalize the tournament from the Tournament menu.";
   else if (active < 2) note = isTeamEvent(state) ? "Enroll at least two active teams." : "Enroll at least two active players.";

@@ -15,9 +15,9 @@ import type { DummyData, TournamentUser } from "./validation";
 export function context(user: TournamentUser): CommandContext {
   return { now: new Date().toISOString(), seed: randomInt(0, 2 ** 48 - 1), actor: String(user.id) };
 }
-export function deskView(event: EventRecord, role: StaffRole): DeskView {
+export function deskView(event: EventRecord, role: StaffRole, viewerUserId: number): DeskView {
   return { state: event.state, standings: standings(event.state), suggestedRounds: suggestRounds(competitors(event.state).length),
-    version: event.version, integrity: integrity(event.state, memberIdAccepted), printData: printData(event.state), viewerRole: role, ownerUserId: event.ownerUserId,
+    version: event.version, integrity: integrity(event.state, memberIdAccepted), printData: printData(event.state), viewerRole: role, ownerUserId: event.ownerUserId, viewerUserId,
     ...(hasSpecialMemberIds() ? { specialMemberIdsEnabled: true } : {}),
     links: { public: `/e/${event.code}`, desk: `/e/${event.code}/desk`, join: `/e/${event.code}/me` },
     accounts: Object.fromEntries(event.state.players.map(player => {
@@ -36,12 +36,10 @@ export function newEvent(user: TournamentUser, name: string, settings: Parameter
     cacheUser(user);
     let state = createEvent({ ...locationSettings(user.id, settings), name }, context(user));
     state.legacyEventId = newLegacyEventId();
-    state = applyCommand(state, { type: "AddStaff", userId: user.id, name: user.displayName, role: "organizer" }, context(user));
+    // The creator is only on staff when the list says so; the list is never empty.
+    if (staff.length === 0) throw new HttpError(400, "staff_required");
     for (const entry of staff) {
-      if (entry.userId === user.id) {
-        if ((entry.position ?? entry.role) !== "organizer") throw new HttpError(403, "forbidden_role");
-        continue;
-      }
+      if ((entry.userId === user.id) !== ((entry.position ?? entry.role) === "organizer")) throw new HttpError(403, "forbidden_role");
       state = applyCommand(state, { type: "AddStaff", ...entry }, context(user));
     }
     let code: string;
@@ -74,12 +72,12 @@ function runCommands(code: string, user: TournamentUser, expectedVersion: number
     const event = eventRecord(code);
     authorize(event);
     const role = requireStaff(event, user.id);
-    if (event.version !== expectedVersion) throw new HttpError(409, "version_conflict", { desk: deskView(event, role) });
+    if (event.version !== expectedVersion) throw new HttpError(409, "version_conflict", { desk: deskView(event, role, user.id) });
     const commands = makeCommands(event);
     let state = event.state;
     for (const command of commands) state = applyCommand(state, command.type === "UpdateSettings"
       ? { ...command, settings: locationSettings(event.ownerUserId, command.settings) } : command, context(user));
-    return { desk: deskView(saveEvent(event, state), role), count: commands.length };
+    return { desk: deskView(saveEvent(event, state), role, user.id), count: commands.length };
   }).immediate();
 }
 export function runCommand(code: string, user: TournamentUser, expectedVersion: number, command: Command) {
@@ -168,7 +166,7 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
   return database().transaction(() => {
     const event = eventRecord(code);
     requireImport(event, user.id);
-    if (event.version !== before.version) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id)) });
+    if (event.version !== before.version) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id), user.id) });
     if (kind !== "tournament" && event.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
     let state: EventState;
     let imported = 0;
@@ -197,7 +195,7 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
     if (parsed) state.activityLog = structuredClone(event.state.activityLog ?? []);
     recordActivity(state, parsed ? "ImportTournament" : "ImportPlayers", context(user));
     mergeGlobalPlayers(user.id, players);
-    return { desk: deskView(saveEvent(event, state), requireStaff(event, user.id)), imported, unmatched };
+    return { desk: deskView(saveEvent(event, state), requireStaff(event, user.id), user.id), imported, unmatched };
   }).immediate();
 }
 
