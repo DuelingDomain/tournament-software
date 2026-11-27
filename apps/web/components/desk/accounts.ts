@@ -3,20 +3,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MESSAGES } from "./use-desk";
 
 export interface Account { userId: number; username: string; displayName: string; discordUserId: string | null; discordUsername: string | null; memberId: string | null }
+export const ACCOUNT_SEARCH_HINT = "To find a new account, submit its full username, Discord username, COSSY ID or email.";
 
-/** Account search for one event (staff only); `null` searches before an event exists (any signed-in organizer). Typing searches after a short pause; run("") is "Show All". */
+/** Typing filters the known list. Submitting the search also checks for a complete identifier. */
 export function useAccountSearch(code: string | null) {
-  const [query, setQuery] = useState("");
+  const [query, setQueryText] = useState("");
   const [results, setResults] = useState<Account[] | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
+  const timer = useRef<number>(undefined);
 
-  const run = useCallback(async (q: string) => {
+  const run = useCallback(async (q: string, exact = true) => {
+    window.clearTimeout(timer.current);
     const id = ++seq.current;
     setState("loading"); setError(null);
     try {
-      const response = await fetch(`/api/accounts/search?${code === null ? "" : `event=${encodeURIComponent(code)}&`}q=${encodeURIComponent(q)}`, { cache: "no-store" });
+      const response = await fetch(accountSearchUrl(code, q, exact), { cache: "no-store" });
       const body = (await response.json().catch(() => ({}))) as { users?: Account[]; error?: string };
       if (id !== seq.current) return;
       if (!response.ok) { setState("error"); setError(MESSAGES[body.error ?? ""] ?? "Search failed."); return; }
@@ -24,13 +27,28 @@ export function useAccountSearch(code: string | null) {
     } catch { if (id === seq.current) { setState("error"); setError("Could not reach the server."); } }
   }, [code]);
 
-  useEffect(() => {
-    if (query.trim() === "") return;
-    const id = window.setTimeout(() => void run(query.trim()), 250);
-    return () => window.clearTimeout(id);
-  }, [query, run]);
+  const setQuery = useCallback((q: string) => {
+    setQueryText(q);
+    seq.current++;
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => void run(q.trim(), false), 250);
+  }, [run]);
 
-  return { query, setQuery, results, state, error, run, clear: () => { seq.current++; setResults(null); setState("idle"); } };
+  useEffect(() => () => { seq.current++; window.clearTimeout(timer.current); }, [run]);
+
+  return { query, setQuery, results, state, error, run, clear: () => {
+    seq.current++;
+    window.clearTimeout(timer.current);
+    setResults(null);
+    setState("idle");
+  } };
+}
+
+function accountSearchUrl(code: string | null, q: string, exact: boolean) {
+  const query = new URLSearchParams({ q });
+  if (code !== null) query.set("event", code);
+  if (exact && q) query.set("exact", "1");
+  return `/api/accounts/search?${query}`;
 }
 
 export async function saveMemberId(code: string, userId: number, memberId: string | null): Promise<{ ok: true; memberId: string | null; checkDigitOk: boolean } | { ok: false; message: string }> {
@@ -43,9 +61,9 @@ export async function saveMemberId(code: string, userId: number, memberId: strin
 }
 
 /** One-shot account lookup for an event (no state), used where several inputs each look up on Enter. */
-export async function findAccounts(code: string, q: string): Promise<{ ok: true; users: Account[] } | { ok: false; message: string }> {
+export async function findAccounts(code: string, q: string, exact: boolean): Promise<{ ok: true; users: Account[] } | { ok: false; message: string }> {
   try {
-    const response = await fetch(`/api/accounts/search?event=${encodeURIComponent(code)}&q=${encodeURIComponent(q)}`, { cache: "no-store" });
+    const response = await fetch(accountSearchUrl(code, q, exact), { cache: "no-store" });
     const body = (await response.json().catch(() => ({}))) as { users?: Account[]; error?: string };
     if (!response.ok) return { ok: false, message: MESSAGES[body.error ?? ""] ?? "Search failed." };
     return { ok: true, users: body.users ?? [] };

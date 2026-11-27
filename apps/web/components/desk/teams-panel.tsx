@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Command, DeskView, EventState, StaffRole, Team } from "@dd-tournament/engine";
 import { CommandError, applyCommand, isTemporaryMemberId, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
 import { Button, ConfirmDialog, Field, Input, Select } from "../ui";
-import { findAccounts, saveMemberId, useAccountSearch, type Account } from "./accounts";
+import { ACCOUNT_SEARCH_HINT, findAccounts, saveMemberId, useAccountSearch, type Account } from "./accounts";
 import { CheckIcon, DashIcon, RingIcon, WarnIcon } from "./icons";
 import { byName, membersOf } from "./helpers";
 import { AccountList } from "./players-panel";
@@ -117,7 +117,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
     }
     const q = id ?? nameOf(d);
     if (!q) { setMessage({ bad: true, text: `Type a COSSY ID or a name for member ${i + 1}, then press Enter.` }); return; }
-    const found = await findAccounts(code, q);
+    const found = await findAccounts(code, q, id !== null);
     if (!found.ok) { setMessage({ bad: true, text: found.message }); return; }
     const exact = id ? found.users.filter(a => a.memberId && normalizeMemberId(a.memberId) === id) : [];
     const pool = exact.length ? exact : found.users;
@@ -363,10 +363,10 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
 
       <section aria-labelledby="lookup-h" className="dk-lookup">
         <h2 id="lookup-h" className="dk-h2">Name lookup</h2>
-        <p className="dd-meta" style={{ margin: 0, lineHeight: 1.5 }}>Searches Dueling Domain accounts by name, username, Discord or COSSY ID. Click one to place them on the team.</p>
+        <p className="dd-meta" style={{ margin: 0, lineHeight: 1.5 }}>{ACCOUNT_SEARCH_HINT}</p>
         <form role="search" style={{ display: "flex", gap: 8, alignItems: "flex-end" }} onSubmit={e => { e.preventDefault(); lookupRow.current = null; void search.run(search.query.trim()); }}>
           <Field label="Account search" className="dd-field--grow"><Input type="search" value={search.query} onChange={e => search.setQuery(e.target.value)} autoComplete="off" /></Field>
-          <Button type="submit" variant="violet">Search</Button>
+          <Button type="submit" variant="violet">Find account</Button>
           <Button onClick={() => { lookupRow.current = null; search.setQuery(""); void search.run(""); }}>Show All</Button>
         </form>
         <div className="dk-scroll">

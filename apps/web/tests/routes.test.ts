@@ -3,11 +3,20 @@ import { createHmac, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { headers } from "next/headers";
+import { redirect as pageRedirect } from "next/navigation";
 import type { Command, StaffRole } from "@dd-tournament/engine";
 import { GET as apiGet, POST as apiPost, PUT as apiPut, DELETE as apiDelete } from "../app/api/[...path]/route";
 import { GET as authGet, POST as authPost } from "../app/auth/[action]/route";
 import { GET as healthGet } from "../app/api/health/route";
+import InvitePage from "../app/join/[token]/page";
 import { database } from "../lib/db";
+
+vi.mock("next/headers", () => ({ headers: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  notFound: vi.fn(() => { throw new Error("Page not found"); }),
+  redirect: vi.fn(() => { throw new Error("Page redirected"); }),
+}));
 
 const bridgeSecret = randomBytes(32).toString("hex");
 const directory = resolve("../../.cache/route-tests", randomBytes(8).toString("hex"));
@@ -15,7 +24,7 @@ const originalEnv = { ...process.env };
 const names = ["Mira Meadow", "Oren Orbit", "Lumi Lantern", "Pax Pebble", "Tavi Thistle", "Nori Nimbus"];
 function user(id = 1) {
   return { id, username: `${["mira", "oren", "lumi", "pax", "tavi", "nori"][id - 1]}-demo`, displayName: names[id - 1],
-    discordUserId: null, discordUsername: null, memberId: id === 1 ? "101" : id === 2 ? "202" : null };
+    discordUserId: null, discordUsername: id === 6 ? "nori.nimbus" : null, memberId: id === 1 ? "101" : id === 2 ? "202" : null };
 }
 function assertion(overrides: object = {}) {
   const now = Math.floor(Date.now() / 1000);
@@ -84,12 +93,13 @@ beforeAll(() => {
 beforeEach(() => {
   process.env.DD_APP_URL = "mock";
   process.env.CREATE_CODE = "";
+  delete process.env.ADMIN_USER_IDS;
   database().exec("DELETE FROM events; DELETE FROM sessions; DELETE FROM users; DELETE FROM nonces;");
 });
 afterEach(() => vi.restoreAllMocks());
 afterAll(() => {
   database().close(); rmSync(directory, { recursive: true, force: true });
-  for (const key of ["DATABASE_PATH", "PUBLIC_URL", "DD_APP_URL", "DD_BRIDGE_SECRET", "SESSION_SECRET", "CREATE_CODE", "SPECIAL_MEMBER_IDS_PATH"]) {
+  for (const key of ["DATABASE_PATH", "PUBLIC_URL", "DD_APP_URL", "DD_BRIDGE_SECRET", "SESSION_SECRET", "CREATE_CODE", "SPECIAL_MEMBER_IDS_PATH", "ADMIN_USER_IDS"]) {
     if (originalEnv[key] === undefined) delete process.env[key]; else process.env[key] = originalEnv[key];
   }
 });
@@ -595,6 +605,7 @@ describe("legacy files and service bridge", () => {
   it("signs exact service paths and bodies for search, lookup, profile update, and propagates member-ID conflicts", async () => {
     const received: string[] = [];
     process.env.DD_APP_URL = "https://service.example.test";
+    process.env.ADMIN_USER_IDS = " 1 , 99 ";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const request = new Request(input, init);
       const url = new URL(request.url);
@@ -622,32 +633,111 @@ describe("legacy files and service bridge", () => {
     expect(received).toContain('POST /api/tournament-bridge/users/lookup {"ids":[1]}');
     expect(received).toContain('PUT /api/tournament-bridge/users/1/member-id {"memberId":"101"}');
   });
-  it("lists a bounded set of the organizer's known accounts for an empty search", async () => {
+  it("filters the event owner's list and remembers accounts after enrollment or staff assignment in mock mode", async () => {
     const owner = await login(); const staff = await login(2); const other = await login(3);
     const code = await create(owner);
-    expect((await (await api(`accounts/search?event=${code}&q=`, owner)).json()).users).toHaveLength(names.length);
+    const path = `accounts/search?event=${code}&q=`;
+    expect(await (await api(path, owner)).json()).toMatchObject({ users: [{ userId: 1 }] });
+    expect(await (await api(`${path}pax`, owner)).json()).toEqual({ users: [] });
+    expect(await (await api(`${path}PAX-demo&exact=1`, owner)).json()).toMatchObject({ users: [{ userId: 4 }] });
+    expect(await (await api(`${path}%40Nori.Nimbus&exact=1`, owner)).json()).toMatchObject({ users: [{ userId: 6 }] });
+    expect(await (await api(`${path}000-202&exact=1`, owner)).json()).toMatchObject({ users: [{ userId: 2 }] });
+    expect(await (await api(`${path}pax-demo%40example.test&exact=1`, owner)).json()).toMatchObject({ users: [{ userId: 4 }] });
+    expect(await (await api(path, owner)).json()).toMatchObject({ users: [{ userId: 1 }] });
     const previous = await create(owner);
     expect((await command(previous, owner, 1, { type: "AddPlayers", players: [{ userId: 4, name: "Player" }] })).status).toBe(200);
+    expect((await command(previous, owner, 2, { type: "AddPlayers", players: [{ userId: null, name: "Unlinked player" }] })).status).toBe(200);
+    const playerId = (await desk(previous, owner)).state.players.find(player => player.userId === null)!.id;
+    expect((await command(previous, owner, 3, { type: "LinkPlayerAccount", userId: 6, playerId })).status).toBe(200);
     expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Scorekeeper", role: "scorekeeper" })).status).toBe(200);
-
-    process.env.DD_APP_URL = "https://service.example.test";
-    const matches = Array.from({ length: 100 }, (_, i) => ({ ...user(), id: i + 10, displayName: `Search Result ${i}` }));
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ users: matches }));
-    const ids = async (cookie: string, path = "accounts/search?q=") => {
-      const response = await api(path, cookie);
-      expect(response.status).toBe(200);
-      return z.object({ users: z.array(z.object({ userId: z.number() })) }).parse(await response.json()).users.map(u => u.userId);
-    };
-    const path = `accounts/search?event=${code}&q=`;
-    expect(await ids(staff, path)).toEqual([1, 2, 4]);
+    database().prepare("DELETE FROM events WHERE code=?").run(previous);
+    expect(await (await api(path, staff)).json()).toMatchObject({ users: [{ userId: 1 }, { userId: 6 }, { userId: 2 }, { userId: 4 }] });
+    expect(await (await api(`${path}pEBb`, staff)).json()).toMatchObject({ users: [{ userId: 4 }] });
+    expect(await (await api(`${path}0202`, staff)).json()).toMatchObject({ users: [{ userId: 2 }] });
     expect((await api(path, other)).status).toBe(403);
-    expect((await ids(staff, `${path}search`))).toHaveLength(matches.length);
-    const listed = await ids(owner, path);
-    expect(listed).toHaveLength(100);
-    expect(listed.slice(0, 3)).toEqual([1, 2, 4]);
-    expect(await ids(staff)).toEqual([2]);
-    expect(await ids(other)).toEqual([3]);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(await (await api("accounts/search", staff)).json()).toMatchObject({ users: [{ userId: 2 }] });
+  });
+
+  it("clears old search history on upgrade and keeps accounts linked in event records", async () => {
+    const owner = await login(); await login(2); await login(3);
+    const code = await create(owner);
+    expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Staff", role: "staff" })).status).toBe(200);
+    database().prepare("INSERT INTO known_accounts (owner_user_id, user_id) VALUES (1, 3)").run();
+    database().pragma("user_version = 0");
+    const path = process.env.DATABASE_PATH!;
+    try {
+      process.env.DATABASE_PATH = resolve(directory, "migration-reopen.sqlite");
+      database();
+    } finally {
+      process.env.DATABASE_PATH = path;
+    }
+    expect(await (await api("accounts/search", owner)).json()).toMatchObject({ users: [{ userId: 1 }, { userId: 2 }] });
+    expect(database().prepare("SELECT * FROM known_accounts").all()).toEqual([]);
+  });
+
+  it("sends only explicit identifier lookups to the bridge and scopes admin search to the viewer", async () => {
+    const owner = await login(); const staff = await login(2); const code = await create(owner);
+    expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Staff", role: "staff" })).status).toBe(200);
+    process.env.DD_APP_URL = "https://service.example.test";
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ users: [user(4)] }))
+      .mockResolvedValueOnce(Response.json({ users: [{ ...user(4), username: "mira" }] }))
+      .mockResolvedValueOnce(Response.json({ users: [user(3), user(4)] }));
+    const path = `accounts/search?event=${code}&q=`;
+    expect(await (await api(`${path}pax`, owner)).json()).toEqual({ users: [] });
+    expect(await (await api(`${path}Pax%20Peb&exact=1`, owner)).json()).toEqual({ users: [] });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const search = await (await api(`${path}pax%40example.test&exact=1`, owner)).json();
+    expect(search.users).toEqual([{ userId: 4, username: "pax-demo", displayName: "Pax Pebble", discordUserId: null, discordUsername: null, memberId: null }]);
+    expect(fetchSpy.mock.calls[0]?.[0]?.toString()).toBe("https://service.example.test/api/tournament-bridge/users/search?q=pax%40example.test&exact=1");
+    expect(await (await api(`${path}mira&exact=1`, owner)).json()).toMatchObject({ users: [{ userId: 4 }, { userId: 1 }] });
+    expect(await (await api(`${path}pax`, owner)).json()).toEqual({ users: [] });
+
+    process.env.ADMIN_USER_IDS = " 2 ";
+    expect(await (await api(`${path}search`, staff)).json()).toMatchObject({ users: [{ userId: 3 }, { userId: 4 }] });
+    expect(fetchSpy.mock.calls[2]?.[0]?.toString()).toBe("https://service.example.test/api/tournament-bridge/users/search?q=search");
+    expect(await (await api(`${path}pax`, owner)).json()).toEqual({ users: [] });
+    process.env.ADMIN_USER_IDS = "1";
+    expect(await (await api(`${path}pax`, staff)).json()).toEqual({ users: [] });
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("organizer invites", () => {
+  it("joins the organizer's list once after mock sign-in and revokes the previous link on regeneration", async () => {
+    const owner = await login(); const code = await create(owner);
+    const outsider = await login(3);
+    const endpoint = `players/invite?event=${code}`;
+    expect((await api(endpoint)).status).toBe(401);
+    expect((await api(endpoint, outsider)).status).toBe(403);
+    const inviteSchema = z.object({ path: z.string().regex(/^\/join\/[A-Za-z0-9_-]{43}$/) });
+    const { path } = inviteSchema.parse(await (await api(endpoint, owner)).json());
+    expect(await (await api(endpoint, owner)).json()).toEqual({ path });
+    const token = path.split("/").at(-1)!;
+    vi.mocked(headers).mockResolvedValue(new Headers());
+    await expect(InvitePage({ params: Promise.resolve({ token }) })).rejects.toThrow("Page redirected");
+    expect(pageRedirect).toHaveBeenCalledWith(`/auth/start?return=${encodeURIComponent(path)}`);
+    expect((await api("players/join", undefined, "POST", { token })).status).toBe(401);
+    const mockResponse = await authPost(new Request(`http://localhost:3000/auth/mock?return=${encodeURIComponent(path)}`, {
+      method: "POST", body: "userId=4",
+    }), { params: Promise.resolve({ action: "mock" }) });
+    const callback = new URL(mockResponse.headers.get("location")!, "http://localhost:3000");
+    const completed = await auth("callback", callback.searchParams.get("assertion")!);
+    expect(completed.headers.get("location")).toBe(path);
+    const visitor = completed.headers.get("set-cookie")!.split(";")[0]!;
+    vi.mocked(headers).mockResolvedValue(new Headers({ cookie: visitor }));
+    expect(await InvitePage({ params: Promise.resolve({ token }) })).toBeTruthy();
+    for (let i = 0; i < 2; i++) {
+      expect(await (await api("players/join", visitor, "POST", { token })).json()).toEqual({ organizerName: "Mira Meadow" });
+    }
+    expect(await (await api("accounts/search", owner)).json()).toMatchObject({ users: [{ userId: 1 }, { userId: 4 }] });
+    expect(await (await api("accounts/search", outsider)).json()).toMatchObject({ users: [{ userId: 3 }] });
+    const replacement = inviteSchema.parse(await (await api(endpoint, owner, "PUT")).json());
+    expect(replacement.path).not.toBe(path);
+    expect((await api("players/join", outsider, "POST", { token })).status).toBe(404);
+    expect(await (await api("players/join", outsider, "POST", { token: replacement.path.split("/").at(-1)! })).json())
+      .toEqual({ organizerName: "Mira Meadow" });
+    expect(await (await api("accounts/search", owner)).json()).toMatchObject({ users: [{ userId: 3 }, { userId: 1 }, { userId: 4 }] });
   });
 });
 

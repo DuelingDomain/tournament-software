@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import type { DeskView, EventSettings, Location, Penalty, StaffAssignment, StaffPosition, StaffRole } from "@dd-tournament/engine";
 import { Button, Checkbox, Dialog, Field, Input, Select, DatePicker, TimePicker } from "../ui";
 import "./desk.css";
-import { useAccountSearch, type Account } from "./accounts";
+import { ACCOUNT_SEARCH_HINT, useAccountSearch, type Account } from "./accounts";
 import { PENALTY_LABEL } from "./helpers";
 import { can } from "./roles";
 import { CUTS, DEFAULT_SETTINGS, PAIRINGS, POSITIONS, POSITION_LABEL, POSITION_OF_ROLE, STRUCTURES, STYLES } from "./tournament-options";
@@ -330,7 +330,11 @@ function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, cre
         : requestClose => <><Button onClick={requestClose}>Cancel</Button><Button variant="violet" onClick={() => commit()}>{editor.mode === "add" ? "Add staff" : "Save position"}</Button></>}>
       {editor.confirmPlayer ? <p style={{ margin: 0 }}>This person is registered as a player. Add as staff anyway?</p> : <>
         {editor.mode === "edit" && row ? <p style={{ margin: 0, fontWeight: 600 }}>{row.name}</p> : <>
-          <Field label="Account search"><Input type="search" value={search.query} onChange={e => search.setQuery(e.target.value)} autoComplete="off" autoFocus placeholder="Name, username or Discord" /></Field>
+          <div className="dk-field-row">
+            <Field label="Account search"><Input type="search" value={search.query} onChange={e => search.setQuery(e.target.value)} autoComplete="off" autoFocus /></Field>
+            <Button onClick={() => void search.run(search.query.trim())}>Find account</Button>
+          </div>
+          <p className="dd-meta" style={{ margin: 0 }}>{ACCOUNT_SEARCH_HINT}</p>
           {search.state === "error" && <p className="dd-error" role="alert" style={{ margin: 0 }}>{search.error}</p>}
           {search.results && <ul className="dk-tdlg-find" aria-label="Accounts found">
             {search.results.length === 0 && <li className="dd-meta">No accounts match.</li>}

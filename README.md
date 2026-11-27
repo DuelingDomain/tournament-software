@@ -27,14 +27,19 @@ npm run dev
 ```
 
 Sign in at `/auth/start`. Mock mode shows six invented accounts and uses
-in-memory account search/profile updates. Profile changes in mock mode reset
+in-memory account search/profile updates. For exact email lookups, use
+`<mock username>@example.test`. Profile changes in mock mode reset
 when the server restarts. Event state and local sessions remain in SQLite.
 Mock sign-in is disabled in production even if `DD_APP_URL=mock` is supplied.
 
 For the real bridge, set `DD_APP_URL` to the Dueling Domain application origin
 and share `DD_BRIDGE_SECRET` with its tournament bridge configuration. Configure
 the DD-side tournament callback origin to this application's `PUBLIC_URL`.
-The bridge never shares databases or requests account email addresses.
+The apps keep separate databases. A verified email address can be used as an
+exact lookup input. Account results contain profile details and member IDs.
+
+Event owners can copy or regenerate their personal invite link in the desk's
+**All Players** tab. People who open it and sign in join that owner's player list.
 
 ## Environment
 
@@ -46,6 +51,7 @@ The bridge never shares databases or requests account email addresses.
 | `DD_BRIDGE_SECRET` | Shared runtime bridge secret, at least 32 characters. |
 | `SESSION_SECRET` | Independent runtime cookie-signing secret, at least 32 characters. |
 | `CREATE_CODE` | Required creation code; empty disables this check. |
+| `ADMIN_USER_IDS` | Comma-separated Dueling Domain user IDs with directory-wide partial account search. Defaults to empty. |
 
 `SPECIAL_MEMBER_IDS_PATH` optionally points to a private file of little-endian
 int64 member IDs, either plain or gzip-compressed (`.gz`). The server accepts

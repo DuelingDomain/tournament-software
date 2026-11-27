@@ -3,12 +3,14 @@ import { competitors, publicView, printData, suggestRounds } from "@dd-tournamen
 import { z } from "zod";
 import { currentUser, signedIn } from "./auth";
 import { lookupAccounts, searchOrganizerAccounts, setMemberId } from "./bridge";
+import { isAdminUser } from "./config";
 import { cachedUser, database, eventRecord, eventRecords } from "./db";
 import { MEMBER_ID_CHECK_BATCH_SIZE } from "./desk-view";
 import { deskView, importEvent, joinEvent, newEvent, openTournamentAsNewEvent, playerCommand, playerResponse, resolveCommand, runCommand, runDummyData } from "./events";
 import { csvDownload, exportEvent } from "./exports";
 import { globalPlayers, globalPlayersCsv, importGlobalPlayers } from "./global-players";
 import { boundary, bodyJson, checkOrigin, HttpError, json, readBody } from "./http";
+import { inviteTokenPattern, joinOrganizer, organizerInvite } from "./organizer-invites";
 import { requireCommand, requireDummyData, requireImport, requireStaff, viewerRole } from "./permissions";
 import { memberIdAccepted } from "./special-member-ids";
 import { commandSchema, dummyDataSchema, partialSettings, result, userId, staffSchema, locationFields } from "./validation";
@@ -59,11 +61,6 @@ function staff(request: Request, code: string) {
   const event = eventRecord(code);
   return { user, event, role: requireStaff(event, user.id) };
 }
-function codeForAccounts(request: Request) {
-  const code = new URL(request.url).searchParams.get("event");
-  if (!code) throw new HttpError(400, "invalid_event");
-  return staff(request, code);
-}
 const discordSchema = z.strictObject({ webhookUrl: z.string().url().max(500).nullable().refine(value => {
   if (value === null) return true;
   const url = new URL(value);
@@ -93,6 +90,16 @@ export function handleApi(request: Request, path: string[]) {
     }
     if (path[0] === "players") {
       const user = signedIn(request);
+      if (path.length === 2 && path[1] === "invite" && (method === "GET" || method === "PUT")) {
+        const code = url.searchParams.get("event");
+        if (!code) throw new HttpError(400, "invalid_event");
+        if (eventRecord(code).ownerUserId !== user.id) throw new HttpError(403, "forbidden_role");
+        return json({ path: organizerInvite(user.id, method === "PUT") });
+      }
+      if (path.length === 2 && path[1] === "join" && method === "POST") {
+        const { token } = await body(request, z.strictObject({ token: z.string().regex(inviteTokenPattern) }));
+        return json({ organizerName: joinOrganizer(token, user.id) });
+      }
       if (path.length === 1 && method === "GET") return json({ players: globalPlayers(user.id) });
       if (path.length === 2 && path[1] === "export" && method === "GET") return csvDownload(globalPlayersCsv(globalPlayers(user.id)), "AllPlayers.csv");
       if (path.length === 2 && path[1] === "import" && method === "POST") return json(importGlobalPlayers(user.id, (await uploadedFile(request)).text));
@@ -134,13 +141,19 @@ export function handleApi(request: Request, path: string[]) {
     if (path[0] === "accounts") {
       // Searching while creating a tournament has no event yet; any signed-in organizer may look accounts up then.
       if (path.length === 2 && path[1] === "search" && method === "GET") {
-        const ownerId = url.searchParams.has("event") ? codeForAccounts(request).event.ownerUserId : signedIn(request).id;
+        const code = url.searchParams.get("event");
+        if (code === "") throw new HttpError(400, "invalid_event");
+        const access = code === null ? null : staff(request, code);
+        const viewer = access?.user ?? signedIn(request);
+        const ownerId = access?.event.ownerUserId ?? viewer.id;
         const query = z.string().max(200).parse(url.searchParams.get("q") ?? "");
-        const users = await searchOrganizerAccounts(ownerId, query);
+        const users = await searchOrganizerAccounts(ownerId, query, { admin: isAdminUser(viewer.id), exact: url.searchParams.get("exact") === "1" });
         return json({ users: users.map(({ id, ...user }) => ({ userId: id, ...user })) });
       }
-      const access = codeForAccounts(request);
       if (path.length === 3 && path[2] === "member-id" && method === "PUT") {
+        const code = url.searchParams.get("event");
+        if (!code) throw new HttpError(400, "invalid_event");
+        const access = staff(request, code);
         // Editing the global account profile follows the event's player-edit permission.
         requireCommand(access.event, access.user.id, { type: "UpdatePlayer", playerId: "profile" });
         const id = userId.parse(Number(path[1]));

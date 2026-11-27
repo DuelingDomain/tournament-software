@@ -63,7 +63,13 @@ Only the location owner can edit/delete; another user's ID returns 404. Setting 
 
 ## Account lookup
 
-`GET /api/accounts/search` uses the signed-in organizer's account. With `event=:code`, event staff can search on behalf of its organizer. A blank `q` lists up to 100 known accounts by display name, including the organizer, linked players and staff from the organizer's events, and prior search results. Nonempty queries search the account service and add the results to the organizer's known accounts.
+`GET /api/accounts/search` uses the signed-in account's list. With `event=:code`, staff use the event owner's list. A blank `q` lists up to 100 known accounts by display name. A typed `q` filters those accounts by display name, username, Discord username or member ID. The list includes the owner, linked players and staff from the owner's events, accounts added through an invite, and accounts previously enrolled, assigned to staff, or linked by the organizer or their staff.
+
+Submit a full username, Discord username, member ID or verified email with `exact=1` to add at most one case-insensitive bridge match to the search results. Email is an input-only identifier. Enrollment, staff assignment and account linking remember accounts when the change succeeds. On upgrade, the server clears rows from the old search history. Existing event links remain visible.
+
+A signed-in viewer listed in `ADMIN_USER_IDS` uses directory-wide partial search for any nonempty query. Event-scoped requests still require event staff access.
+
+`GET /api/players/invite?event=:code` returns `{ path }` for the event owner's personal invite. `PUT` returns a new path and revokes the previous link for future joins. Opening `/join/:token` uses the existing sign-in flow when needed and then submits `POST /api/players/join` with `{ token }`. The request adds the signed-in account to the owner's list and returns `{ organizerName }`. A repeated join succeeds without creating a duplicate.
 
 ## Team commands
 

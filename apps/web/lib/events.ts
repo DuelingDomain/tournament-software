@@ -2,8 +2,8 @@ import { randomBytes, randomInt } from "node:crypto";
 import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type EventState, type Player, type StaffRole, type StaffAssignment, competitors, printData, recordActivity } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { isReservedMemberId, normalizeMemberId } from "@dd-tournament/engine";
-import { lookupAccounts, searchAccounts } from "./bridge";
-import { cacheUser, cachedUser, database, eventRecord, saveEvent, type EventRecord } from "./db";
+import { findAccount, lookupAccounts } from "./bridge";
+import { cacheUser, cachedUser, database, eventRecord, rememberEventAccounts, saveEvent, type EventRecord } from "./db";
 import type { DeskView } from "./desk-view";
 import { HttpError } from "./http";
 import { mergeGlobalPlayers } from "./global-players";
@@ -47,6 +47,7 @@ export function newEvent(user: TournamentUser, name: string, settings: Parameter
     let code: string;
     do { code = randomBytes(5).toString("hex").toUpperCase(); } while (database().prepare("SELECT 1 FROM events WHERE code=?").get(code));
     database().prepare("INSERT INTO events(code,owner_user_id,state,version) VALUES (?,?,?,1)").run(code, user.id, JSON.stringify(state));
+    rememberEventAccounts(user.id, state);
     return code;
   }).immediate();
 }
@@ -146,10 +147,12 @@ async function matchLegacyPlayers(players: readonly LegacyPlayer[]) {
   const byMemberId = new Map<string, TournamentUser>();
   for (let i = 0; i < ids.length; i += LOOKUP_PARALLEL) {
     const chunk = ids.slice(i, i + LOOKUP_PARALLEL);
-    const found = await Promise.all(chunk.map(id => searchAccounts(id)));
+    const found = await Promise.all(chunk.map(id => findAccount(id)));
     chunk.forEach((id, index) => {
-      const exact = found[index]!.filter(user => user.memberId === id);
-      if (exact.length === 1) byMemberId.set(id, exact[0]!);
+      const account = found[index];
+      if (account?.memberId !== id) return;
+      cacheUser(account);
+      byMemberId.set(id, account);
     });
   }
   return byMemberId;
@@ -229,6 +232,7 @@ export async function openTournamentAsNewEvent(user: TournamentUser, xml: string
     let code: string;
     do { code = randomBytes(5).toString("hex").toUpperCase(); } while (database().prepare("SELECT 1 FROM events WHERE code=?").get(code));
     database().prepare("INSERT INTO events(code,owner_user_id,state,version) VALUES (?,?,?,1)").run(code, user.id, JSON.stringify(state));
+    rememberEventAccounts(user.id, state);
     return { code, imported: state.players.length, unmatched, warnings: parsed.warnings };
   }).immediate();
 }

@@ -22,12 +22,22 @@ export function database() {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       PRIMARY KEY (owner_user_id, user_id)
     );
+    CREATE TABLE IF NOT EXISTS organizer_invites (
+      owner_user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT NOT NULL UNIQUE
+    );
     CREATE TABLE IF NOT EXISTS events (code TEXT PRIMARY KEY, owner_user_id INTEGER NOT NULL REFERENCES users(id), state TEXT NOT NULL, version INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS locations (id TEXT PRIMARY KEY, owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS global_players (owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, member_id TEXT NOT NULL, first_name TEXT NOT NULL, last_name TEXT NOT NULL, PRIMARY KEY (owner_user_id, member_id));
     CREATE TABLE IF NOT EXISTS discord_settings (event_code TEXT PRIMARY KEY REFERENCES events(code) ON DELETE CASCADE, webhook_url TEXT, post_pairings INTEGER NOT NULL DEFAULT 0, post_standings INTEGER NOT NULL DEFAULT 0);`);
+  db.transaction(() => {
+    if (db.pragma("user_version", { simple: true }) === 0) {
+      // Before version 1, these rows came from searches. Existing event links are still read from events.
+      db.exec("DELETE FROM known_accounts; PRAGMA user_version = 1");
+    }
+  }).immediate();
   active = { path, db };
   return db;
 }
@@ -38,15 +48,15 @@ export function cachedUser(id: number): TournamentUser | null {
   const row = database().prepare<[number], { data: string }>("SELECT data FROM users WHERE id=?").get(id);
   return row ? tournamentUserSchema.parse(JSON.parse(row.data)) : null;
 }
-export function rememberAccounts(ownerId: number, users: readonly TournamentUser[]) {
-  if (!users.length) return;
+export function rememberAccounts(ownerId: number, userIds: readonly number[]) {
+  if (!userIds.length) return;
   const db = database();
   const insert = db.prepare("INSERT INTO known_accounts (owner_user_id, user_id) VALUES (?, ?) ON CONFLICT DO NOTHING");
   db.transaction(() => {
-    for (const user of users) insert.run(ownerId, user.id);
+    for (const userId of userIds) insert.run(ownerId, userId);
   })();
 }
-export function knownAccounts(ownerId: number, limit: number): TournamentUser[] {
+export function knownAccounts(ownerId: number, limit = -1): TournamentUser[] {
   // Roster and staff entries also cover events saved before account searches were tracked.
   const rows = database().prepare<[{ ownerId: number; limit: number }], { data: string }>(`
     WITH known(id) AS (
@@ -79,7 +89,15 @@ export function eventRecord(code: string): EventRecord {
   return decode(row);
 }
 export function eventRecords() { return database().prepare<[], EventRow>("SELECT * FROM events ORDER BY rowid DESC").all().map(decode); }
+function eventAccountIds(state: EventState) {
+  return new Set([...state.players.flatMap(p => p.userId === null ? [] : [p.userId]), ...state.staff.map(s => s.userId)]);
+}
+export function rememberEventAccounts(ownerId: number, state: EventState, previous?: EventState) {
+  const existing = previous ? eventAccountIds(previous) : new Set<number>();
+  rememberAccounts(ownerId, [...eventAccountIds(state)].filter(id => id !== ownerId && !existing.has(id)));
+}
 export function saveEvent(event: EventRecord, state: EventState) {
+  rememberEventAccounts(event.ownerUserId, state, event.state);
   database().prepare("UPDATE events SET state=?, version=version+1 WHERE code=?").run(JSON.stringify(state), event.code);
   return { ...event, state, version: event.version + 1 };
 }

@@ -13,13 +13,14 @@ function sessionCookie(value: string, maxAge: number) {
   const secure = process.env.PUBLIC_URL?.startsWith("https://") || process.env.NODE_ENV === "production";
   return `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
 }
-function sessionToken(request: Request): string | null {
+type SessionRequest = { headers: Pick<Headers, "get"> };
+function sessionToken(request: SessionRequest): string | null {
   const cookie = request.headers.get("cookie")?.split(";").map(s => s.trim()).find(s => s.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
   const match = /^([a-f0-9]{64})\.([a-f0-9]{64})$/.exec(cookie ?? "");
   if (!match) return null;
   return timingSafeEqual(Buffer.from(signature(match[1]!), "hex"), Buffer.from(match[2]!, "hex")) ? match[1]! : null;
 }
-export function currentUser(request: Request) {
+export function currentUser(request: SessionRequest) {
   const token = sessionToken(request);
   if (!token) return null;
   const row = database().prepare<[string, number], { user_id: number }>("SELECT user_id FROM sessions WHERE token_hash=? AND expires_at>?").get(hash(token), Math.floor(Date.now() / 1000));
