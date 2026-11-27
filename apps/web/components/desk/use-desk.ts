@@ -12,6 +12,7 @@ export type SendFn = (input: SendInput, opts?: { retry?: boolean }) => Promise<D
 const POLL_MS = 3000;
 export const MESSAGES: Record<string, string> = {
   forbidden_role: "Your role cannot do that.",
+  staff_required: "Add at least one staff member.",
   version_conflict: "Another staff member changed the tournament. The desk was refreshed, try again.",
   account_not_found: "That Dueling Domain account was not found.",
   member_id_taken: "Another account already has that COSSY ID.",
@@ -22,7 +23,8 @@ export const MESSAGES: Record<string, string> = {
   forbidden_origin: "The request was blocked. Reload the page and try again.",
   already_open: "You already have this tournament open. Open that one instead.",
   too_many_players: "This file has too many players to open.",
-  rate_limited: "Too many files opened in a short time. Wait a minute and try again.",
+  rate_limited: "Too many requests. Try again later.",
+  import_lookup_rate_limited: "Daily account-lookup limit reached. Try again tomorrow.",
   legacy_version_too_new: "This file was saved by a newer version of the program. Update the program and try again.",
   invalid_legacy_xml: "That file is not a tournament file this program can read.",
   unsupported_legacy_event: "That tournament uses a player structure this program does not support.",

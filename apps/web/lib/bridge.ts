@@ -1,9 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { normalizeMemberId } from "@dd-tournament/engine";
-import { appUrl, mockEnabled, secret } from "./config";
-import { cacheUser, knownAccounts, rememberAccounts } from "./db";
+import { appUrl, isAdminUser, mockEnabled, secret } from "./config";
+import { cacheUser, cachedUser, eventAccountIds, grantAccount, knownAccounts, type EventRecord } from "./db";
 import { HttpError } from "./http";
+import { createRateLimit } from "./rate-limits";
 import { isSpecialMemberId, memberIdAccepted } from "./special-member-ids";
 import { tournamentUserSchema, type TournamentUser } from "./validation";
 
@@ -42,7 +43,7 @@ export const fakeUsers: TournamentUser[] = [
   { id: 3, username: "lumi-demo", displayName: "Lumi Lantern", discordUserId: null, discordUsername: null, memberId: null },
   { id: 4, username: "pax-demo", displayName: "Pax Pebble", discordUserId: null, discordUsername: null, memberId: null },
   { id: 5, username: "tavi-demo", displayName: "Tavi Thistle", discordUserId: null, discordUsername: null, memberId: null },
-  { id: 6, username: "nori-demo", displayName: "Nori Nimbus", discordUserId: null, discordUsername: null, memberId: null },
+  { id: 6, username: "nori-demo", displayName: "Nori Nimbus", discordUserId: null, discordUsername: "nori.nimbus", memberId: null },
 ];
 async function bridgeRequest(method: string, pathWithQuery: string, body?: object): Promise<unknown> {
   const rawBody = body === undefined ? "" : JSON.stringify(body);
@@ -68,23 +69,56 @@ function parseBridge<T>(schema: z.ZodType<T>, data: unknown): T {
   if (!parsed.success) throw new HttpError(503, "bridge_unavailable");
   return parsed.data;
 }
-export async function searchAccounts(query: string) {
-  const users = mockEnabled() ? fakeUsers.filter(user => query.trim() && [user.username, user.displayName, user.discordUserId, user.discordUsername, user.memberId]
-    .some(value => value?.toLowerCase().includes(query.trim().toLowerCase()))).slice(0, 20)
-    : parseBridge(z.object({ users: z.array(tournamentUserSchema) }), await bridgeRequest("GET", `/api/tournament-bridge/users/search?${new URLSearchParams({ q: query })}`)).users;
-  users.forEach(cacheUser);
-  return users;
-}
-const KNOWN_ACCOUNT_LIMIT = 100;
-export async function searchOrganizerAccounts(ownerId: number, query: string) {
-  if (!query.trim()) {
-    return mockEnabled()
-      ? [...fakeUsers].sort((a, b) => a.displayName.localeCompare(b.displayName) || a.id - b.id).slice(0, KNOWN_ACCOUNT_LIMIT)
-      : knownAccounts(ownerId, KNOWN_ACCOUNT_LIMIT);
+async function searchAccounts(query: string, exact: boolean) {
+  const q = query.toLowerCase();
+  if (mockEnabled()) {
+    if (exact) {
+      const memberId = normalizeMemberId(q);
+      const user = fakeUsers.find(user => user.username.toLowerCase() === q || user.discordUsername?.toLowerCase() === q
+        || user.memberId !== null && user.memberId === memberId || `${user.username}@example.test`.toLowerCase() === q);
+      return user ? [user] : [];
+    }
+    return fakeUsers.filter(user => [user.username, user.displayName, user.discordUserId, user.discordUsername, user.memberId]
+      .some(value => value?.toLowerCase().includes(q))).slice(0, 20);
   }
-  const users = await searchAccounts(query);
-  rememberAccounts(ownerId, users);
-  return users;
+  const params = new URLSearchParams({ q: query });
+  if (exact) params.set("exact", "1");
+  const users = z.array(tournamentUserSchema);
+  return parseBridge(z.object({ users: exact ? users.max(1) : users }),
+    await bridgeRequest("GET", `/api/tournament-bridge/users/search?${params}`)).users;
+}
+
+export async function findAccount(query: string) {
+  const [user] = await searchAccounts(query, true);
+  return user;
+}
+
+const KNOWN_ACCOUNT_LIMIT = 100;
+const limitExactLookups = createRateLimit([{ limit: 30, windowMs: 60_000 }, { limit: 300, windowMs: 24 * 60 * 60_000 }]);
+const handlePattern = /^[\p{L}\p{N}_.-]+$/u;
+const emailSchema = z.email();
+
+export async function searchOrganizerAccounts(viewerId: number, query: string, exact: boolean, event?: EventRecord) {
+  const trimmed = query.trim();
+  if (trimmed && isAdminUser(viewerId)) return searchAccounts(trimmed, false);
+
+  const accounts = event && event.ownerUserId !== viewerId
+    ? [...eventAccountIds(event.state)].map(cachedUser).filter(user => user !== null)
+      .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" }) || a.id - b.id)
+    : knownAccounts(viewerId, trimmed ? -1 : KNOWN_ACCOUNT_LIMIT);
+  if (!trimmed) return accounts.slice(0, KNOWN_ACCOUNT_LIMIT);
+  const handle = trimmed.replace(/^@/, "");
+  const localQuery = handle.toLowerCase();
+  const known = accounts.filter(user => [user.displayName, user.username, user.discordUsername,
+    user.memberId, user.memberId?.padStart(10, "0")]
+    .some(value => value?.toLowerCase().includes(localQuery))).slice(0, KNOWN_ACCOUNT_LIMIT);
+  if (!exact || (!handlePattern.test(handle) && !emailSchema.safeParse(trimmed).success && normalizeMemberId(trimmed) === null)) return known;
+
+  limitExactLookups(viewerId);
+  const match = await findAccount(handle);
+  if (!match) return known;
+  grantAccount(viewerId, match);
+  return [match, ...known.filter(user => user.id !== match.id)];
 }
 export async function lookupAccounts(ids: number[]) {
   const unique = [...new Set(ids)];

@@ -15,7 +15,7 @@ All existing authentication, no-store headers, command conflicts, result enums, 
 }
 ```
 
-Returns `201 { code }`. Creation, location selection, owner assignment and staff assignment are atomic. Staff accounts are resolved through the account bridge. The creator remains an organizer.
+Returns `201 { code }`. Creation, location selection, owner assignment and staff assignment are atomic. Staff accounts are resolved through the account bridge. `staff` must hold at least one entry, or the call returns `400 staff_required`. The creator is not added on its own: the creator may be left out, and if listed must be the organizer. No one else may be organizer (`403 forbidden_role`).
 
 `EventSettings` adds these fields alongside the existing name, startsAt, location and round settings:
 
@@ -30,7 +30,7 @@ timeZone?: string;
 
 Defaults are advanced, Swiss, individual and no saved location. `startsAt` is the combined date/time in ISO format with an offset. Player structure locks as soon as anyone enrolls, including after roster removal. Existing stored documents receive missing defaults when loaded. Pairing structure remains editable after rounds begin; existing round stages and any ongoing playoff bracket are preserved.
 
-Update with `{ type: "UpdateSettings", settings: Partial<EventSettings>, staff?: StaffAssignment[] }`. Providing staff replaces assignments, preserves IDs for retained accounts, and must retain the owner as organizer. Scorekeepers may update settings but cannot replace staff. Head judges cannot add, remove or change organizers through either staff commands or bulk settings.
+Update with `{ type: "UpdateSettings", settings: Partial<EventSettings>, staff?: StaffAssignment[] }`. Providing staff replaces assignments and preserves IDs for retained accounts. The list must not be empty (`400 staff_required`). The owner may be absent; if listed, the owner must be organizer, and no other account may become organizer. Only the owner removes the owner from the list (also with `RemoveStaff`). `RemoveStaff` of the last staff member returns `400 staff_required`. `AddStaff`, `SetStaffPosition` and `SetStaffRole` follow the same organizer rule. The owner keeps full access without a staff row. `PairNextRound` fails with `NO_STAFF` while the list is empty. `DeskView` has `ownerUserId` and `viewerUserId`. Scorekeepers may update settings but cannot replace staff. Head judges cannot add, remove or change organizers through either staff commands or bulk settings.
 
 `StaffAssignment` is `{ userId: number, name: string, role?: StaffRole, position?: StaffPosition }`. Supply a role or position; if both are supplied, they must agree. Account names are resolved by the service.
 
@@ -63,7 +63,13 @@ Only the location owner can edit/delete; another user's ID returns 404. Setting 
 
 ## Account lookup
 
-`GET /api/accounts/search` uses the signed-in organizer's account. With `event=:code`, event staff can search on behalf of its organizer. A blank `q` lists up to 100 known accounts by display name, including the organizer, linked players and staff from the organizer's events, and prior search results. Nonempty queries search the account service and add the results to the organizer's known accounts.
+`GET /api/accounts/search` uses the signed-in account's list. With `event=:code`, staff use the event owner's list. A blank `q` lists up to 100 known accounts by display name. A typed `q` filters those accounts by display name, username, Discord username or member ID. The list includes the owner, linked players and staff from the owner's events, accounts added through an invite, and accounts previously enrolled, assigned to staff, or linked by the organizer or their staff.
+
+Submit a full username, Discord username, member ID or verified email with `exact=1` to add at most one case-insensitive bridge match to the search results. Email is an input-only identifier. Enrollment, staff assignment and account linking remember accounts when the change succeeds. On upgrade, the server clears rows from the old search history. Existing event links remain visible.
+
+A signed-in viewer listed in `ADMIN_USER_IDS` uses directory-wide partial search for any nonempty query. Event-scoped requests still require event staff access.
+
+`GET /api/players/invite?event=:code` returns `{ path }` for the event owner's personal invite. `PUT` returns a new path and revokes the previous link for future joins. Opening `/join/:token` uses the existing sign-in flow when needed and then submits `POST /api/players/join` with `{ token }`. The request adds the signed-in account to the owner's list and returns `{ organizerName }`. A repeated join succeeds without creating a duplicate.
 
 ## Team commands
 

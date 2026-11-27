@@ -49,9 +49,17 @@ describe("account entries and staff", () => {
   it("adds staff accounts, changes roles and refuses duplicate staff accounts", () => {
     let s = run(event(), { type: "AddStaff", userId: 10, name: "Judge", role: "judge" });
     expect(() => run(s, { type: "AddStaff", userId: 10, name: "Duplicate", role: "staff" })).toThrow(expect.objectContaining({ code: "duplicate_account" }));
-    s = run(s, { type: "SetStaffRole", staffId: s.staff[0].id, role: "head_judge" });
-    expect(s.staff[0]).toMatchObject({ userId: 10, name: "Judge", role: "head_judge" });
+    s = run(s, { type: "SetStaffRole", staffId: s.staff.find(m => m.userId === 10)!.id, role: "head_judge" });
+    expect(s.staff.find(m => m.userId === 10)).toMatchObject({ userId: 10, name: "Judge", role: "head_judge" });
     expect(() => run(s, { type: "SetStaffRole", staffId: "missing", role: "organizer" })).toThrow(expect.objectContaining({ code: "STAFF_NOT_FOUND" }));
+  });
+
+  it("refuses to pair a round while the event has no staff", () => {
+    let s = event();
+    s = run(s, { type: "UpdateSettings", settings: {}, staff: [] });
+    expect(() => run(s, { type: "PairNextRound" })).toThrow(expect.objectContaining({ code: "NO_STAFF" }));
+    s = run(s, { type: "AddStaff", userId: 10, name: "Judge", role: "judge" });
+    expect(run(s, { type: "PairNextRound" }).rounds).toHaveLength(1);
   });
 
   it("disables late entry without closing staff registration commands", () => {

@@ -4,15 +4,16 @@ import type { StaffRole } from "@dd-tournament/engine";
 import { isTemporaryMemberId, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
 import type { DeskView } from "../../lib/desk-view";
 import { Button, Field, Input } from "../ui";
-import { saveMemberId, useAccountSearch, type Account } from "./accounts";
+import { ACCOUNT_SEARCH_HINT, saveMemberId, useAccountSearch, type Account } from "./accounts";
 import { WarnIcon } from "./icons";
 import { useMemberIdWarnings } from "./member-id-warnings";
+import { OrganizerInvite } from "./organizer-invite";
 import { can } from "./roles";
 import type { SendFn } from "./use-desk";
 
 const pad = (id: string | null) => (id ? (normalizeMemberId(id) ? padMemberId(id) : id) : "");
 
-/** The "All Players" tab: every Dueling Domain account staff can look up, with COSSY ID editing. */
+/** The "All Players" tab includes the organizer's account list and COSSY ID editing. */
 export function AllPlayersPanel({ code, desk, role, send, notify, onExport, onImport }: { code: string; desk: DeskView; role: StaffRole; send: SendFn; notify: (m: string) => void; onExport: () => void; onImport: () => void }) {
   const search = useAccountSearch(code);
   const [edits, setEdits] = useState<Record<number, string>>({});
@@ -52,17 +53,18 @@ export function AllPlayersPanel({ code, desk, role, send, notify, onExport, onIm
     if (r.ok) notify(`${a.displayName} enrolled`);
   }
 
-  return <div className="dk-sec">
+  return <div className="dk-sec dk-sec--all-players">
     <h2 className="dk-h2">All Players</h2>
-    <p className="dd-meta" style={{ margin: 0 }}>Every Dueling Domain account you can look up. Edit a COSSY ID here and it saves to the account.</p>
+    {role === "organizer" && <OrganizerInvite code={code} />}
     <div className="dk-field-row" aria-label="Global player list">
       <span className="dd-meta" style={{ alignSelf: "center" }}>Your global player list: {listed === null ? "loading" : `${listed} ${listed === 1 ? "player" : "players"}`}. Players from tournaments you open or import are added.</span>
       <div className="dk-btn-row"><Button onClick={onImport}>Import Player List…</Button><Button onClick={onExport} disabled={listed === 0}>Export to CSV</Button></div>
     </div>
     <form role="search" className="dk-field-row" onSubmit={e => { e.preventDefault(); void search.run(search.query.trim()); }}>
-      <Field label="Account search"><Input type="search" value={search.query} onChange={e => search.setQuery(e.target.value)} autoComplete="off" placeholder="Name, username, Discord or COSSY ID" /></Field>
-      <div className="dk-btn-row"><Button type="submit" variant="violet">Search</Button><Button onClick={() => { search.setQuery(""); void search.run(""); }}>Show All</Button></div>
+      <Field label="Account search"><Input type="search" value={search.query} onChange={e => search.setQuery(e.target.value)} autoComplete="off" /></Field>
+      <div className="dk-btn-row"><Button type="submit" variant="violet">Find account</Button><Button onClick={() => { search.setQuery(""); void search.run(""); }}>Show All</Button></div>
     </form>
+    <p className="dd-meta" style={{ margin: 0 }}>{ACCOUNT_SEARCH_HINT}</p>
     <span role="status" className={msg?.bad ? "dd-error" : "dd-meta"}>{msg?.text}</span>
     {search.state === "error" && <p className="dd-error" role="alert">{search.error}</p>}
     {search.results === null && search.state !== "error" && <p className="dk-empty">Search to list accounts.</p>}

@@ -4,7 +4,7 @@ import type { Player, StaffRole } from "@dd-tournament/engine";
 import { isTemporaryMemberId, normalizeMemberId, padMemberId } from "@dd-tournament/engine";
 import type { DeskView } from "../../lib/desk-view";
 import { Button, ConfirmDialog, Field, Input } from "../ui";
-import { saveMemberId, useAccountSearch, type Account } from "./accounts";
+import { ACCOUNT_SEARCH_HINT, saveMemberId, useAccountSearch, type Account } from "./accounts";
 import { CheckIcon, DashIcon, RingIcon, WarnIcon } from "./icons";
 import { byName, nextTempId, statusText } from "./helpers";
 import { useMemberIdWarnings } from "./member-id-warnings";
@@ -250,10 +250,10 @@ export function PlayersPanel({ code, desk, role, send, notify }: Props) {
 
       <section aria-labelledby="lookup-h" className="dk-lookup">
         <h2 id="lookup-h" className="dk-h2">Name lookup</h2>
-        <p className="dd-meta" style={{ margin: 0, lineHeight: 1.5 }}>Searches Dueling Domain accounts by name, username, Discord or COSSY ID.</p>
+        <p className="dd-meta" style={{ margin: 0, lineHeight: 1.5 }}>{ACCOUNT_SEARCH_HINT}</p>
         <form role="search" style={{ display: "flex", gap: 8, alignItems: "flex-end" }} onSubmit={e => { e.preventDefault(); void search.run(search.query.trim()); }}>
           <Field label="Account search" className="dd-field--grow"><Input type="search" value={search.query} onChange={e => search.setQuery(e.target.value)} autoComplete="off" /></Field>
-          <Button type="submit" variant="violet">Search</Button>
+          <Button type="submit" variant="violet">Find account</Button>
           <Button onClick={() => { search.setQuery(""); void search.run(""); }}>Show All</Button>
         </form>
         <div className="dk-scroll"><AccountList accounts={search.results} state={search.state} error={search.error} query={search.query} enrolled={enrolledIds}

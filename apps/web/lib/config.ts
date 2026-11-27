@@ -1,6 +1,9 @@
 import { HttpError } from "./http";
 
 export function mockEnabled() { return process.env.DD_APP_URL === "mock" && process.env.NODE_ENV !== "production"; }
+export function isAdminUser(userId: number) {
+  return (process.env.ADMIN_USER_IDS ?? "").split(",").some(id => id.trim() === String(userId));
+}
 export function secret(name: "DD_BRIDGE_SECRET" | "SESSION_SECRET"): string {
   const value = process.env[name] ?? "";
   if (value.length < 32) throw new HttpError(503, "configuration_required");

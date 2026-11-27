@@ -1,23 +1,25 @@
 import { randomBytes, randomInt } from "node:crypto";
-import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, type Command, type CommandContext, type EventState, type Player, type StaffRole, type StaffAssignment, competitors, printData, recordActivity } from "@dd-tournament/engine";
+import { applyCommand, createEvent, integrity, playerView, standings, suggestRounds, CommandError, type Command, type CommandContext, type EventState, type Player, type StaffRole, type StaffAssignment, competitors, printData, recordActivity } from "@dd-tournament/engine";
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
-import { isReservedMemberId, normalizeMemberId } from "@dd-tournament/engine";
-import { lookupAccounts, searchAccounts } from "./bridge";
-import { cacheUser, cachedUser, database, eventRecord, saveEvent, type EventRecord } from "./db";
+import { isReservedMemberId, isTeamId, normalizeMemberId } from "@dd-tournament/engine";
+import { findAccount, lookupAccounts } from "./bridge";
+import { isAdminUser } from "./config";
+import { cacheUser, cachedUser, database, eventAccountIds, eventRecord, grantedAccountIds, knownAccounts, rememberEventAccounts, saveEvent, type EventRecord } from "./db";
 import type { DeskView } from "./desk-view";
 import { HttpError } from "./http";
 import { mergeGlobalPlayers } from "./global-players";
 import { joinReason, requireCommand, requireDummyData, requireImport, requireStaff } from "./permissions";
 import { locationSettings } from "./locations";
+import { createRateLimit } from "./rate-limits";
 import { hasSpecialMemberIds, memberIdAccepted } from "./special-member-ids";
 import type { DummyData, TournamentUser } from "./validation";
 
 export function context(user: TournamentUser): CommandContext {
   return { now: new Date().toISOString(), seed: randomInt(0, 2 ** 48 - 1), actor: String(user.id) };
 }
-export function deskView(event: EventRecord, role: StaffRole): DeskView {
+export function deskView(event: EventRecord, role: StaffRole, viewerUserId: number): DeskView {
   return { state: event.state, standings: standings(event.state), suggestedRounds: suggestRounds(competitors(event.state).length),
-    version: event.version, integrity: integrity(event.state, memberIdAccepted), printData: printData(event.state), viewerRole: role, ownerUserId: event.ownerUserId,
+    version: event.version, integrity: integrity(event.state, memberIdAccepted), printData: printData(event.state), viewerRole: role, ownerUserId: event.ownerUserId, viewerUserId,
     ...(hasSpecialMemberIds() ? { specialMemberIdsEnabled: true } : {}),
     links: { public: `/e/${event.code}`, desk: `/e/${event.code}/desk`, join: `/e/${event.code}/me` },
     accounts: Object.fromEntries(event.state.players.map(player => {
@@ -36,29 +38,36 @@ export function newEvent(user: TournamentUser, name: string, settings: Parameter
     cacheUser(user);
     let state = createEvent({ ...locationSettings(user.id, settings), name }, context(user));
     state.legacyEventId = newLegacyEventId();
-    state = applyCommand(state, { type: "AddStaff", userId: user.id, name: user.displayName, role: "organizer" }, context(user));
+    // The creator is only on staff when the list says so; the list is never empty.
+    if (staff.length === 0) throw new HttpError(400, "staff_required");
     for (const entry of staff) {
-      if (entry.userId === user.id) {
-        if ((entry.position ?? entry.role) !== "organizer") throw new HttpError(403, "forbidden_role");
-        continue;
-      }
+      if ((entry.userId === user.id) !== ((entry.position ?? entry.role) === "organizer")) throw new HttpError(403, "forbidden_role");
       state = applyCommand(state, { type: "AddStaff", ...entry }, context(user));
     }
     let code: string;
     do { code = randomBytes(5).toString("hex").toUpperCase(); } while (database().prepare("SELECT 1 FROM events WHERE code=?").get(code));
     database().prepare("INSERT INTO events(code,owner_user_id,state,version) VALUES (?,?,?,1)").run(code, user.id, JSON.stringify(state));
+    rememberEventAccounts(user.id, state);
     return code;
   }).immediate();
 }
-export async function resolveCommand(command: Command): Promise<Command> {
+export async function resolveCommand(command: Command, viewerId: number, event?: EventRecord): Promise<Command> {
   const ids = command.type === "UpdateSettings" && command.staff ? command.staff.map(s => s.userId) : command.type === "AddPlayers" ? command.players.flatMap(p => p.userId === null ? [] : [p.userId]) : command.type === "AddStaff" || command.type === "LinkPlayerAccount" ? [command.userId] : [];
   if (!ids.length) return command;
+  if (!isAdminUser(viewerId) && ids.some(id => id !== viewerId)) {
+    const allowed = event ? eventAccountIds(event.state) : new Set<number>();
+    allowed.add(viewerId);
+    for (const id of grantedAccountIds(viewerId)) allowed.add(id);
+    if (!event || event.ownerUserId === viewerId) {
+      for (const { id } of knownAccounts(viewerId)) allowed.add(id);
+    }
+    if (ids.some(id => !allowed.has(id))) throw new HttpError(422, "account_not_found");
+  }
   const { users, missing } = await lookupAccounts(ids);
-  if (missing.length) throw new HttpError(422, "account_not_found");
+  const byId = new Map(users.map(user => [user.id, user]));
+  if (missing.length || ids.some(id => !byId.has(id))) throw new HttpError(422, "account_not_found");
   function account(id: number) {
-    const user = users.find(user => user.id === id);
-    if (!user) throw new HttpError(422, "account_not_found");
-    return user;
+    return byId.get(id)!;
   }
   if (command.type === "UpdateSettings" && command.staff) return { ...command, staff: command.staff.map(s => ({ ...s, name: account(s.userId).displayName })) };
   if (command.type === "AddPlayers") return { ...command, players: command.players.map(p => {
@@ -74,12 +83,12 @@ function runCommands(code: string, user: TournamentUser, expectedVersion: number
     const event = eventRecord(code);
     authorize(event);
     const role = requireStaff(event, user.id);
-    if (event.version !== expectedVersion) throw new HttpError(409, "version_conflict", { desk: deskView(event, role) });
+    if (event.version !== expectedVersion) throw new HttpError(409, "version_conflict", { desk: deskView(event, role, user.id) });
     const commands = makeCommands(event);
     let state = event.state;
     for (const command of commands) state = applyCommand(state, command.type === "UpdateSettings"
       ? { ...command, settings: locationSettings(event.ownerUserId, command.settings) } : command, context(user));
-    return { desk: deskView(saveEvent(event, state), role), count: commands.length };
+    return { desk: deskView(saveEvent(event, state), role, user.id), count: commands.length };
   }).immediate();
 }
 export function runCommand(code: string, user: TournamentUser, expectedVersion: number, command: Command) {
@@ -139,17 +148,41 @@ export function playerCommand(code: string, user: TournamentUser, make: (player:
 /** Most people one uploaded file may enrol; each one can cost a lookup at the account service. */
 export const MAX_FILE_PLAYERS = 2000;
 const LOOKUP_PARALLEL = 8;
-/** The account service has no lookup by member ID in bulk, so IDs are searched a few at a time. */
-async function matchLegacyPlayers(players: readonly LegacyPlayer[]) {
+// Allow two full files' worth of account lookups per viewer in a rolling day.
+const limitImportLookups = createRateLimit([{ limit: 2 * MAX_FILE_PLAYERS, windowMs: 24 * 60 * 60_000 }], {
+  code: "import_lookup_rate_limited",
+  message: "Daily account-lookup limit reached. Try again tomorrow.",
+});
+function requireFilePlayerLimit(players: readonly LegacyPlayer[]) {
   if (players.length > MAX_FILE_PLAYERS) throw new HttpError(422, "too_many_players", { limit: MAX_FILE_PLAYERS });
-  const ids = [...new Set(players.flatMap(player => player.memberId && !isReservedMemberId(player.memberId) ? [player.memberId] : []))];
+}
+/** The account service has no lookup by member ID in bulk, so IDs are searched a few at a time. */
+async function matchLegacyPlayers(ownerId: number, viewerId: number, players: readonly LegacyPlayer[]) {
+  const ids = new Set(players.flatMap(player => player.memberId && !isReservedMemberId(player.memberId) ? [player.memberId] : []));
   const byMemberId = new Map<string, TournamentUser>();
-  for (let i = 0; i < ids.length; i += LOOKUP_PARALLEL) {
-    const chunk = ids.slice(i, i + LOOKUP_PARALLEL);
-    const found = await Promise.all(chunk.map(id => searchAccounts(id)));
+  if (!ids.size) return byMemberId;
+
+  const ambiguous = new Set<string>();
+  for (const account of knownAccounts(ownerId)) {
+    const id = account.memberId === null ? null : normalizeMemberId(account.memberId);
+    if (id === null || !ids.has(id) || ambiguous.has(id)) continue;
+    if (byMemberId.has(id)) {
+      // A reassigned ID can appear on two cached accounts until both are refreshed.
+      byMemberId.delete(id);
+      ambiguous.add(id);
+    } else byMemberId.set(id, account);
+  }
+
+  const unresolved = [...ids].filter(id => !byMemberId.has(id));
+  limitImportLookups(viewerId, unresolved.length);
+  for (let i = 0; i < unresolved.length; i += LOOKUP_PARALLEL) {
+    const chunk = unresolved.slice(i, i + LOOKUP_PARALLEL);
+    const found = await Promise.all(chunk.map(id => findAccount(id)));
     chunk.forEach((id, index) => {
-      const exact = found[index]!.filter(user => user.memberId === id);
-      if (exact.length === 1) byMemberId.set(id, exact[0]!);
+      const account = found[index];
+      if (account?.memberId !== id) return;
+      cacheUser(account);
+      byMemberId.set(id, account);
     });
   }
   return byMemberId;
@@ -164,11 +197,20 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
   const parsed = kind === "tournament" ? source : null;
   if (kind === "team-players" && ((source?.state.settings.playerStructure ?? 1) === 1 || before.state.settings.playerStructure !== 1)) throw new HttpError(422, "INVALID_PLAYER_STRUCTURE");
   const players = source ? source.players : parseLegacyPlayerList(xml);
-  const matches = await matchLegacyPlayers(players);
+  requireFilePlayerLimit(players);
+  const existingIds = new Set(before.state.players.map(player => player.memberId));
+  const candidates = parsed ? players : players.filter(player => player.memberId === null || !existingIds.has(player.memberId));
+  if (!parsed) {
+    for (const { memberId } of candidates) {
+      if (memberId !== null && isTeamId(memberId)) throw new CommandError("INVALID_MEMBER_ID", "Team IDs belong to teams.");
+      if (memberId === null && before.state.settings.requireMemberId) throw new CommandError("member_id_required", "A member ID is required to enter this event.");
+    }
+  }
+  const matches = await matchLegacyPlayers(before.ownerUserId, user.id, candidates);
   return database().transaction(() => {
     const event = eventRecord(code);
     requireImport(event, user.id);
-    if (event.version !== before.version) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id)) });
+    if (event.version !== before.version) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id), user.id) });
     if (kind !== "tournament" && event.state.phase !== "registration") throw new HttpError(422, "REGISTRATION_ONLY");
     let state: EventState;
     let imported = 0;
@@ -197,22 +239,26 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
     if (parsed) state.activityLog = structuredClone(event.state.activityLog ?? []);
     recordActivity(state, parsed ? "ImportTournament" : "ImportPlayers", context(user));
     mergeGlobalPlayers(user.id, players);
-    return { desk: deskView(saveEvent(event, state), requireStaff(event, user.id)), imported, unmatched };
+    return { desk: deskView(saveEvent(event, state), requireStaff(event, user.id), user.id), imported, unmatched };
   }).immediate();
+}
+
+function requireUnopenedTournament(ownerId: number, fileId: string | undefined) {
+  if (!fileId || fileId === "X99-000000") return;
+  const existing = database().prepare<[number, string], { code: string }>("SELECT code FROM events WHERE owner_user_id=? AND json_extract(state,'$.legacyEventId')=?").get(ownerId, fileId);
+  if (existing) throw new HttpError(409, "already_open", { code: existing.code });
 }
 
 /** Open Tournament: the file becomes a new event and the caller becomes its organizer. */
 export async function openTournamentAsNewEvent(user: TournamentUser, xml: string) {
   const parsed = parseLegacyTournament(xml, context(user), memberIdAccepted);
-  const matches = await matchLegacyPlayers(parsed.players);
+  const fileId = parsed.state.legacyEventId;
+  requireFilePlayerLimit(parsed.players);
+  requireUnopenedTournament(user.id, fileId);
+  const matches = await matchLegacyPlayers(user.id, user.id, parsed.players);
   return database().transaction(() => {
     cacheUser(user);
-    // The original does not open one tournament twice; here the rule is per owner.
-    const fileId = parsed.state.legacyEventId;
-    if (fileId && fileId !== "X99-000000") {
-      const existing = database().prepare<[number, string], { code: string }>("SELECT code FROM events WHERE owner_user_id=? AND json_extract(state,'$.legacyEventId')=?").get(user.id, fileId);
-      if (existing) throw new HttpError(409, "already_open", { code: existing.code });
-    }
+    requireUnopenedTournament(user.id, fileId);
     if (!fileId || fileId === "X99-000000") parsed.state.legacyEventId = newLegacyEventId();
     const phase = parsed.state.phase;
     // Staff can be added only while the event is open for changes; the real phase comes back straight after.
@@ -229,6 +275,7 @@ export async function openTournamentAsNewEvent(user: TournamentUser, xml: string
     let code: string;
     do { code = randomBytes(5).toString("hex").toUpperCase(); } while (database().prepare("SELECT 1 FROM events WHERE code=?").get(code));
     database().prepare("INSERT INTO events(code,owner_user_id,state,version) VALUES (?,?,?,1)").run(code, user.id, JSON.stringify(state));
+    rememberEventAccounts(user.id, state);
     return { code, imported: state.players.length, unmatched, warnings: parsed.warnings };
   }).immediate();
 }

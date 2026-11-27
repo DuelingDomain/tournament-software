@@ -134,6 +134,8 @@
 /* Players panel */
 .dk-field-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
 .dk-field-row > .dd-field { flex: 0 1 240px; }
+.dk-field-row > .dd-field.dd-field--grow { flex: 1 1 260px; }
+.dk-invite-hint { margin: 6px 0 0; }
 .dk-field-row > .dd-field--id { flex: 0 1 170px; }
 .dk-btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .dk-note { flex: 1 0 100%; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--text-2); }
@@ -177,6 +179,7 @@
 .dk-th { padding: 0 12px 4px; }
 .dk-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: start; }
 .dk-sec { display: flex; flex-direction: column; gap: 12px; }
+.dk-sec--all-players { padding-top: 12px; }
 .dk-sec + .dk-sec { margin-top: 8px; padding-top: 20px; border-top: 1px dashed var(--border-dash); }
 .dk-links { display: flex; flex-wrap: wrap; gap: 8px; }
 .dk-copy { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

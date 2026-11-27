@@ -273,6 +273,8 @@ export interface DeskView {
   viewerRole: StaffRole;
   /** Account id of the event owner (set by the service). */
   ownerUserId?: number;
+  /** Account id of the signed-in viewer (set by the service). */
+  viewerUserId?: number;
   /** Staff-only account details per player (from the service, not the engine). */
   accounts: Record<PlayerId, { userId: number | null; username: string | null; discordUserId: string | null; discordUsername: string | null }>;
 }
