@@ -4,7 +4,7 @@ import { z } from "zod";
 import { currentUser, signedIn } from "./auth";
 import { lookupAccounts, searchOrganizerAccounts, setMemberId } from "./bridge";
 import { isAdminUser } from "./config";
-import { cachedUser, database, eventRecord, eventRecords, knownAccounts } from "./db";
+import { cachedUser, database, eventAccountIds, eventRecord, eventRecords, grantedAccountIds, knownAccounts } from "./db";
 import { MEMBER_ID_CHECK_BATCH_SIZE } from "./desk-view";
 import { deskView, importEvent, joinEvent, newEvent, openTournamentAsNewEvent, playerCommand, playerResponse, resolveCommand, runCommand, runDummyData } from "./events";
 import { csvDownload, exportEvent } from "./exports";
@@ -24,10 +24,10 @@ function requireCreateCode(value: unknown) {
   if (configured && !timingSafeEqual(digest(configured), digest(typeof value === "string" ? value : ""))) throw new HttpError(403, "invalid_create_code");
 }
 /** A small in-memory limit per account on file opens, which cost account lookups. */
-const limitOpens = createRateLimit(10, 60_000);
+const limitOpens = createRateLimit([{ limit: 10, windowMs: 60_000 }]);
 /** Per-account budget of member IDs checked per minute, so the private ID list cannot be probed in bulk.
  *  20,000 covers a full global player list; random probing of the 10-digit space stays useless. */
-const limitMemberIdChecks = createRateLimit(20_000, 60_000);
+const limitMemberIdChecks = createRateLimit([{ limit: 20_000, windowMs: 60_000 }]);
 /** Reads one uploaded file from a multipart request; legacy files may be UTF-16. */
 async function uploadedFile(request: Request) {
   const bytes = await readBody(request, 1024 * 1024);
@@ -145,8 +145,12 @@ export function handleApi(request: Request, path: string[]) {
         // Editing the global account profile follows the event's player-edit permission.
         requireCommand(event, viewer.id, { type: "UpdatePlayer", playerId: "profile" });
         const id = userId.parse(Number(path[1]));
-        if (!isAdminUser(viewer.id) && !event.state.players.some(player => player.userId === id)
-          && !knownAccounts(event.ownerUserId).some(account => account.id === id)) throw new HttpError(404, "account_not_found");
+        if (!isAdminUser(viewer.id) && id !== viewer.id) {
+          const allowed = eventAccountIds(event.state).has(id) || (event.ownerUserId === viewer.id
+            ? knownAccounts(viewer.id).some(account => account.id === id)
+            : grantedAccountIds(viewer.id).includes(id));
+          if (!allowed) throw new HttpError(404, "account_not_found");
+        }
         return json(await setMemberId(id, data.memberId));
       }
     }

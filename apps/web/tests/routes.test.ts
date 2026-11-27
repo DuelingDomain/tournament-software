@@ -11,7 +11,7 @@ import { GET as apiGet, POST as apiPost, PUT as apiPut, DELETE as apiDelete } fr
 import { GET as authGet, POST as authPost } from "../app/auth/[action]/route";
 import { GET as healthGet } from "../app/api/health/route";
 import InvitePage from "../app/join/[token]/page";
-import { cacheUser, database, rememberAccounts } from "../lib/db";
+import { cacheUser, database, grantAccount, rememberAccounts } from "../lib/db";
 
 vi.mock("next/headers", () => ({ headers: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -239,7 +239,9 @@ describe("event HTTP contract", () => {
       return deskSchema.parse(await response.json()).state;
     };
     expect((await command(code, owner, version++, { type: "AddStaff", userId: 5, name: "Scorekeeper", role: "scorekeeper" })).status).toBe(200);
-    const { players } = await send({ type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) });
+    const enrolled = await command(code, owner, version++, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) });
+    expect(enrolled.status).toBe(200);
+    const { state: { players } } = deskSchema.parse(await enrolled.json());
     const playerId = players[0]!.id;
     const editId = async (memberId: string) => {
       const { players } = await send({ type: "UpdatePlayer", playerId, memberId });
@@ -561,7 +563,9 @@ describe("role matrix at the command route", () => {
       expect((await command(code, owner, version++, { type: "AddStaff", userId: index + 2, name: "Ignored", role: staffRole })).status).toBe(200);
     }
     const added = deskSchema.parse(await (await command(code, owner, version++, { type: "AddPlayers", players: [{ userId: 1, name: "Ignored" }, { userId: 2, name: "Ignored" }] })).json());
-    const cookie = role === "organizer" ? owner : await login(roles.indexOf(role) + 1);
+    const viewerId = roles.indexOf(role) + 1;
+    const cookie = role === "organizer" ? owner : await login(viewerId);
+    if (role !== "organizer") grantAccount(viewerId, user(6));
     const response = await command(code, cookie, version, make(added.state.players[0]!.id));
     expect(response.status).toBe(allowed.includes(role) ? 200 : 403);
     if (!allowed.includes(role)) { expect(await response.json()).toEqual({ error: "forbidden_role" }); expect((await desk(code, owner)).version).toBe(version); }
@@ -614,6 +618,39 @@ describe("legacy files and service bridge", () => {
     await command(code, owner, 2, { type: "PairNextRound" });
     const response = await upload(code, owner, "players", xml);
     expect(response.status).toBe(422); expect((await desk(code, owner)).version).toBe(3);
+  });
+
+  it("matches a staff import against the event owner's cached accounts before searching the bridge", async () => {
+    const owner = await login(); const scorekeeper = await login(2);
+    const code = await create(owner);
+    seedKnownAccounts(2);
+    expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Scorekeeper", role: "scorekeeper" })).status).toBe(200);
+    cacheUser({ ...user(3), memberId: "0000000303" });
+    cacheUser({ ...user(4), memberId: "404" });
+    rememberAccounts(1, [3]);
+    rememberAccounts(2, [4]);
+    process.env.DD_APP_URL = "https://service.example.test";
+    const bridge = vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const query = new URL(input.toString()).searchParams.get("q");
+      return Response.json({ users: query === "404" ? [{ ...user(4), memberId: "404" }] : [] });
+    });
+    const xml = "<PlayerList><Player><ID>303</ID></Player><Player><ID>404</ID></Player></PlayerList>";
+    const result = await upload(code, scorekeeper, "players", xml);
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({ unmatched: 0, desk: { state: { players: [{ userId: 3 }, { userId: 4 }] } } });
+    expect(bridge).toHaveBeenCalledTimes(1);
+    expect(new URL(bridge.mock.calls[0]![0].toString()).searchParams.get("q")).toBe("404");
+  });
+
+  it("rejects invalid player lists before looking up any member IDs", async () => {
+    const owner = await login(); const code = await create(owner, { requireMemberId: true });
+    process.env.DD_APP_URL = "https://service.example.test";
+    const bridge = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ users: [] }));
+    const xml = "<PlayerList><Player><ID>404</ID></Player><Player><FirstName>No ID</FirstName></Player></PlayerList>";
+    const result = await upload(code, owner, "players", xml);
+    expect(result.status).toBe(422);
+    expect(await result.json()).toMatchObject({ error: "member_id_required" });
+    expect(bridge).not.toHaveBeenCalled();
   });
   it("signs exact service paths and bodies for search, lookup, profile update, and propagates member-ID conflicts", async () => {
     const received: string[] = [];
@@ -722,6 +759,26 @@ describe("legacy files and service bridge", () => {
     expect((await edit(4, null)).status).toBe(200);
   });
 
+  it("scopes staff commands and profile edits to event accounts and the staff viewer's exact grants", async () => {
+    const owner = await login(); const scorekeeper = await login(2);
+    const code = await create(owner);
+    seedKnownAccounts(2, 4, 5);
+    expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Scorekeeper", role: "scorekeeper" })).status).toBe(200);
+    const edit = (id: number) => api(`accounts/${id}/member-id?event=${code}`, scorekeeper, "PUT", { memberId: user(id).memberId });
+    const enroll = () => command(code, scorekeeper, 2, { type: "AddPlayers", players: [{ userId: 4, name: "Player" }] });
+    const search = `accounts/search?event=${code}&q=pax-demo&exact=1`;
+    expect((await api(search, owner)).status).toBe(200);
+    expect((await enroll()).status).toBe(422);
+    expect((await edit(4)).status).toBe(404);
+    expect((await edit(1)).status).toBe(200);
+    expect((await edit(2)).status).toBe(200);
+    expect((await api(search, scorekeeper)).status).toBe(200);
+    expect((await edit(4)).status).toBe(200);
+    expect((await enroll()).status).toBe(200);
+    process.env.ADMIN_USER_IDS = "2";
+    expect((await edit(5)).status).toBe(200);
+  });
+
   it("limits exact lookups per viewer without charging local searches or admins", async () => {
     const cookie = await login(5); const other = await login(6);
     const exact = "accounts/search?q=mira-demo&exact=1";
@@ -733,6 +790,27 @@ describe("legacy files and service bridge", () => {
     expect((await api("accounts/search?q=mira-demo", cookie)).status).toBe(200);
     expect((await api(exact, other)).status).toBe(200);
     process.env.ADMIN_USER_IDS = "5";
+    expect((await api(exact, cookie)).status).toBe(200);
+  });
+
+  it("allows at most 300 exact lookups in a rolling day per viewer", async () => {
+    const now = Date.now() + 24 * 60 * 60_000;
+    const time = vi.spyOn(Date, "now").mockReturnValue(now);
+    const cookie = await login(5); const other = await login(6);
+    const exact = "accounts/search?q=unknown-demo&exact=1";
+    for (let minute = 0; minute < 10; minute++) {
+      time.mockReturnValue(now + minute * 60_000);
+      for (let i = 0; i < 30; i++) expect((await api(exact, cookie)).status).toBe(200);
+      expect((await api(exact, cookie)).status).toBe(429);
+    }
+    time.mockReturnValue(now + 10 * 60_000);
+    expect((await api(exact, cookie)).status).toBe(429);
+    expect((await api(exact, other)).status).toBe(200);
+    expect((await api("accounts/search?q=unknown-demo", cookie)).status).toBe(200);
+    process.env.ADMIN_USER_IDS = "5";
+    expect((await api(exact, cookie)).status).toBe(200);
+    delete process.env.ADMIN_USER_IDS;
+    time.mockReturnValue(now + 24 * 60 * 60_000);
     expect((await api(exact, cookie)).status).toBe(200);
   });
 
@@ -754,11 +832,19 @@ describe("legacy files and service bridge", () => {
       `<TournPlayer><Player><ID>${1_000_000_000 + i}</ID><FirstName>Sample</FirstName></Player></TournPlayer>`).join("")
       + "</TournamentPlayers></Tournament>";
     const full = tournament(2000);
+    const numbered = full.replace("<Tournament>", "<Tournament><ID>A12-345678</ID>");
     expect((await upload(code, cookie, "tournament", full)).status).toBe(200);
-    expect((await openFile(cookie, full)).status).toBe(201);
-    const limited = await upload(code, cookie, "tournament", tournament(1));
+    expect((await openFile(cookie, numbered)).status).toBe(201);
+    expect((await openFile(cookie, numbered)).status).toBe(409);
+    cacheUser({ ...user(3), memberId: "1000000000" });
+    rememberAccounts(4, [3]);
+    const cached = await upload(code, cookie, "tournament", tournament(1));
+    expect(cached.status).toBe(200);
+    expect(await cached.json()).toMatchObject({ unmatched: 0, desk: { state: { players: [{ userId: 3 }] } } });
+    const uncached = tournament(1).replace("1000000000", "1000000001");
+    const limited = await upload(code, cookie, "tournament", uncached);
     expect(limited.status).toBe(429);
-    expect(await limited.json()).toEqual({ error: "rate_limited" });
+    expect(await limited.json()).toMatchObject({ error: "import_lookup_rate_limited", message: "Daily account-lookup limit reached. Try again tomorrow." });
     expect((await api("accounts/search?q=mira-demo&exact=1", cookie)).status).toBe(200);
     time.mockRestore();
     expect((await openFile(cookie, tournament(1))).status).toBe(201);

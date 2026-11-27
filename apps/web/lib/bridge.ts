@@ -94,7 +94,7 @@ export async function findAccount(query: string) {
 }
 
 const KNOWN_ACCOUNT_LIMIT = 100;
-const limitExactLookups = createRateLimit(30, 60_000);
+const limitExactLookups = createRateLimit([{ limit: 30, windowMs: 60_000 }, { limit: 300, windowMs: 24 * 60 * 60_000 }]);
 const handlePattern = /^[\p{L}\p{N}_.-]+$/u;
 const emailSchema = z.email();
 
