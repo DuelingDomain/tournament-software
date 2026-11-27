@@ -36,7 +36,16 @@ export function useAccountSearch(code: string | null) {
 
   useEffect(() => () => { seq.current++; window.clearTimeout(timer.current); }, [run]);
 
-  return { query, setQuery, results, state, error, run, clear: () => {
+  function showResults(q: string, users: Account[]) {
+    seq.current++;
+    window.clearTimeout(timer.current);
+    setQueryText(q);
+    setResults(users);
+    setError(null);
+    setState("idle");
+  }
+
+  return { query, setQuery, results, state, error, run, showResults, clear: () => {
     seq.current++;
     window.clearTimeout(timer.current);
     setResults(null);

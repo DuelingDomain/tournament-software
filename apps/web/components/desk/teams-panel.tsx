@@ -117,7 +117,7 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
     }
     const q = id ?? nameOf(d);
     if (!q) { setMessage({ bad: true, text: `Type a COSSY ID or a name for member ${i + 1}, then press Enter.` }); return; }
-    const found = await findAccounts(code, q, id !== null);
+    const found = await findAccounts(code, q, true);
     if (!found.ok) { setMessage({ bad: true, text: found.message }); return; }
     const exact = id ? found.users.filter(a => a.memberId && normalizeMemberId(a.memberId) === id) : [];
     const pool = exact.length ? exact : found.users;
@@ -129,7 +129,8 @@ export function TeamsPanel({ code, desk, role, send, notify }: Props) {
       return;
     }
     lookupRow.current = i;
-    search.setQuery(q); setMessage({ bad: false, text: `${pool.length} accounts match "${q}". Click one in Name lookup to fill member ${i + 1}.` });
+    search.showResults(q, pool);
+    setMessage({ bad: false, text: `${pool.length} accounts match "${q}". Click one in Name lookup to fill member ${i + 1}.` });
   }
 
   const rowReady = (i: number) => taken(slots[i]!) !== null || nameOf(drafts[i]!) !== "";

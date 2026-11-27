@@ -53,7 +53,7 @@ export function AllPlayersPanel({ code, desk, role, send, notify, onExport, onIm
     if (r.ok) notify(`${a.displayName} enrolled`);
   }
 
-  return <div className="dk-sec">
+  return <div className="dk-sec dk-sec--all-players">
     <h2 className="dk-h2">All Players</h2>
     {role === "organizer" && <OrganizerInvite code={code} />}
     <div className="dk-field-row" aria-label="Global player list">

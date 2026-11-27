@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
-import { createEvent, type EventState } from "@dd-tournament/engine";
+import { createEvent, normalizeMemberId, type EventState } from "@dd-tournament/engine";
 import { tournamentUserSchema, type TournamentUser } from "./validation";
 import { HttpError } from "./http";
 
@@ -22,6 +22,13 @@ export function database() {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       PRIMARY KEY (owner_user_id, user_id)
     );
+    CREATE TABLE IF NOT EXISTS account_grants (
+      viewer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (viewer_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS account_grants_expiry ON account_grants (expires_at);
     CREATE TABLE IF NOT EXISTS organizer_invites (
       owner_user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       token TEXT NOT NULL UNIQUE
@@ -34,8 +41,14 @@ export function database() {
     CREATE TABLE IF NOT EXISTS discord_settings (event_code TEXT PRIMARY KEY REFERENCES events(code) ON DELETE CASCADE, webhook_url TEXT, post_pairings INTEGER NOT NULL DEFAULT 0, post_standings INTEGER NOT NULL DEFAULT 0);`);
   db.transaction(() => {
     if (db.pragma("user_version", { simple: true }) === 0) {
-      // Before version 1, these rows came from searches. Existing event links are still read from events.
-      db.exec("DELETE FROM known_accounts; PRAGMA user_version = 1");
+      // Keep links backed by this owner's global list. Event links are still read from events.
+      db.function("normalize_member_id", { deterministic: true }, (id: unknown) => typeof id === "string" ? normalizeMemberId(id) : null);
+      db.exec(`DELETE FROM known_accounts WHERE NOT EXISTS (
+        SELECT 1 FROM users JOIN global_players
+          ON global_players.owner_user_id = known_accounts.owner_user_id
+          AND global_players.member_id = normalize_member_id(json_extract(users.data, '$.memberId'))
+        WHERE users.id = known_accounts.user_id
+      ); PRAGMA user_version = 1`);
     }
   }).immediate();
   active = { path, db };
@@ -47,6 +60,22 @@ export function cacheUser(user: TournamentUser) {
 export function cachedUser(id: number): TournamentUser | null {
   const row = database().prepare<[number], { data: string }>("SELECT data FROM users WHERE id=?").get(id);
   return row ? tournamentUserSchema.parse(JSON.parse(row.data)) : null;
+}
+const ACCOUNT_GRANT_MS = 15 * 60_000;
+export function grantAccount(viewerId: number, user: TournamentUser) {
+  const db = database();
+  const now = Date.now();
+  db.transaction(() => {
+    cacheUser(user);
+    db.prepare("DELETE FROM account_grants WHERE expires_at <= ?").run(now);
+    db.prepare(`INSERT INTO account_grants (viewer_id, user_id, expires_at) VALUES (?, ?, ?)
+      ON CONFLICT (viewer_id, user_id) DO UPDATE SET expires_at = excluded.expires_at`).run(viewerId, user.id, now + ACCOUNT_GRANT_MS);
+  }).immediate();
+}
+export function grantedAccountIds(viewerId: number) {
+  const rows = database().prepare<[number, number], { user_id: number }>(
+    "SELECT user_id FROM account_grants WHERE viewer_id = ? AND expires_at > ?").all(viewerId, Date.now());
+  return rows.map(row => row.user_id);
 }
 export function rememberAccounts(ownerId: number, userIds: readonly number[]) {
   if (!userIds.length) return;
@@ -89,7 +118,7 @@ export function eventRecord(code: string): EventRecord {
   return decode(row);
 }
 export function eventRecords() { return database().prepare<[], EventRow>("SELECT * FROM events ORDER BY rowid DESC").all().map(decode); }
-function eventAccountIds(state: EventState) {
+export function eventAccountIds(state: EventState) {
   return new Set([...state.players.flatMap(p => p.userId === null ? [] : [p.userId]), ...state.staff.map(s => s.userId)]);
 }
 export function rememberEventAccounts(ownerId: number, state: EventState, previous?: EventState) {

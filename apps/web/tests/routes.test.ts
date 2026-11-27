@@ -5,12 +5,13 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import { headers } from "next/headers";
 import { redirect as pageRedirect } from "next/navigation";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { Command, StaffRole } from "@dd-tournament/engine";
 import { GET as apiGet, POST as apiPost, PUT as apiPut, DELETE as apiDelete } from "../app/api/[...path]/route";
 import { GET as authGet, POST as authPost } from "../app/auth/[action]/route";
 import { GET as healthGet } from "../app/api/health/route";
 import InvitePage from "../app/join/[token]/page";
-import { database } from "../lib/db";
+import { cacheUser, database, rememberAccounts } from "../lib/db";
 
 vi.mock("next/headers", () => ({ headers: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -23,8 +24,12 @@ const directory = resolve("../../.cache/route-tests", randomBytes(8).toString("h
 const originalEnv = { ...process.env };
 const names = ["Mira Meadow", "Oren Orbit", "Lumi Lantern", "Pax Pebble", "Tavi Thistle", "Nori Nimbus"];
 function user(id = 1) {
-  return { id, username: `${["mira", "oren", "lumi", "pax", "tavi", "nori"][id - 1]}-demo`, displayName: names[id - 1],
+  return { id, username: `${["mira", "oren", "lumi", "pax", "tavi", "nori"][id - 1]}-demo`, displayName: names[id - 1]!,
     discordUserId: null, discordUsername: id === 6 ? "nori.nimbus" : null, memberId: id === 1 ? "101" : id === 2 ? "202" : null };
+}
+function seedKnownAccounts(...ids: number[]) {
+  for (const id of ids) cacheUser(user(id));
+  rememberAccounts(1, ids);
 }
 function assertion(overrides: object = {}) {
   const now = Math.floor(Date.now() / 1000);
@@ -223,6 +228,7 @@ describe("event HTTP contract", () => {
   });
   it("lets a scorekeeper correct an event member ID through the cut and after finalization", async () => {
     const owner = await login(); const scorekeeper = await login(5); const other = await login(6);
+    seedKnownAccounts(2, 3, 4, 5);
     const code = await create(owner, { allowLateEntry: false });
     let version = 1;
     const send = async (input: Command) => {
@@ -297,6 +303,7 @@ describe("event HTTP contract", () => {
   ])("explains entry restrictions for %j", async (settings, reason) => {
     const owner = await login(); const code = await create(owner, settings); const entrant = await login(3);
     if (reason === "late_entry_closed") {
+      seedKnownAccounts(2);
       await command(code, owner, 1, { type: "AddPlayers", players: [{ userId: 1, name: "Ignored" }, { userId: 2, name: "Ignored" }] });
       await command(code, owner, 2, { type: "PairNextRound" });
     }
@@ -327,6 +334,7 @@ describe("dummy-data route", () => {
     const owner = await login(); const code = await create(owner);
     let version = 1;
     if (role !== "organizer" && role !== "outsider") {
+      seedKnownAccounts(2);
       const staffRole = z.enum(["head_judge", "judge", "scorekeeper", "staff"]).parse(role);
       expect((await command(code, owner, version++, { type: "AddStaff", userId: 2, name: "Ignored", role: staffRole })).status).toBe(200);
     }
@@ -349,6 +357,7 @@ describe("dummy-data route", () => {
 
   it("lets staff enroll a player without an account through AddPlayers", async () => {
     const owner = await login(); const staff = await login(2); const code = await create(owner);
+    seedKnownAccounts(2);
     await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Ignored", role: "staff" });
     const response = await api(`events/${code}/commands`, staff, "POST", { expectedVersion: 2,
       command: { type: "AddPlayers", players: [{ userId: null, name: "Test Player 01", memberId: "9999000000" }] } });
@@ -492,6 +501,7 @@ describe("dummy-data route", () => {
 
   it("refuses results without a round or after completion, and rolls back engine failures", async () => {
     const owner = await login(); const code = await create(owner);
+    seedKnownAccounts(2, 3, 4);
     const missing = await api(`events/${code}/dummy-data`, owner, "POST", { action: "results", expectedVersion: 1 });
     expect(missing.status).toBe(422); expect(await missing.json()).toMatchObject({ error: "NO_ROUND" });
     await command(code, owner, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) });
@@ -511,6 +521,7 @@ describe("dummy-data route", () => {
 
   it("never automatically links temporary entries during import or self-join, even on an exact member-ID match", async () => {
     const owner = await login(); const entrant = await login(3); const code = await create(owner);
+    seedKnownAccounts(3);
     const generated = await dummyPlayers(code, owner, 1, 3);
     const memberId = generated.desk.state.players[0]!.memberId;
     try {
@@ -544,6 +555,7 @@ const permissionCases: { label: string; command: (playerId: string) => Command; 
 describe("role matrix at the command route", () => {
   it.each(roles.flatMap(role => permissionCases.map(test => ({ role, ...test }))))("$role: $label", async ({ role, command: make, allowed }) => {
     const owner = await login(); const code = await create(owner);
+    seedKnownAccounts(2, 3, 4, 5, 6);
     let version = 1;
     for (const [index, staffRole] of roles.slice(1).entries()) {
       expect((await command(code, owner, version++, { type: "AddStaff", userId: index + 2, name: "Ignored", role: staffRole })).status).toBe(200);
@@ -556,6 +568,7 @@ describe("role matrix at the command route", () => {
   });
   it("prevents a head judge from editing/removing organizers and restricts Discord writes", async () => {
     const owner = await login(); const head = await login(2); const code = await create(owner);
+    seedKnownAccounts(2, 3);
     await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Ignored", role: "head_judge" });
     const state = deskSchema.parse(await (await command(code, owner, 2, { type: "AddStaff", userId: 3, name: "Ignored", role: "organizer" })).json());
     const target = state.state.staff.find(s => s.userId === 3)!.id;
@@ -633,7 +646,125 @@ describe("legacy files and service bridge", () => {
     expect(received).toContain('POST /api/tournament-bridge/users/lookup {"ids":[1]}');
     expect(received).toContain('PUT /api/tournament-bridge/users/1/member-id {"memberId":"101"}');
   });
-  it("filters the event owner's list and remembers accounts after enrollment or staff assignment in mock mode", async () => {
+
+  it("rejects ungranted account IDs before any bridge call for event creation and roster edits", async () => {
+    const owner = await login();
+    const code = await create(owner);
+    const added = await dummyPlayers(code, owner, 1, 1);
+    const playerId = added.desk.state.players[0]!.id;
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    process.env.DD_APP_URL = "https://service.example.test";
+    const updateStaff = [{ userId: 1, name: "Mira Meadow", role: "organizer" }, { userId: 4, name: "Pax", role: "staff" }] as const;
+    const commands: Command[] = [
+      { type: "AddPlayers", players: [{ userId: 4, name: "Pax" }] },
+      { type: "AddPlayers", players: [{ userId: 9999, name: "Missing" }] },
+      { type: "AddStaff", ...updateStaff[1] },
+      { type: "LinkPlayerAccount", userId: 4, playerId },
+      { type: "UpdateSettings", settings: {}, staff: [...updateStaff] },
+    ];
+    for (const input of commands) {
+      const response = await command(code, owner, 2, input);
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({ error: "account_not_found" });
+    }
+    const created = await api("events", owner, "POST", { name: "New event", createCode: "", staff: [updateStaff[1]] });
+    expect(created.status).toBe(422);
+    expect(await created.json()).toEqual({ error: "account_not_found" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("accepts a fresh exact lookup only from its viewer and remembers the account on use", async () => {
+    const owner = await login(); const scorekeeper = await login(2);
+    seedKnownAccounts(2);
+    const code = await create(owner);
+    expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Staff", role: "scorekeeper" })).status).toBe(200);
+    const query = `accounts/search?event=${code}&q=pax-demo&exact=1`;
+    const enroll = { type: "AddPlayers", players: [{ userId: 4, name: "Pax" }] } satisfies Command;
+    const time = vi.spyOn(Date, "now").mockReturnValue(Date.now() - 15 * 60_000);
+    expect(await (await api(query, scorekeeper)).json()).toMatchObject({ users: [{ userId: 4 }] });
+    expect((await command(code, owner, 2, enroll)).status).toBe(422);
+    time.mockRestore();
+    expect((await command(code, scorekeeper, 2, enroll)).status).toBe(422);
+    expect((await api(query, scorekeeper)).status).toBe(200);
+    expect((await command(code, scorekeeper, 2, enroll)).status).toBe(200);
+    expect(await (await api("accounts/search", owner)).json()).toMatchObject({ users: [{ userId: 1 }, { userId: 2 }, { userId: 4 }] });
+  });
+
+  it("accepts event staff from the viewer's exact search and allows an admin to resolve other IDs", async () => {
+    const owner = await login();
+    const createWithStaff = (userId: number) => api("events", owner, "POST", {
+      name: "New event", createCode: "", staff: [{ userId, name: "Placeholder", role: "staff" }],
+    });
+    expect((await api("accounts/search?q=pax-demo&exact=1", owner)).status).toBe(200);
+    const response = await createWithStaff(4);
+    expect(response.status).toBe(201);
+    const { code } = z.object({ code: z.string() }).parse(await response.json());
+    expect((await desk(code, owner)).state.staff).toContainEqual(expect.objectContaining({ userId: 4 }));
+    process.env.ADMIN_USER_IDS = "1";
+    expect((await createWithStaff(5)).status).toBe(201);
+    const missing = await createWithStaff(9999);
+    expect(missing.status).toBe(422);
+    expect(await missing.json()).toEqual({ error: "account_not_found" });
+  });
+
+  it("allows profile edits for event players and known accounts and denies exact-only accounts", async () => {
+    const owner = await login(); const entrant = await login(3);
+    const code = await create(owner);
+    seedKnownAccounts(2);
+    const edit = (id: number, memberId: string | null) => api(`accounts/${id}/member-id?event=${code}`, owner, "PUT", { memberId });
+    expect((await api("accounts/search?q=pax-demo&exact=1", owner)).status).toBe(200);
+    expect((await edit(4, null)).status).toBe(404);
+    expect((await edit(2, "202")).status).toBe(200);
+    expect((await api(`events/${code}/join`, entrant, "POST", {})).status).toBe(200);
+    database().prepare("DELETE FROM known_accounts WHERE owner_user_id = 1 AND user_id = 3").run();
+    expect((await edit(3, null)).status).toBe(200);
+    process.env.ADMIN_USER_IDS = "1";
+    expect((await edit(4, null)).status).toBe(200);
+  });
+
+  it("limits exact lookups per viewer without charging local searches or admins", async () => {
+    const cookie = await login(5); const other = await login(6);
+    const exact = "accounts/search?q=mira-demo&exact=1";
+    for (let i = 0; i < 29; i++) expect((await api(exact, cookie)).status).toBe(200);
+    expect(await (await api("accounts/search?q=unknown-demo&exact=1", cookie)).json()).toEqual({ users: [] });
+    const limited = await api(exact, cookie);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "rate_limited" });
+    expect((await api("accounts/search?q=mira-demo", cookie)).status).toBe(200);
+    expect((await api(exact, other)).status).toBe(200);
+    process.env.ADMIN_USER_IDS = "5";
+    expect((await api(exact, cookie)).status).toBe(200);
+  });
+
+  it("shares the file-open limit between event imports and opening new events", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() - 60_000);
+    const cookie = await login(6);
+    const code = await create(cookie);
+    for (let i = 0; i < 10; i++) expect((await upload(code, cookie, "players", "<PlayerList></PlayerList>")).status).toBe(200);
+    expect((await upload(code, cookie, "players", "<PlayerList></PlayerList>")).status).toBe(429);
+    const xml = readFileSync(new URL("./fixtures/synthetic.Tournament", import.meta.url), "utf8");
+    expect((await openFile(cookie, xml)).status).toBe(429);
+  });
+
+  it("counts import lookups across both file routes with a budget separate from search", async () => {
+    const time = vi.spyOn(Date, "now").mockReturnValue(Date.now() - 24 * 60 * 60_000);
+    const cookie = await login(4);
+    const code = await create(cookie);
+    const tournament = (count: number) => "<Tournament><TournamentPlayers>" + Array.from({ length: count }, (_, i) =>
+      `<TournPlayer><Player><ID>${1_000_000_000 + i}</ID><FirstName>Sample</FirstName></Player></TournPlayer>`).join("")
+      + "</TournamentPlayers></Tournament>";
+    const full = tournament(2000);
+    expect((await upload(code, cookie, "tournament", full)).status).toBe(200);
+    expect((await openFile(cookie, full)).status).toBe(201);
+    const limited = await upload(code, cookie, "tournament", tournament(1));
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "rate_limited" });
+    expect((await api("accounts/search?q=mira-demo&exact=1", cookie)).status).toBe(200);
+    time.mockRestore();
+    expect((await openFile(cookie, tournament(1))).status).toBe(201);
+  });
+
+  it("remembers accounts after enrollment or staff assignment and scopes staff search to the event", async () => {
     const owner = await login(); const staff = await login(2); const other = await login(3);
     const code = await create(owner);
     const path = `accounts/search?event=${code}&q=`;
@@ -651,18 +782,27 @@ describe("legacy files and service bridge", () => {
     expect((await command(previous, owner, 3, { type: "LinkPlayerAccount", userId: 6, playerId })).status).toBe(200);
     expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Scorekeeper", role: "scorekeeper" })).status).toBe(200);
     database().prepare("DELETE FROM events WHERE code=?").run(previous);
-    expect(await (await api(path, staff)).json()).toMatchObject({ users: [{ userId: 1 }, { userId: 6 }, { userId: 2 }, { userId: 4 }] });
-    expect(await (await api(`${path}pEBb`, staff)).json()).toMatchObject({ users: [{ userId: 4 }] });
+    expect(await (await api(path, owner)).json()).toMatchObject({ users: [{ userId: 1 }, { userId: 6 }, { userId: 2 }, { userId: 4 }] });
+    expect(await (await api(path, staff)).json()).toMatchObject({ users: [{ userId: 1 }, { userId: 2 }] });
+    expect(await (await api(`${path}pEBb`, staff)).json()).toEqual({ users: [] });
+    expect(await (await api(`${path}PAX-demo&exact=1`, staff)).json()).toMatchObject({ users: [{ userId: 4 }] });
     expect(await (await api(`${path}0202`, staff)).json()).toMatchObject({ users: [{ userId: 2 }] });
     expect((await api(path, other)).status).toBe(403);
     expect(await (await api("accounts/search", staff)).json()).toMatchObject({ users: [{ userId: 2 }] });
+    expect((await api(`events/${code}/join`, other, "POST", {})).status).toBe(200);
+    expect(await (await api(path, staff)).json()).toMatchObject({ users: [{ userId: 3 }, { userId: 1 }, { userId: 2 }] });
   });
 
-  it("clears old search history on upgrade and keeps accounts linked in event records", async () => {
+  it("clears old search history on upgrade and keeps links from the owner's global list and events", async () => {
     const owner = await login(); await login(2); await login(3);
     const code = await create(owner);
+    seedKnownAccounts(2, 3, 4);
     expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Staff", role: "staff" })).status).toBe(200);
-    database().prepare("INSERT INTO known_accounts (owner_user_id, user_id) VALUES (1, 3)").run();
+    cacheUser({ ...user(4), memberId: "0000000404" });
+    cacheUser({ ...user(3), memberId: "303" });
+    const insert = database().prepare("INSERT INTO global_players (owner_user_id, member_id, first_name, last_name) VALUES (?, ?, ?, ?)");
+    insert.run(1, "404", "Pax", "Pebble");
+    insert.run(2, "303", "Lumi", "Lantern");
     database().pragma("user_version = 0");
     const path = process.env.DATABASE_PATH!;
     try {
@@ -671,12 +811,13 @@ describe("legacy files and service bridge", () => {
     } finally {
       process.env.DATABASE_PATH = path;
     }
-    expect(await (await api("accounts/search", owner)).json()).toMatchObject({ users: [{ userId: 1 }, { userId: 2 }] });
-    expect(database().prepare("SELECT * FROM known_accounts").all()).toEqual([]);
+    expect(await (await api("accounts/search", owner)).json()).toMatchObject({ users: [{ userId: 1 }, { userId: 2 }, { userId: 4 }] });
+    expect(database().prepare("SELECT * FROM known_accounts").all()).toEqual([{ owner_user_id: 1, user_id: 4 }]);
   });
 
   it("sends only explicit identifier lookups to the bridge and scopes admin search to the viewer", async () => {
     const owner = await login(); const staff = await login(2); const code = await create(owner);
+    seedKnownAccounts(2);
     expect((await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Staff", role: "staff" })).status).toBe(200);
     process.env.DD_APP_URL = "https://service.example.test";
     const fetchSpy = vi.spyOn(globalThis, "fetch")
@@ -704,7 +845,7 @@ describe("legacy files and service bridge", () => {
 });
 
 describe("organizer invites", () => {
-  it("joins the organizer's list once after mock sign-in and revokes the previous link on regeneration", async () => {
+  it("asks for confirmation after sign-in and revokes the previous link on regeneration", async () => {
     const owner = await login(); const code = await create(owner);
     const outsider = await login(3);
     const endpoint = `players/invite?event=${code}`;
@@ -726,7 +867,10 @@ describe("organizer invites", () => {
     expect(completed.headers.get("location")).toBe(path);
     const visitor = completed.headers.get("set-cookie")!.split(";")[0]!;
     vi.mocked(headers).mockResolvedValue(new Headers({ cookie: visitor }));
-    expect(await InvitePage({ params: Promise.resolve({ token }) })).toBeTruthy();
+    const page = renderToStaticMarkup(await InvitePage({ params: Promise.resolve({ token }) }));
+    expect(page).toContain("Join Mira Meadow&#x27;s player list?");
+    expect(page).toMatch(/<button[^>]*>Join<\/button>/);
+    expect(await (await api("accounts/search", owner)).json()).toMatchObject({ users: [{ userId: 1 }] });
     for (let i = 0; i < 2; i++) {
       expect(await (await api("players/join", visitor, "POST", { token })).json()).toEqual({ organizerName: "Mira Meadow" });
     }
@@ -734,6 +878,7 @@ describe("organizer invites", () => {
     expect(await (await api("accounts/search", outsider)).json()).toMatchObject({ users: [{ userId: 3 }] });
     const replacement = inviteSchema.parse(await (await api(endpoint, owner, "PUT")).json());
     expect(replacement.path).not.toBe(path);
+    await expect(InvitePage({ params: Promise.resolve({ token }) })).rejects.toThrow("Page not found");
     expect((await api("players/join", outsider, "POST", { token })).status).toBe(404);
     expect(await (await api("players/join", outsider, "POST", { token: replacement.path.split("/").at(-1)! })).json())
       .toEqual({ organizerName: "Mira Meadow" });
@@ -763,6 +908,7 @@ describe("tournament configuration", () => {
     expect(added.status).toBe(201);
     const location = await added.json() as { id: string };
     expect((await api(`locations/${location.id}`, other, "PUT", fields)).status).toBe(404);
+    seedKnownAccounts(2);
     const created = await api("events", cookie, "POST", { name: "Team Cup", createCode: "", settings: {
       style: "traditional", format: "open_dueling", playerStructure: 3, locationId: location.id, startsAt: "2026-12-02T13:15:00Z" },
       staff: [{ userId: 2, name: "Sample Judge", position: "floor_judge_team_lead" }] });
@@ -785,6 +931,7 @@ describe("team HTTP workflow", () => {
   it("enrolls teams, versions roster edits and lets members report their team match", async () => {
     const cookie = await login();
     const memberCookie = await login(2);
+    seedKnownAccounts(2, 3, 4);
     const code = await create(cookie, { playerStructure: 2 });
     const people = await command(code, cookie, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) });
     expect(people.status).toBe(200);
@@ -908,6 +1055,7 @@ describe("open tournament and global player list", () => {
   });
   it("keeps teams, members and a team match through Open Tournament", async () => {
     const cookie = await login();
+    seedKnownAccounts(2, 3, 4);
     const code = await create(cookie, { playerStructure: 2 });
     const people = deskSchema.parse(await (await command(code, cookie, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) })).json());
     await command(code, cookie, 2, { type: "AddTeams", teams: [{ name: "Left", memberIds: people.state.players.slice(0, 2).map(p => p.id) }, { name: "Right", memberIds: people.state.players.slice(2).map(p => p.id) }] });
@@ -926,6 +1074,7 @@ describe("open tournament and global player list", () => {
 describe("team file interchange", () => {
   it("expands CSV by member with tag cross-pairs and enrolls a team file roster into an individual event", async () => {
     const cookie = await login();
+    seedKnownAccounts(2, 3, 4);
     const code = await create(cookie, { playerStructure: 2 });
     const people = deskSchema.parse(await (await command(code, cookie, 1, { type: "AddPlayers", players: [1, 2, 3, 4].map(userId => ({ userId, name: "Account" })) })).json());
     await command(code, cookie, 2, { type: "AddTeams", teams: [{ name: "Left", memberIds: people.state.players.slice(0, 2).map(p => p.id) }, { name: "Right", memberIds: people.state.players.slice(2).map(p => p.id) }] });
@@ -951,6 +1100,7 @@ describe("staff operational data", () => {
   it("keeps command history and print data staff-only and leaves conflicts and errors out of history", async () => {
     const cookie = await login();
     const outsider = await login(2);
+    seedKnownAccounts(2);
     const code = await create(cookie);
     const before = await api(`events/${code}/activity`, cookie);
     expect(before.status).toBe(200);

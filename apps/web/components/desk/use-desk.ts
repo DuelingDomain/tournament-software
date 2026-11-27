@@ -22,7 +22,7 @@ export const MESSAGES: Record<string, string> = {
   forbidden_origin: "The request was blocked. Reload the page and try again.",
   already_open: "You already have this tournament open. Open that one instead.",
   too_many_players: "This file has too many players to open.",
-  rate_limited: "Too many files opened in a short time. Wait a minute and try again.",
+  rate_limited: "Too many requests. Try again later.",
   legacy_version_too_new: "This file was saved by a newer version of the program. Update the program and try again.",
   invalid_legacy_xml: "That file is not a tournament file this program can read.",
   unsupported_legacy_event: "That tournament uses a player structure this program does not support.",

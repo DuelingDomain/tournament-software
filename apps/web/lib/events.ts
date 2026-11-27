@@ -3,12 +3,14 @@ import { applyCommand, createEvent, integrity, playerView, standings, suggestRou
 import { parseLegacyPlayerList, parseLegacyTournament, type LegacyPlayer } from "@dd-tournament/engine/legacy";
 import { isReservedMemberId, normalizeMemberId } from "@dd-tournament/engine";
 import { findAccount, lookupAccounts } from "./bridge";
-import { cacheUser, cachedUser, database, eventRecord, rememberEventAccounts, saveEvent, type EventRecord } from "./db";
+import { isAdminUser } from "./config";
+import { cacheUser, cachedUser, database, eventAccountIds, eventRecord, grantedAccountIds, knownAccounts, rememberEventAccounts, saveEvent, type EventRecord } from "./db";
 import type { DeskView } from "./desk-view";
 import { HttpError } from "./http";
 import { mergeGlobalPlayers } from "./global-players";
 import { joinReason, requireCommand, requireDummyData, requireImport, requireStaff } from "./permissions";
 import { locationSettings } from "./locations";
+import { createRateLimit } from "./rate-limits";
 import { hasSpecialMemberIds, memberIdAccepted } from "./special-member-ids";
 import type { DummyData, TournamentUser } from "./validation";
 
@@ -51,15 +53,21 @@ export function newEvent(user: TournamentUser, name: string, settings: Parameter
     return code;
   }).immediate();
 }
-export async function resolveCommand(command: Command): Promise<Command> {
+export async function resolveCommand(command: Command, viewerId: number, event?: EventRecord): Promise<Command> {
   const ids = command.type === "UpdateSettings" && command.staff ? command.staff.map(s => s.userId) : command.type === "AddPlayers" ? command.players.flatMap(p => p.userId === null ? [] : [p.userId]) : command.type === "AddStaff" || command.type === "LinkPlayerAccount" ? [command.userId] : [];
   if (!ids.length) return command;
+  if (!isAdminUser(viewerId) && ids.some(id => id !== viewerId)) {
+    const allowed = event ? eventAccountIds(event.state) : new Set<number>();
+    allowed.add(viewerId);
+    for (const id of grantedAccountIds(viewerId)) allowed.add(id);
+    for (const { id } of knownAccounts(event?.ownerUserId ?? viewerId)) allowed.add(id);
+    if (ids.some(id => !allowed.has(id))) throw new HttpError(422, "account_not_found");
+  }
   const { users, missing } = await lookupAccounts(ids);
-  if (missing.length) throw new HttpError(422, "account_not_found");
+  const byId = new Map(users.map(user => [user.id, user]));
+  if (missing.length || ids.some(id => !byId.has(id))) throw new HttpError(422, "account_not_found");
   function account(id: number) {
-    const user = users.find(user => user.id === id);
-    if (!user) throw new HttpError(422, "account_not_found");
-    return user;
+    return byId.get(id)!;
   }
   if (command.type === "UpdateSettings" && command.staff) return { ...command, staff: command.staff.map(s => ({ ...s, name: account(s.userId).displayName })) };
   if (command.type === "AddPlayers") return { ...command, players: command.players.map(p => {
@@ -140,10 +148,13 @@ export function playerCommand(code: string, user: TournamentUser, make: (player:
 /** Most people one uploaded file may enrol; each one can cost a lookup at the account service. */
 export const MAX_FILE_PLAYERS = 2000;
 const LOOKUP_PARALLEL = 8;
+// Allow two full files' worth of account lookups per viewer in a rolling day.
+const limitImportLookups = createRateLimit(2 * MAX_FILE_PLAYERS, 24 * 60 * 60_000);
 /** The account service has no lookup by member ID in bulk, so IDs are searched a few at a time. */
-async function matchLegacyPlayers(players: readonly LegacyPlayer[]) {
+async function matchLegacyPlayers(viewerId: number, players: readonly LegacyPlayer[]) {
   if (players.length > MAX_FILE_PLAYERS) throw new HttpError(422, "too_many_players", { limit: MAX_FILE_PLAYERS });
   const ids = [...new Set(players.flatMap(player => player.memberId && !isReservedMemberId(player.memberId) ? [player.memberId] : []))];
+  limitImportLookups(viewerId, ids.length);
   const byMemberId = new Map<string, TournamentUser>();
   for (let i = 0; i < ids.length; i += LOOKUP_PARALLEL) {
     const chunk = ids.slice(i, i + LOOKUP_PARALLEL);
@@ -167,7 +178,7 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
   const parsed = kind === "tournament" ? source : null;
   if (kind === "team-players" && ((source?.state.settings.playerStructure ?? 1) === 1 || before.state.settings.playerStructure !== 1)) throw new HttpError(422, "INVALID_PLAYER_STRUCTURE");
   const players = source ? source.players : parseLegacyPlayerList(xml);
-  const matches = await matchLegacyPlayers(players);
+  const matches = await matchLegacyPlayers(user.id, players);
   return database().transaction(() => {
     const event = eventRecord(code);
     requireImport(event, user.id);
@@ -207,7 +218,7 @@ export async function importEvent(code: string, user: TournamentUser, kind: "tou
 /** Open Tournament: the file becomes a new event and the caller becomes its organizer. */
 export async function openTournamentAsNewEvent(user: TournamentUser, xml: string) {
   const parsed = parseLegacyTournament(xml, context(user), memberIdAccepted);
-  const matches = await matchLegacyPlayers(parsed.players);
+  const matches = await matchLegacyPlayers(user.id, parsed.players);
   return database().transaction(() => {
     cacheUser(user);
     // The original does not open one tournament twice; here the rule is per owner.

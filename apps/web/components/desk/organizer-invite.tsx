@@ -54,12 +54,13 @@ export function OrganizerInvite({ code }: { code: string }) {
   if (!link && !message) return null;
   return <div>
     <div className="dk-field-row">
-      <Field label="Your invite link"><Input value={link} readOnly onFocus={event => event.currentTarget.select()} /></Field>
+      <Field label="Your invite link" className="dd-field--grow"><Input value={link} readOnly onFocus={event => event.currentTarget.select()} /></Field>
       <div className="dk-btn-row">
         <Button onClick={() => void copy()} disabled={!link || regenerating}>Copy</Button>
         <Button onClick={() => void regenerate()} disabled={!link || regenerating}>Regenerate</Button>
       </div>
     </div>
+    <p className="dd-meta dk-invite-hint">Share this link. People who open it join your player list.</p>
     <span className="dd-meta" role="status">{message}</span>
   </div>;
 }

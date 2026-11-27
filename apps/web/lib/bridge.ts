@@ -1,9 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { normalizeMemberId } from "@dd-tournament/engine";
-import { appUrl, mockEnabled, secret } from "./config";
-import { cacheUser, knownAccounts } from "./db";
+import { appUrl, isAdminUser, mockEnabled, secret } from "./config";
+import { cacheUser, cachedUser, eventAccountIds, grantAccount, knownAccounts, type EventRecord } from "./db";
 import { HttpError } from "./http";
+import { createRateLimit } from "./rate-limits";
 import { isSpecialMemberId, memberIdAccepted } from "./special-member-ids";
 import { tournamentUserSchema, type TournamentUser } from "./validation";
 
@@ -93,23 +94,31 @@ export async function findAccount(query: string) {
 }
 
 const KNOWN_ACCOUNT_LIMIT = 100;
+const limitExactLookups = createRateLimit(30, 60_000);
 const handlePattern = /^[\p{L}\p{N}_.-]+$/u;
 const emailSchema = z.email();
 
-export async function searchOrganizerAccounts(ownerId: number, query: string, { admin, exact }: { admin: boolean; exact: boolean }) {
+export async function searchOrganizerAccounts(viewerId: number, query: string, exact: boolean, event?: EventRecord) {
   const trimmed = query.trim();
-  if (!trimmed) return knownAccounts(ownerId, KNOWN_ACCOUNT_LIMIT);
-  if (admin) return searchAccounts(trimmed, false);
+  if (trimmed && isAdminUser(viewerId)) return searchAccounts(trimmed, false);
 
+  const accounts = event && event.ownerUserId !== viewerId
+    ? [...eventAccountIds(event.state)].map(cachedUser).filter(user => user !== null)
+      .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" }) || a.id - b.id)
+    : knownAccounts(viewerId, trimmed ? -1 : KNOWN_ACCOUNT_LIMIT);
+  if (!trimmed) return accounts.slice(0, KNOWN_ACCOUNT_LIMIT);
   const handle = trimmed.replace(/^@/, "");
   const localQuery = handle.toLowerCase();
-  const known = knownAccounts(ownerId).filter(user => [user.displayName, user.username, user.discordUsername,
+  const known = accounts.filter(user => [user.displayName, user.username, user.discordUsername,
     user.memberId, user.memberId?.padStart(10, "0")]
     .some(value => value?.toLowerCase().includes(localQuery))).slice(0, KNOWN_ACCOUNT_LIMIT);
   if (!exact || (!handlePattern.test(handle) && !emailSchema.safeParse(trimmed).success && normalizeMemberId(trimmed) === null)) return known;
 
+  limitExactLookups(viewerId);
   const match = await findAccount(handle);
-  return match ? [match, ...known.filter(user => user.id !== match.id)] : known;
+  if (!match) return known;
+  grantAccount(viewerId, match);
+  return [match, ...known.filter(user => user.id !== match.id)];
 }
 export async function lookupAccounts(ids: number[]) {
   const unique = [...new Set(ids)];
