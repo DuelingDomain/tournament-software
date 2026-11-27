@@ -3,7 +3,9 @@ import { applyCommand, createEvent, type Command, type EventSettings, type Event
 export const context = { now: "2026-11-16T12:00:00.000Z", seed: 123456789012345, actor: "desk" };
 
 export function event(n = 4, settings: Partial<EventSettings> = {}): EventState {
-  return applyCommand(createEvent({ name: "Community tournament", ...settings }, context), {
+  // Pairing needs at least one staff member.
+  const staffed = applyCommand(createEvent({ name: "Community tournament", ...settings }, context), { type: "AddStaff", userId: 100, name: "Desk", role: "organizer" }, context);
+  return applyCommand(staffed, {
     type: "AddPlayers", players: Array.from({ length: n }, (_, i) => ({ userId: i + 1, name: `Player ${i + 1}` })),
   }, context);
 }

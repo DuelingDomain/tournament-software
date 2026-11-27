@@ -13,7 +13,7 @@ import type { SendFn } from "./use-desk";
 type Fields = Omit<Location, "id">;
 const BLANK_LOCATION: Fields = { name: "", address1: "", address2: "", city: "", state: "", postal: "", country: "", phone: "", website: "" };
 const LOCATION_ERRORS: Record<string, string> = { location_in_use: "A tournament uses this location. Change that tournament first.", invalid_body: "Enter a location name.", not_found: "That location no longer exists.", unauthorized: "Sign in again to continue." };
-const CREATE_ERRORS: Record<string, string> = { invalid_create_code: "That create code is not right.", invalid_body: "Check the tournament name and the other fields, then try again.", unauthorized: "Sign in again to continue.", location_not_found: "Pick the location again.", forbidden_role: "Only the creator can be the organizer. Change that staff entry.", account_not_found: "One of the staff accounts no longer exists. Remove it and try again." };
+const CREATE_ERRORS: Record<string, string> = { invalid_create_code: "That create code is not right.", invalid_body: "Check the tournament name and the other fields, then try again.", unauthorized: "Sign in again to continue.", location_not_found: "Pick the location again.", forbidden_role: "Only the creator can be the organizer. Change that staff entry.", staff_required: "Add at least one staff member.", account_not_found: "One of the staff accounts no longer exists. Remove it and try again." };
 
 export interface StaffRow { userId: number; name: string; position: StaffPosition; locked?: boolean }
 const splitIso = (iso: string | null): [string, string] => {
@@ -27,8 +27,8 @@ const joinIso = (date: string, time: string): string | null => {
   const d = new Date(`${date}T${time || "00:00"}`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
-/** Create mode: the server adds the creator as organizer. Update mode: the owner row must be sent back with the rest. */
-const toAssignments = (rows: StaffRow[], withOwner = false): StaffAssignment[] => rows.filter(r => withOwner || !r.locked).map(r => ({ userId: r.userId, name: r.name, position: r.position }));
+/** The whole list goes to the server, owner row included when it is still there. */
+const toAssignments = (rows: StaffRow[]): StaffAssignment[] => rows.map(r => ({ userId: r.userId, name: r.name, position: r.position }));
 
 interface CreateProps { mode: "create"; creator: { userId: number; name: string }; createCodeRequired: boolean; onCreated: (code: string, teamEvent: boolean) => void; onClose: () => void }
 interface UpdateProps { mode: "update"; desk: DeskView; role: StaffRole; send: SendFn; onDone: (text: string) => void; onClose: () => void; extra?: React.ReactNode }
@@ -58,8 +58,8 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
     allowLateEntry: settings?.allowLateEntry ?? DEFAULT_SETTINGS.allowLateEntry, infractions: settings?.infractions ?? [],
   });
   const setX = <K extends keyof typeof extra>(k: K, v: (typeof extra)[K]) => setExtra(d => ({ ...d, [k]: v }));
-  // The owner's row is locked: the server always keeps the owner as organizer. In create mode that owner is the signed-in creator.
-  const creatorId = props.mode === "create" ? props.creator.userId : null;
+  // The owner's row cannot be edited (the owner is always the organizer) but it can be deleted. In create mode the owner is the signed-in creator.
+  const ownerId = props.mode === "create" ? props.creator.userId : props.desk.ownerUserId ?? null;
   const startStaff: StaffRow[] = useMemo(() => update ? props.desk.state.staff.map(s => ({ userId: s.userId, name: s.name, position: s.position ?? POSITION_OF_ROLE[s.role], locked: s.userId === props.desk.ownerUserId || (props.desk.ownerUserId === undefined && s.role === "organizer") }))
     : [{ userId: props.creator.userId, name: props.creator.name, position: "organizer" as StaffPosition, locked: true }], []); // eslint-disable-line react-hooks/exhaustive-deps
   const playerIds = useMemo(() => new Set(update ? props.desk.state.players.flatMap(p => p.userId === null ? [] : [p.userId]) : []), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -69,7 +69,9 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ bad: boolean; text: string } | null>(null);
 
-  const staffChanged = JSON.stringify(toAssignments(staff, true)) !== JSON.stringify(toAssignments(startStaff, true));
+  const staffChanged = JSON.stringify(toAssignments(staff)) !== JSON.stringify(toAssignments(startStaff));
+  // The staff list is never empty. Someone who cannot change the list is not held up by it.
+  const noStaff = canStaff && staff.length === 0;
   const set = <K extends keyof EventSettings>(out: Partial<EventSettings>, k: K, v: EventSettings[K], was: EventSettings[K] | undefined) => { if (!update || v !== was) out[k] = v; };
 
   function collect(): Partial<EventSettings> {
@@ -98,9 +100,10 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
 
   async function submit() {
     if (!name.trim()) { setMessage({ bad: true, text: "Enter a tournament name." }); return; }
+    if (noStaff) { setMessage({ bad: true, text: "Add at least one staff member." }); return; }
     setBusy(true); setMessage(null);
     if (props.mode === "update") {
-      const res = await props.send({ type: "UpdateSettings", settings: collect(), ...(canStaff && staffChanged ? { staff: toAssignments(staff, true) } : {}) });
+      const res = await props.send({ type: "UpdateSettings", settings: collect(), ...(canStaff && staffChanged ? { staff: toAssignments(staff) } : {}) });
       setBusy(false);
       if (!res.ok) { setMessage({ bad: true, text: res.message }); return; }
       props.onDone("Tournament settings updated.");
@@ -121,10 +124,10 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
   const title = update ? "Update Tournament Settings" : "New Tournament";
   return <Dialog open onClose={props.onClose} title={title} actions={<>
     <Button onClick={props.onClose}>Cancel</Button>
-    <Button type="submit" form={formId} variant="violet" disabled={busy || !editable}>{busy ? (update ? "Updating..." : "Creating...") : label}</Button>
+    <Button type="submit" form={formId} variant="violet" disabled={busy || !editable || noStaff}>{busy ? (update ? "Updating..." : "Creating...") : label}</Button>
   </>}>
     <span className="dk-dlg-wide" hidden />
-    <form id={formId} className="dk-tdlg" onSubmit={e => { e.preventDefault(); if (!busy && editable) void submit(); }}>
+    <form id={formId} className="dk-tdlg" onSubmit={e => { e.preventDefault(); if (!busy && editable && !noStaff) void submit(); }}>
       <fieldset disabled={!editable} className="dk-tdlg-set">
         <Field label="Name"><Input value={name} onChange={e => setName(e.target.value)} maxLength={200} required autoComplete="off" autoFocus placeholder="Weekly Duel Night #12" /></Field>
         <div className="dk-tdlg-row">
@@ -132,7 +135,7 @@ export function TournamentDialog(props: CreateProps | UpdateProps) {
           <Field label="Time"><TimePicker value={time} onChange={setTime} /></Field>
         </div>
         <LocationPicker value={locationId} onChange={setLocationId} onEdited={() => setLocationEdited(true)} disabled={!editable} code={update ? props.desk.links.desk.split("/")[2] ?? null : null} />
-        <StaffEditor rows={staff} setRows={setStaff} disabled={!canStaff} viewerRole={role} code={update ? props.desk.links.desk.split("/")[2] ?? null : null} playerIds={playerIds} creatorId={creatorId} />
+        <StaffEditor rows={staff} setRows={setStaff} disabled={!canStaff} viewerIsOwner={ownerId !== null && (update ? props.desk.viewerUserId : props.creator.userId) === ownerId} code={update ? props.desk.links.desk.split("/")[2] ?? null : null} playerIds={playerIds} ownerId={ownerId} />
         <div className="dk-tdlg-row dk-tdlg-row--3">
           <Field label="Format / Style"><Select value={style} onChange={e => setStyle(e.target.value as typeof style)}>{STYLES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select></Field>
           <Field label="Pairing structure"><Select value={format} onChange={e => setFormat(e.target.value as typeof format)}>{PAIRINGS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select></Field>
@@ -281,13 +284,15 @@ function SubDialog({ title, onClose, onEnter, dirty = false, actions, children }
 const POSITION_ORDER = (p: StaffPosition) => POSITIONS.indexOf(p);
 
 /** Staff list: Add / Edit / Delete, account search, and the original's position names. */
-function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, creatorId }: { rows: StaffRow[]; setRows: (r: StaffRow[]) => void; disabled: boolean; viewerRole: StaffRole; code: string | null; playerIds: Set<number>; creatorId: number | null }) {
+function StaffEditor({ rows, setRows, disabled, viewerIsOwner, code, playerIds, ownerId }: { rows: StaffRow[]; setRows: (r: StaffRow[]) => void; disabled: boolean; viewerIsOwner: boolean; code: string | null; playerIds: Set<number>; ownerId: number | null }) {
   const search = useAccountSearch(code);
   const [selected, setSelected] = useState<number | null>(null);
   const [editor, setEditor] = useState<{ mode: "add" | "edit"; account: Account | null; position: StaffPosition; confirmPlayer: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const row = rows.find(r => r.userId === selected) ?? null;
-  const positions = POSITIONS.filter(p => p !== "organizer" || viewerRole === "organizer");
+  // Only the owner is the organizer. Adding never offers it to another account; an old organizer row keeps it while it is edited.
+  const positionsFor = (accountId: number | undefined) => accountId !== undefined && accountId === ownerId ? POSITIONS.filter(p => p === "organizer")
+    : POSITIONS.filter(p => p !== "organizer" || (editor?.mode === "edit" && row?.position === "organizer" && row.userId !== ownerId));
   const sorted = [...rows].sort((a, b) => POSITION_ORDER(a.position) - POSITION_ORDER(b.position) || a.name.localeCompare(b.name));
 
   function open(mode: "add" | "edit") {
@@ -301,27 +306,28 @@ function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, cre
     if (editor.mode === "edit" && row) { setRows(rows.map(r => (r.userId === row.userId ? { ...r, position: editor.position } : r))); close(); return; }
     const a = editor.account;
     if (!a) { setMessage("Search for an account, then pick it."); return; }
-    if (a.userId === creatorId) { setMessage("You are already the organizer."); return; }
+    if (a.userId === ownerId && !viewerIsOwner) { setMessage("Only the owner can add the owner back to the staff."); return; }
     // The server keeps one position per person, so a second entry for the same account is refused here.
     const dup = rows.find(r => r.userId === a.userId);
     if (dup) { setMessage(dup.position === editor.position ? `${a.displayName} is already on staff at that position.` : `${a.displayName} is already on staff as ${POSITION_LABEL[dup.position]}. Edit that entry to change the position.`); return; }
     if (playerIds.has(a.userId) && !confirmed) { setEditor({ ...editor, confirmPlayer: true }); return; }
-    setRows([...rows, { userId: a.userId, name: a.displayName, position: editor.position }]); setSelected(a.userId); close();
+    setRows([...rows, { userId: a.userId, name: a.displayName, position: a.userId === ownerId ? "organizer" : editor.position, locked: a.userId === ownerId }]); setSelected(a.userId); close();
   }
   return <section className="dk-tdlg-box" aria-label="Staff">
     <span className="dd-caps">Staff</span>
     <div className="dk-tdlg-line" style={{ alignItems: "flex-start" }}>
       <ul className="dk-tdlg-staff" aria-label="Staff list">
-        {rows.length === 0 && <li className="dd-meta">No staff added. You are the organizer.</li>}
+        {rows.length === 0 && <li className="dd-meta">No staff. Add at least one staff member.</li>}
         {sorted.map(r => <li key={r.userId}><button type="button" aria-pressed={r.userId === selected} data-selected={r.userId === selected} onClick={() => setSelected(r.userId)}>
           <span>{r.name}</span><span className="dd-meta">{POSITION_LABEL[r.position]}{r.locked ? " · owner" : ""}</span></button></li>)}
       </ul>
       <div className="dk-btn-row" style={{ flexDirection: "column" }}>
         <Button size="sm" disabled={disabled} onClick={() => open("add")}>Add</Button>
         <Button size="sm" disabled={disabled || !row || row.locked} onClick={() => open("edit")}>Edit</Button>
-        <Button size="sm" variant="rose-outline" disabled={disabled || !row || row.locked} onClick={() => { if (row) { setRows(rows.filter(r => r.userId !== row.userId)); setSelected(null); } }}>Delete</Button>
+        <Button size="sm" variant="rose-outline" disabled={disabled || !row || (row.locked && !viewerIsOwner)} onClick={() => { if (row) { setRows(rows.filter(r => r.userId !== row.userId)); setSelected(null); } }}>Delete</Button>
       </div>
     </div>
+    {rows.length === 0 && !disabled && <p role="alert" className="dd-error" style={{ margin: 0 }}>Add at least one staff member.</p>}
     {disabled && <p className="dd-meta" style={{ margin: 0 }}>Only an organizer or head judge changes the staff list.</p>}
     {editor && <SubDialog title={editor.mode === "add" ? "Add Staff" : "Edit Staff"} onClose={close}
       dirty={editor.mode === "edit" ? editor.position !== row?.position : editor.account !== null || editor.position !== "floor_judge"}
@@ -338,12 +344,12 @@ function StaffEditor({ rows, setRows, disabled, viewerRole, code, playerIds, cre
           {search.state === "error" && <p className="dd-error" role="alert" style={{ margin: 0 }}>{search.error}</p>}
           {search.results && <ul className="dk-tdlg-find" aria-label="Accounts found">
             {search.results.length === 0 && <li className="dd-meta">No accounts match.</li>}
-            {search.results.slice(0, 20).map(a => <li key={a.userId}><button type="button" data-selected={editor.account?.userId === a.userId} onClick={() => setEditor({ ...editor, account: a })}>
+            {search.results.slice(0, 20).map(a => <li key={a.userId}><button type="button" data-selected={editor.account?.userId === a.userId} onClick={() => setEditor({ ...editor, account: a, position: a.userId === ownerId ? "organizer" : editor.position === "organizer" ? "floor_judge" : editor.position })}>
               <span>{a.displayName}</span><span className="dd-meta">@{a.username}</span></button></li>)}
           </ul>}
           {editor.account && <p className="dd-meta" style={{ margin: 0 }}>Picked: <strong style={{ color: "var(--text)" }}>{editor.account.displayName}</strong></p>}
         </>}
-        <Field label="Position"><Select value={editor.position} autoFocus={editor.mode === "edit"} onChange={e => setEditor({ ...editor, position: e.target.value as StaffPosition })}>{positions.map(p => <option key={p} value={p}>{POSITION_LABEL[p]}</option>)}</Select></Field>
+        <Field label="Position"><Select value={editor.position} autoFocus={editor.mode === "edit"} onChange={e => setEditor({ ...editor, position: e.target.value as StaffPosition })}>{positionsFor(editor.account?.userId ?? (editor.mode === "edit" ? row?.userId : undefined)).map(p => <option key={p} value={p}>{POSITION_LABEL[p]}</option>)}</Select></Field>
         {message && <p role="alert" className="dd-error" style={{ margin: 0 }}>{message}</p>}
       </>}
     </SubDialog>}

@@ -97,6 +97,7 @@ function allResults(state: EventState): void {
 
 function pairNextRound(state: EventState, ctx: CommandContext, random: () => number, ids: Set<string>): void {
   allResults(state);
+  requireCondition(state.staff.length > 0, "NO_STAFF", "Add a staff member before you pair a round.");
   const active = competitors(state).filter(p => p.status === "active");
   requireCondition(active.length, "NO_PLAYERS", "Add or reactivate players before pairing a round.");
   for (const t of state.teams ?? []) if (t.status === "active") validateTeamMembers(state, t.memberIds, t.id);

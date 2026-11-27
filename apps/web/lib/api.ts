@@ -162,9 +162,9 @@ export function handleApi(request: Request, path: string[]) {
     }
     const action = path[2];
     if (path.length === 3 && action === "desk" && method === "GET") {
-      const { event, role } = staff(request, code);
+      const { user, event, role } = staff(request, code);
       await lookupAccounts([...event.state.players.flatMap(p => p.userId === null ? [] : [p.userId]), ...event.state.staff.map(s => s.userId)]);
-      return json(deskView(event, role));
+      return json(deskView(event, role, user.id));
     }
     if (path.length === 3 && action === "member-id-check" && method === "POST") {
       const { user } = staff(request, code);
@@ -181,7 +181,7 @@ export function handleApi(request: Request, path: string[]) {
       const { user, event } = staff(request, code);
       const data = await body(request, z.strictObject({ expectedVersion: z.number().int().positive().safe(), command: commandSchema }));
       requireCommand(event, user.id, data.command);
-      if (data.expectedVersion !== event.version) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id)) });
+      if (data.expectedVersion !== event.version) throw new HttpError(409, "version_conflict", { desk: deskView(event, requireStaff(event, user.id), user.id) });
       return json(runCommand(code, user, data.expectedVersion, await resolveCommand(data.command, user.id, event)));
     }
     if (path.length === 3 && action === "dummy-data" && method === "POST") {

@@ -54,8 +54,9 @@ async function api(path: string, cookie?: string, method = "GET", data?: unknown
   const context = { params: Promise.resolve({ path: new URL(request.url).pathname.slice(5).split("/") }) };
   return method === "GET" ? apiGet(request, context) : method === "PUT" ? apiPut(request, context) : method === "DELETE" ? apiDelete(request, context) : apiPost(request, context);
 }
-async function create(cookie: string, settings = {}) {
-  const response = await api("events", cookie, "POST", { name: "Cloudberry Cup", createCode: "", settings });
+const ownerStaff = { userId: 1, name: "Mira Meadow", position: "organizer" as const };
+async function create(cookie: string, settings = {}, ownerId = 1) {
+  const response = await api("events", cookie, "POST", { name: "Cloudberry Cup", createCode: "", settings, staff: [{ ...ownerStaff, userId: ownerId }] });
   expect(response.status).toBe(201);
   return z.object({ code: z.string() }).parse(await response.json()).code;
 }
@@ -174,7 +175,7 @@ describe("event HTTP contract", () => {
     expect((await api("events", undefined, "POST", { name: "Private", createCode: "" })).status).toBe(401);
     const cookie = await login(); process.env.CREATE_CODE = randomBytes(16).toString("hex");
     expect((await api("events", cookie, "POST", { name: "Private", createCode: "wrong" })).status).toBe(403);
-    const created = await api("events", cookie, "POST", { name: "Private", createCode: process.env.CREATE_CODE });
+    const created = await api("events", cookie, "POST", { name: "Private", createCode: process.env.CREATE_CODE, staff: [ownerStaff] });
     const { code } = z.object({ code: z.string() }).parse(await created.json());
     const publicResponse = await api(`events/${code}`);
     expect(publicResponse.headers.get("cache-control")).toBe("no-store");
@@ -552,7 +553,7 @@ const permissionCases: { label: string; command: (playerId: string) => Command; 
   { label: "penalties", command: playerId => ({ type: "AddPenalty", playerId, infractionId: "slow_play" }), allowed: ["organizer", "head_judge", "judge"] },
   { label: "drops", command: playerId => ({ type: "DropPlayer", playerId }), allowed: ["organizer", "head_judge", "judge", "scorekeeper"] },
   { label: "staff", command: () => ({ type: "AddStaff", userId: 6, name: "Ignored", role: "staff" }), allowed: ["organizer", "head_judge"] },
-  { label: "organizers", command: () => ({ type: "AddStaff", userId: 6, name: "Ignored", role: "organizer" }), allowed: ["organizer"] },
+  { label: "second organizer", command: () => ({ type: "AddStaff", userId: 6, name: "Ignored", role: "organizer" }), allowed: [] },
 ];
 describe("role matrix at the command route", () => {
   it.each(roles.flatMap(role => permissionCases.map(test => ({ role, ...test }))))("$role: $label", async ({ role, command: make, allowed }) => {
@@ -574,10 +575,9 @@ describe("role matrix at the command route", () => {
     const owner = await login(); const head = await login(2); const code = await create(owner);
     seedKnownAccounts(2, 3);
     await command(code, owner, 1, { type: "AddStaff", userId: 2, name: "Ignored", role: "head_judge" });
-    const state = deskSchema.parse(await (await command(code, owner, 2, { type: "AddStaff", userId: 3, name: "Ignored", role: "organizer" })).json());
-    const target = state.state.staff.find(s => s.userId === 3)!.id;
+    const target = (await desk(code, owner)).state.staff.find(s => s.userId === 1)!.id;
     for (const cmd of [{ type: "SetStaffRole", staffId: target, role: "staff" }, { type: "RemoveStaff", staffId: target }] satisfies Command[])
-      expect((await command(code, head, 3, cmd)).status).toBe(403);
+      expect((await command(code, head, 2, cmd)).status).toBe(403);
     const webhookUrl = "https://discord.com/api/webhooks/123/synthetic-token";
     expect((await api(`events/${code}/discord`, head, "PUT", { webhookUrl, postPairings: true, postStandings: false })).status).toBe(403);
     expect((await api(`events/${code}/discord`, owner, "PUT", { webhookUrl, postPairings: true, postStandings: false })).status).toBe(200);
@@ -817,7 +817,7 @@ describe("legacy files and service bridge", () => {
   it("shares the file-open limit between event imports and opening new events", async () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.now() - 60_000);
     const cookie = await login(6);
-    const code = await create(cookie);
+    const code = await create(cookie, {}, 6);
     for (let i = 0; i < 10; i++) expect((await upload(code, cookie, "players", "<PlayerList></PlayerList>")).status).toBe(200);
     expect((await upload(code, cookie, "players", "<PlayerList></PlayerList>")).status).toBe(429);
     const xml = readFileSync(new URL("./fixtures/synthetic.Tournament", import.meta.url), "utf8");
@@ -827,7 +827,7 @@ describe("legacy files and service bridge", () => {
   it("counts import lookups across both file routes with a budget separate from search", async () => {
     const time = vi.spyOn(Date, "now").mockReturnValue(Date.now() - 24 * 60 * 60_000);
     const cookie = await login(4);
-    const code = await create(cookie);
+    const code = await create(cookie, {}, 4);
     const tournament = (count: number) => "<Tournament><TournamentPlayers>" + Array.from({ length: count }, (_, i) =>
       `<TournPlayer><Player><ID>${1_000_000_000 + i}</ID><FirstName>Sample</FirstName></Player></TournPlayer>`).join("")
       + "</TournamentPlayers></Tournament>";
@@ -982,7 +982,7 @@ describe("tournament configuration", () => {
     expect(await xml(local)).toMatch(/<Date>2026-07-11<\/Date>\s*<Time>21:15<\/Time>/);
     expect(await xml(utc)).toMatch(/<Date>2026-07-12<\/Date>\s*<Time>04:15<\/Time>/);
     for (const timeZone of ["Invalid/Zone", "+04:00"]) {
-      expect((await api("events", owner, "POST", { name: "Invalid zone", createCode: "", settings: { timeZone } })).status).toBe(400);
+      expect((await api("events", owner, "POST", { name: "Invalid zone", createCode: "", settings: { timeZone }, staff: [ownerStaff] })).status).toBe(400);
     }
   });
   it("creates and edits full settings and staff, and protects organizer locations in use", async () => {
@@ -997,7 +997,7 @@ describe("tournament configuration", () => {
     seedKnownAccounts(2);
     const created = await api("events", cookie, "POST", { name: "Team Cup", createCode: "", settings: {
       style: "traditional", format: "open_dueling", playerStructure: 3, locationId: location.id, startsAt: "2026-12-02T13:15:00Z" },
-      staff: [{ userId: 2, name: "Sample Judge", position: "floor_judge_team_lead" }] });
+      staff: [ownerStaff, { userId: 2, name: "Sample Judge", position: "floor_judge_team_lead" }] });
     expect(created.status).toBe(201);
     const { code } = await created.json() as { code: string };
     const initial = await (await api(`events/${code}/desk`, cookie)).json() as { version: number; state: { settings: object; staff: object[] } };
@@ -1010,6 +1010,25 @@ describe("tournament configuration", () => {
     expect((await api(`locations/${location.id}`, cookie, "DELETE")).status).toBe(200);
     expect((await api(`events/${code}/commands`, other, "POST", { expectedVersion: initial.version + 1,
       command: { type: "SetStaffPosition", staffId: "missing", position: "organizer" } })).status).toBe(403);
+  });
+  it("lets the owner leave the staff list, never leaves it empty and keeps the owner as the only organizer", async () => {
+    const owner = await login(); const head = await login(2);
+    seedKnownAccounts(2);
+    expect((await api("events", owner, "POST", { name: "No staff", createCode: "", staff: [] })).status).toBe(400);
+    expect((await api("events", owner, "POST", { name: "Two organizers", createCode: "", staff: [ownerStaff, { userId: 2, name: "Ignored", position: "organizer" }] })).status).toBe(403);
+    const created = await api("events", owner, "POST", { name: "Judge only", createCode: "", staff: [{ userId: 2, name: "Ignored", position: "head_judge" }] });
+    expect(created.status).toBe(201);
+    const { code } = await created.json() as { code: string };
+    const first = await desk(code, owner);
+    expect(first.state.staff.map(s => s.userId)).toEqual([2]);
+    expect((await command(code, owner, first.version, { type: "UpdateSettings", settings: {}, staff: [] })).status).toBe(400);
+    expect((await command(code, head, first.version, { type: "UpdateSettings", settings: {}, staff: [{ userId: 3, name: "Ignored", position: "organizer" }] })).status).toBe(403);
+    expect((await command(code, owner, first.version, { type: "UpdateSettings", settings: {}, staff: [ownerStaff, { userId: 2, name: "Ignored", position: "head_judge" }] })).status).toBe(200);
+    const both = await desk(code, owner);
+    const ownerRow = both.state.staff.find(s => s.userId === 1)!.id;
+    expect((await command(code, head, both.version, { type: "RemoveStaff", staffId: ownerRow })).status).toBe(403);
+    expect((await command(code, owner, both.version, { type: "RemoveStaff", staffId: ownerRow })).status).toBe(200);
+    expect((await desk(code, owner)).state.staff.map(s => s.userId)).toEqual([2]);
   });
 });
 

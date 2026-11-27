@@ -4,6 +4,7 @@ import { context, run, scoreAll } from "./fixtures.js";
 
 function teamEvent(size: 2 | 3 | 4 | 5 = 3, count = 5) {
   let state = createEvent({ name: "Team Cup", playerStructure: size, startingTable: 10 }, context);
+  state = run(state, { type: "AddStaff", userId: 100, name: "Desk", role: "organizer" });
   state = run(state, { type: "AddPlayers", players: Array.from({ length: size * count }, (_, i) => ({ userId: i + 1, name: `Member ${i + 1}`, memberId: String(101 + i) })) });
   return run(state, { type: "AddTeams", teams: Array.from({ length: count }, (_, i) => ({ name: `Team ${i + 1}`, memberIds: state.players.slice(i * size, (i + 1) * size).map(p => p.id) })) });
 }

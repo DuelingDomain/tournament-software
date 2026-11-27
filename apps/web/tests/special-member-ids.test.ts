@@ -40,7 +40,7 @@ it("accepts listed member IDs across imports and staff validation", async () => 
     expect(await (await api("players/import", csv)).json()).toMatchObject({ added: 1, badCheckDigit: { count: 1, csv: expect.stringContaining(unlisted) } });
     rmSync(path);
 
-    const { code } = await (await api("events", { name: "Example event", createCode: "" })).json();
+    const { code } = await (await api("events", { name: "Example event", createCode: "", staff: [{ userId: 1, name: "Owner", position: "organizer" }] })).json();
     const xml = new FormData();
     xml.set("kind", "players");
     xml.set("file", new File([`<PlayerList><Player><ID>${listed}</ID><FirstName>Avery</FirstName><LastName>Example</LastName></Player><Player><ID>${unlisted}</ID><FirstName>Harper</FirstName><LastName>Example</LastName></Player></PlayerList>`], "players.xml"));
